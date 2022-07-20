@@ -28,7 +28,6 @@ Then install tensorflow, numpy, tqdm on the conda environment using pip
 ````
 pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 
-
 ````
 
 
