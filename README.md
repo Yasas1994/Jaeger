@@ -12,7 +12,7 @@ conda create -n jaeger python=3.9.2
 
 ````
 
-Jaeger workflow can be greatly accelarated on system with gpus.(you can expect the runtime to decrease linearly with increasing the number of gpus) To add support for gpus, cudatoolkit and cudnn has to installed on the created conda environmnet by typing (you can skip this step if you don't wish to use a gpu) 
+Jaeger workflow can be greatly accelarated on system with gpus.(you can expect linear speed ups by increasing the number of gpus) To add support for gpus, cudatoolkit and cudnn has to installed on the created conda environmnet by running (you can skip this step if you don't wish to use a gpu) 
 
 
 ````
