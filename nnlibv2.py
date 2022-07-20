@@ -218,7 +218,7 @@ def ConvolutionalTower(inputs,shared_weights=True):
     return tf.keras.layers.Add()([x_fwd,x_rc])
 
 
-###########################################################################
+############################################################################
 
 def LSTM_model(input_shape): #archeae model 1
     inputs = tf.keras.Input(shape=input_shape)
