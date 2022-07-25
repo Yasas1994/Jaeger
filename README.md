@@ -30,5 +30,32 @@ pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 
 ````
 
+## Running Jaeger
 
+Running Jaeger is quite straightforward once the environment is correctly configured. The program accepts a fasta file containing the contigs as input and outputs a table containing the predictions and various other statics calculated during the runtime. 
+By default, Jaeger will run on all the GPUs on the system. This behavior can be overridden by providing a list of GPUs to -gnames option and limiting the number of GPUs availble for jaeger's use.
 
+````
+python inference.py -i input_file.fasta -o output_file.fasta
+````
+
+### options
+
+````
+  -h, --help            show this help message and exit
+  -i INPUT, --input INPUT
+                        path to input file
+  -o OUTPUT, --output OUTPUT
+                        path to output file
+  -f [FORMAT], --format [FORMAT]
+                        input file format, default: fasta ('genbank','fasta')
+  --stride [STRIDE]     stride of the sliding window. default:2048
+  --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:2048
+  --cpu                 Number of threads to use for inference. default:False
+  --gpu                 run on gpu, runs on all gpus on the system by default: default: True
+  --getalllabels        get predicted labels for Non-Viral contigs. default:False
+  --meanscore           output mean predictive score per contig. deafault:True
+  --fragscore           output percentage of perclass predictions per contig. deafault:True
+  -v, --verbose         increase output verbosity
+  
+````
