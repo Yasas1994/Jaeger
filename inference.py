@@ -77,7 +77,8 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence ge
                         yield str(record[1])+","+str(record[0]) #sequence and sequence headder 
                     elif fragsize is not None:
                         for i,(l,index) in enumerate(signal_l(range(0,seqlen-(fragsize-1),fragsize if stride is None else stride))):
-                            yield str(record[1])[index:index+fragsize]+","+str(record[0])+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
+                            #yield str(record[1])[index:index+fragsize]+","+str(record[0])+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
+                            yield str(record[1])[index:index+fragsize]+","+str(record[0].replace(',',''))+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
     return c #return fasta sequence generator
 #@tf.function
 def process_input_string(table=None, onehot=True):
