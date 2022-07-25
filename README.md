@@ -3,7 +3,9 @@
 Identifying phage genome sequences conclealed in metagenomes is a long standing problem in viral metagenomics and ecology. Although various methods have been introduced in the recent past, each methods has its own strengths and weaknesses. Recently, machine learning has gained popularity in detecting viruses in metagenome samples. Here, we introduce Jaeger a CNN based, sensitive deep learning method that outperforms other state-of-the-art methods.
 
 
-## Installation
+## Installation 
+
+### seting up the environment (Linux)
 Jaeger is currently tested only on python 3.9.2 therefore, we recomend you to setup a conda environmet by running
 
 
@@ -29,6 +31,26 @@ Then install tensorflow, numpy, tqdm on the conda environment using pip
 pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 
 ````
+
+### setting up the environment (Apple silicon)
+
+````
+  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9.2 tensorflow=2.6 tensorflow-deps=2.6.0 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+````
+to add support for apple silicon gpus run
+
+````
+pip install tensorflow-metal
+````
+
+
+### finally, clone the repository by running
+
+````
+git clone https://github.com/Yasas1994/Jaeger
+````
+
+
 
 ## Running Jaeger
 
