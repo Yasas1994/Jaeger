@@ -30,6 +30,11 @@ from utils import DataPaths
 import argparse
 from tqdm import tqdm
 from typing import Iterable, Any, Tuple
+from enum import Enum, auto
+import bz2
+import gzip
+import logging
+import lzma
 
 ###############################utils######################################
 def signal_fl(it:Iterable[Any]) -> Iterable[Tuple[bool, Any]]:
@@ -49,6 +54,36 @@ def signal_l(it:Iterable[Any]) -> Iterable[Tuple[bool, Any]]:
         yield 0, ret_var
         ret_var = val
     yield 1, ret_var
+    
+class Compression(Enum):
+    gzip = auto()
+    bzip2 = auto()
+    xz = auto()
+    noncompressed = auto()
+    
+def is_compressed(filepath):
+    """ Checks if a file is compressed (gzip, bzip2 or xz) """
+    with open(filepath, "rb") as fin:
+        signature = fin.peek(8)[:8]
+        if tuple(signature[:2]) == (0x1F, 0x8B):
+            return Compression.gzip
+        elif tuple(signature[:3]) == (0x42, 0x5A, 0x68):
+            return Compression.bzip2
+        elif tuple(signature[:7]) == (0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00, 0x00):
+            return Compression.xz
+        else:
+            return Compression.noncompressed
+def get_compressed_file_handle(path):
+    filepath_compression = is_compressed(path)
+    if filepath_compression == Compression.gzip:
+        f = gzip.open(path, "rt")
+    elif filepath_compression == Compression.bzip2:
+        f = bz2.open(path, "rt")
+    elif filepath_compression == Compression.xz:
+        f = lzma.open(path, "rt")
+    else:
+        f = open(path, "r")
+    return f
 ###################input pre-processing#################################
 def mapper():
     '''creates a hashtable which will later be used by tensorflow to 
@@ -77,7 +112,6 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence ge
                         yield str(record[1])+","+str(record[0]) #sequence and sequence headder 
                     elif fragsize is not None:
                         for i,(l,index) in enumerate(signal_l(range(0,seqlen-(fragsize-1),fragsize if stride is None else stride))):
-                            #yield str(record[1])[index:index+fragsize]+","+str(record[0])+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
                             yield str(record[1])[index:index+fragsize]+","+str(record[0].replace(',',''))+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
     return c #return fasta sequence generator
 #@tf.function
@@ -324,7 +358,7 @@ if __name__ == "__main__":
     
     gpus=get_gpu_count()
     if gpus > 0:
-        print(f"gpus detected: {gpus}")
+        print(f"gpus detected: {2}")
         
     else:
         print("We could not detect any gpu on this system.\nfor optimal performance run Jaeger on a GPU.")
@@ -345,8 +379,8 @@ if __name__ == "__main__":
 
 
 
-
-        with open(args.output, 'w') as wfh, open(fasta_file) as fh:
+        fh=get_compressed_file_handle(fasta_file)
+        with open(args.output, 'w') as wfh:#, open(fasta_file) as fh:
             #header line
             wfh.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('contig_id','length','#num_prok_windows','#num_vir_windows','#num_fun_windows',
                                                                                         '#num_prot_windows','#num_arch_windows','prediction','bac_score',
@@ -381,7 +415,8 @@ if __name__ == "__main__":
                     c2=GetClass(c4, args.getalllabels)
                     c5=pred2string(s)
                     #print(c4)
-                    wfh.write(f"{d[-1].decode()}\t{l[-1]}\t{c1[0]}\t{c1[1]}\t{c1[2]}\t{c1[3]}\t{c1[4]:3}\t{c2[0]}\t{c4[0]:.2f}\t{c4[1]:.2f}\t{c4[2]:.2f}\t{c4[3]:.2f}\t{c4[4]:.2f}\t{c5}\n")
+                    wfh.write(f"{d[-1].decode()}\t{l[-1]}\t{c1[0]}\t{c1[1]}\t{c1[2]}\t{c1[3]}\t{c1[4]}\t{c2[0]}\t{c4[0]:.4f}\t{c4[1]:.4f}\t{c4[2]:.4f}\t{c4[3]:.4f}\t{c4[4]:.4f}\t{c5}\n")
 
         print(f"{'-'*100}\nprocessed {c} sequences 🦝" )
+        fh.close()
                      #   log.write(f'skipping {record.id} because its shorter.length : {len(record.seq)}\n')
