@@ -99,6 +99,7 @@ def mapper():
 
 #new functions
 def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence generator
+    '''returns a nucleotide fragment generator '''
     #filename here is a reference to a file handle
     #should also be able to handle small sequences
     #simply remove short sequnces, write to a separate file 
@@ -129,14 +130,8 @@ def process_input_string(table=None, onehot=True):
             return f #retruns int vector
     return x
 
-def fragen(fasta_file,fragsize=2048, stride=1024):
-    '''returns a nucleotide fragment generator '''
-    def c():
-        for index in range(0,len(record.seq)-fragsize,fragsize if stride is None else stride):
-            yield str(record.seq)[index:index+fragsize]+","+str(record.id)
-    return c
 ######################################calling the model########################################
-def get_predictions(idataset):  #get predictions per batch  
+def get_predictions(idataset, model):  #get predictions per batch  
 
     for batch in idataset:
         probs= tf.keras.activations.softmax(model(batch[0])) #convert logits to probabilities 
@@ -144,7 +139,7 @@ def get_predictions(idataset):  #get predictions per batch
         y_pred= tf.argmax(probs,-1) #get predicted class for each instance in the batch   
         yield probs, y_pred, batch[1], batch[2], batch[3], batch[4], batch[5]
         
-def ExtractPredPEntry(idataset, numclass=5):#takes a generator as input 
+def extract_pred_entry(model, idataset, numclass=5):#takes a generator as input 
     '''
     #prob : position wise softmax prbs
     #y_pred : position wise predicted classes
@@ -159,7 +154,7 @@ def ExtractPredPEntry(idataset, numclass=5):#takes a generator as input
     tmp_pos = [] #genomic cordinate vector -> used for prophage prediction 
     tmp_len = []
     
-    for prob,y_pred,id_,pos_,is_last_,index_,clen_ in get_predictions(idataset):
+    for prob,y_pred,id_,pos_,is_last_,index_,clen_ in get_predictions(idataset,model):
         #
         #prb_tmp.extend([i.numpy() for i in prob])
         #print(prb_tmp)
@@ -191,13 +186,13 @@ def ExtractPredPEntry(idataset, numclass=5):#takes a generator as input
                 #print(prb_tmp.shape, tmp.shape)
                 yield tmp, tmp1, tmp2, tmp3, tmp4
     
-def PerClassPreds(y_pred,numclass=5): #y_pred is a vector with scores for the entire entry
+def per_class_preds(y_pred,numclass=5): #y_pred is a vector with scores for the entire entry
     return np.array([np.sum(y_pred==i) for i in range(numclass)])
 
-def AveragePerClassScore(yprob):
+def average_per_class_score(yprob):
     return np.mean(yprob, axis=0)
 
-def GetClass(y_pred, get_all_classes=False): 
+def get_class(y_pred, get_all_classes=False): 
     y_pred=y_pred/sum(y_pred)
     c=np.argmax(y_pred)
     if c == 0:
@@ -250,11 +245,33 @@ def pred2string(predictions):
         string += f'{tmp_N}n'
     return string 
 
+################################get records with matching ids###################################
+
+def write_to_file(input_fasta_fh,output_table,ofasta_filename, cut_off=0.6):
+    '''writes predicted viral contigs to a new file'''
+    list_of_contig_id={}
+    with open(output_table, 'r') as fh:
+        for i,line in enumerate(fh):
+            if i > 0:
+                cols=line.split('\t')
+                if float(cols[10]) > cut_off: 
+                    list_of_contig_id[cols[0]] = 0
+
+    with open(ofasta_filename, 'w') as fh:
+        for record in SeqIO.FastaIO.SimpleFastaParser(input_fasta_fh):
+            print(record[0])
+            if str(record[0].replace(',','')) in list_of_contig_id:
+                print(record[0])
+                fh.write(f'{record[0]}\n{record[1]}\n')
+        
+    
+
 ###########################################statistics & plots###################################
 
             
 
 ##########################################argument-parser#######################################
+
 def dir_path(path):
     '''checks path and creates if absent'''
     if os.path.isdir(path):
@@ -273,7 +290,8 @@ def file_path(path):
 
 def cmdparser():
     '''cmdline argument parser'''
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='\n## Jaeger : Incooperating deep learning into phage discovery https://github.com/Yasas1994/Jaeger.git',
+    usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
 
     parser.add_argument("-i","--input",
                         type=file_path,
@@ -283,6 +301,10 @@ def cmdparser():
                         type=str,
                         required=True,
                         help='path to output file')
+    parser.add_argument("-of","--ofasta", 
+                        type=str,
+                        required=False,
+                        help='path to output fasta file')
     parser.add_argument("-f","--format", 
                         type=str,
                         nargs='?',
@@ -352,19 +374,23 @@ if __name__ == "__main__":
     #tf session configuration
     print(f"\n#Jeager 0.01v will use the following parameters")
     print(f"input file : {args.input}")
-    print(f"fragment size: {2048}")
+    print(f"window size: {2048}")
     print(f"stride: {args.stride}")
     print(f"mode: meta\n{'-'*100}")
+    print(f"jaeger will skip contigs < 2048 bp\n{'-'*100}")
     
     gpus=get_gpu_count()
     if gpus > 0:
-        print(f"gpus detected: {2}")
+        print(f"gpus detected: {gpus}")
         
     else:
         print("We could not detect any gpu on this system.\nfor optimal performance run Jaeger on a GPU.")
     
-    
+
+    fasta_file = args.input
+    fhi=get_compressed_file_handle(fasta_file)
     stratergy = tf.distribute.MirroredStrategy()
+    #generate predictions and write to the table
     with stratergy.scope():
     #build model and load weights
         inputs, outputs = LSTM_model(input_shape=(2048,4))
@@ -375,11 +401,7 @@ if __name__ == "__main__":
         #run prediction loop 
         #open 2 files handles within the contex manager
         #with open(args.input) as fh, \
-        fasta_file = args.input
 
-
-
-        fh=get_compressed_file_handle(fasta_file)
         with open(args.output, 'w') as wfh:#, open(fasta_file) as fh:
             #header line
             wfh.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('contig_id','length','#num_prok_windows','#num_vir_windows','#num_fun_windows',
@@ -388,35 +410,40 @@ if __name__ == "__main__":
             num=0
             c=0
             c3 = [0,0,0,0,0]
-            for i in fh: 
+            for i in fhi: 
                 if i.startswith('>'):
                     num+=1
-            fh.seek(0)
+            fhi.seek(0)
             print(f'reading input and loading the model \u2705 \n{"-"*100}')
             
             prcs=process_input_string(table=mapper(),onehot=True)
 
             input_dataset = tf.data.Dataset.from_generator(
-                     fasta_gen(fh,fragsize=2048,stride=args.stride,num=num),
+                     fasta_gen(fhi,fragsize=2048,stride=args.stride,num=num),
                      output_signature=(
                          tf.TensorSpec(shape=(), dtype=tf.string)))
 
             idataset=input_dataset.map(prcs,
                                     num_parallel_calls=tf.data.AUTOTUNE).padded_batch(args.batch,
                                                                                       padded_shapes=((2048,4),(),(),(),(),()))
-            for a,s,d,f,l in ExtractPredPEntry(idataset):
+            for a,s,d,f,l in extract_pred_entry(model,idataset):
                     c+=1
 
                     #code for further processing goes here
                     #print(np.array(a), PerClassPreds(s))
-                    c1 = PerClassPreds(s)
-                    c4=AveragePerClassScore(a)
+                    c1=per_class_preds(s)
+                    c4=average_per_class_score(a)
                     c3[np.argmax(c1)]+=1
-                    c2=GetClass(c4, args.getalllabels)
+                    c2=get_class(c4, args.getalllabels)
                     c5=pred2string(s)
                     #print(c4)
                     wfh.write(f"{d[-1].decode()}\t{l[-1]}\t{c1[0]}\t{c1[1]}\t{c1[2]}\t{c1[3]}\t{c1[4]}\t{c2[0]}\t{c4[0]:.4f}\t{c4[1]:.4f}\t{c4[2]:.4f}\t{c4[3]:.4f}\t{c4[4]:.4f}\t{c5}\n")
 
         print(f"{'-'*100}\nprocessed {c} sequences 🦝" )
-        fh.close()
+
+    if args.ofasta:
+        print("writing all predictions to a fasta file\n")
+        write_to_file(input_fasta_fh=fhi,output_table=args.output,ofasta_filename=args.ofasta, cut_off=0.6)
+        
+    fhi.close()
                      #   log.write(f'skipping {record.id} because its shorter.length : {len(record.seq)}\n')
