@@ -5,7 +5,7 @@ Identifying phage genome sequences conclealed in metagenomes is a long standing 
 
 ## Installation 
 
-### seting up the environment (Linux)
+### Seting up the environment (Linux)
 Jaeger is currently tested only on python 3.9.2 therefore, we recomend you to setup a conda environmet by running
 
 
@@ -32,7 +32,7 @@ pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 
 ````
 
-### setting up the environment (Apple silicon)
+### Setting up the environment (Apple silicon)
 
 ````
   conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9.2 tensorflow=2.6 tensorflow-deps=2.6.0 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
@@ -54,8 +54,9 @@ git clone https://github.com/Yasas1994/Jaeger
 
 ## Running Jaeger
 
-Running Jaeger is quite straightforward once the environment is correctly configured. The program accepts a fasta file containing the contigs as input and outputs a table containing the predictions and various other statics calculated during the runtime. 
+Running Jaeger is quite straightforward once the environment is correctly set up. The program accepts both compressed and uncompressed fasta files containing the contigs as input. It outputs a table containing the predictions and various other statics calculated during the runtime. 
 By default, Jaeger will run on all the GPUs on the system. This behavior can be overridden by providing a list of GPUs to -gnames option and limiting the number of GPUs availble for jaeger's use.
+-ofasta option will write all putative viral contigs (contigs that satisfies the cut-off score) into a separate file
 
 ````
 python inference.py -i input_file.fasta -o output_file.fasta
@@ -81,3 +82,7 @@ python inference.py -i input_file.fasta -o output_file.fasta
   -v, --verbose         increase output verbosity
   
 ````
+
+## What is in the output?
+
+
