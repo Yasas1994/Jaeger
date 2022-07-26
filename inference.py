@@ -254,14 +254,12 @@ def write_to_file(input_fasta_fh,output_table,ofasta_filename, cut_off=0.6):
         for i,line in enumerate(fh):
             if i > 0:
                 cols=line.split('\t')
-                if float(cols[10]) > cut_off: 
+                if float(cols[9]) > cut_off: # if viral score is greater than the cut-off 
                     list_of_contig_id[cols[0]] = 0
 
     with open(ofasta_filename, 'w') as fh:
         for record in SeqIO.FastaIO.SimpleFastaParser(input_fasta_fh):
-            print(record[0])
             if str(record[0].replace(',','')) in list_of_contig_id:
-                print(record[0])
                 fh.write(f'{record[0]}\n{record[1]}\n')
         
     
@@ -442,7 +440,8 @@ if __name__ == "__main__":
         print(f"{'-'*100}\nprocessed {c} sequences 🦝" )
 
     if args.ofasta:
-        print("writing all predictions to a fasta file\n")
+        fhi.seek(0)
+        print("dumping all predictions to a fasta file\n")
         write_to_file(input_fasta_fh=fhi,output_table=args.output,ofasta_filename=args.ofasta, cut_off=0.6)
         
     fhi.close()
