@@ -35,7 +35,21 @@ conda create -n jaeger python=3.9.2
 ````
 
 Jaeger workflow can be greatly accelarated on system with gpus.(you can expect linear speed ups by increasing the number of gpus) To add support for gpus, cudatoolkit and cudnn has to installed on the created conda environmnet by running (you can skip this step if you don't wish to use a gpu) 
+please specify the cudatoolkit and cudnn versions that are compatible with the installed cuda version on your system.
 
+if you have cuda=10.1 installed on your system, 
+
+````
+conda install -n jaeger -c conda-forge cudatoolkit=10.1 
+
+conda install -n jaeger -c conda-forge cudnn=7.6.5.32
+
+conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+
+````
+
+
+if you have cuda=11.3 installed on your system,
 
 ````
 conda install -n jaeger -c anaconda cudatoolkit 
@@ -79,8 +93,11 @@ By default, Jaeger will run on all the GPUs on the system. This behavior can be 
 -ofasta option will write all putative viral contigs (contigs that satisfies the cut-off score) into a separate file
 
 ````
-python inference.py -i input_file.fasta -o output_file.fasta
+python inference.py -i input_file.fasta -o output_file.fasta --batch 128
 ````
+## selecting batch parameter 
+
+You can control the number of parallel computations using this parameter. By default it is set to 512. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 128 is good enough for a grraphics card with 6 Gb of memory.
 
 ### options
 
