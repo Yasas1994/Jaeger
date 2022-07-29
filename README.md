@@ -48,19 +48,14 @@ conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=
 if you have cuda=11.3 installed on your system,
 
 ````
-conda install -n jaeger -c anaconda cudatoolkit 
+conda install -n jaeger -c anaconda cudatoolkit=11.3 
 
 conda install -n jaeger -c conda-forge cudnn
 
-````
-
-Then install tensorflow, numpy, tqdm on the conda environment using pip
-
-
-````
 pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 
 ````
+
 
 ### Setting up the environment (Apple silicon)
 
