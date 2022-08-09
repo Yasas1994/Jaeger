@@ -24,11 +24,16 @@ Identifying phage genome sequences concealed in metagenomes is a long standing p
 ### Seting up the environment (Linux)
 Jaeger is currently tested only on python 3.9.2 therefore, we recomend you to setup a conda environmet by running
 
+##### for CPU only version
 
 ````
 conda create -n jaeger python=3.9.2
 
+conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+
 ````
+
+##### for GPU version
 
 Jaeger workflow can be greatly accelarated on system with gpus.(you can expect linear speed ups by increasing the number of gpus) To add support for gpus, cudatoolkit and cudnn has to installed on the created conda environmnet by running (you can skip this step if you don't wish to use a gpu) 
 please specify the cudatoolkit and cudnn versions that are compatible with the installed cuda version on your system.
