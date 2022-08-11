@@ -29,7 +29,7 @@ Jaeger is currently tested only on python 3.9.2 therefore, we recomend you to se
 ````
 conda create -n jaeger python=3.9.2
 
-conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+conda install -n jaeger tensorflow=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
 
 ````
 
