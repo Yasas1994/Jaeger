@@ -29,7 +29,6 @@ from cmodel import CustomModel
 from utils import DataPaths
 import argparse
 from tqdm import tqdm
-from typing import Iterable, Any, Tuple
 from enum import Enum, auto
 import bz2
 import gzip
@@ -37,7 +36,7 @@ import logging
 import lzma
 
 ###############################utils######################################
-def signal_fl(it:Iterable[Any]) -> Iterable[Tuple[bool, Any]]:
+def signal_fl(it):
     '''get a signal at the begining and the end of a iterator'''
     iterable = iter(it)
     yield True, next(iterable)
@@ -46,7 +45,7 @@ def signal_fl(it:Iterable[Any]) -> Iterable[Tuple[bool, Any]]:
         yield 0, ret_var
         ret_var = val
     yield 1, ret_var
-def signal_l(it:Iterable[Any]) -> Iterable[Tuple[bool, Any]]:
+def signal_l(it):
     '''get a signal at the end of the iterator'''
     iterable = iter(it)
     ret_var = next(iterable)
@@ -84,6 +83,16 @@ def get_compressed_file_handle(path):
     else:
         f = open(path, "r")
     return f
+  
+def get_num_entries(file_handle):
+  '''returns the number of entries in a fasta file'''
+  pass
+
+def is_low_quality(sequence):
+  '''returns True if more than 30% of the input sequence/fragment is covered with ambigious nucleotides 
+     predictions made on such regions will be masked in the final prediction
+  '''
+  pass 
 ###################input pre-processing#################################
 def mapper():
     '''creates a hashtable which will later be used by tensorflow to 
@@ -107,8 +116,8 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence ge
         #accepts a reference to a file handle
         
             for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(filehandle), total=num, bar_format='{l_bar}{bar:80}{r_bar}{bar:-10b}'):
-                seqlen=len(record[1])
-                if seqlen >= fragsize:
+                seqlen=len(record[1]) #move size filtering to a separate preprocessing step
+                if seqlen >= fragsize: #filters the sequence based on size
                     if fragsize is None: #if no fragsize, return the entire sequence 
                         yield str(record[1])+","+str(record[0]) #sequence and sequence headder 
                     elif fragsize is not None:
