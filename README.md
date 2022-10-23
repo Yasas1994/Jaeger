@@ -41,6 +41,8 @@ please specify the cudatoolkit and cudnn versions that are compatible with the i
 if you have cuda=10.1 installed on your system, 
 
 ````
+conda create -n jaeger python=3.9.2
+
 conda install -n jaeger -c conda-forge cudatoolkit=10.1 
 
 conda install -n jaeger -c conda-forge cudnn=7.6.5.32
@@ -50,10 +52,12 @@ conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=
 ````
 
 
-if you have cuda=11.3 installed on your system,
+if you have cuda>=11.1 installed on your system,
 
 ````
-conda install -n jaeger -c anaconda cudatoolkit=11.3 
+conda create -n jaeger python=3.9.2 
+
+conda install -n jaeger -c "nvidia/label/cuda-11.x.x" cudatoolkit=11.x
 
 conda install -n jaeger -c conda-forge cudnn
 
