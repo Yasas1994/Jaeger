@@ -11,8 +11,8 @@
 
 import os
 import sys
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+#os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 from Bio import SeqIO
 import tensorflow as tf
 #tf.get_logger().setLevel('INFO')
