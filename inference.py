@@ -36,6 +36,7 @@ import gzip
 import logging
 import lzma
 
+libpath=os.path.dirname(os.path.realpath(__file__))
 ###############################utils######################################
 def signal_fl(it):
     '''get a signal at the begining and the end of a iterator'''
@@ -447,7 +448,7 @@ if __name__ == "__main__":
     #build model and load weights
         inputs, outputs = LSTM_model(input_shape=(None,))
         model = CustomModel(inputs=inputs, outputs=outputs)
-        model.load_weights(filepath='./weights/lstm_codon_aa.h5')#.expect_partial() when loading weights from a chpt file
+        model.load_weights(filepath=f'{libpath}/weights/lstm_codon_aa.h5')#.expect_partial() when loading weights from a chpt file
         print(f"initialiting model and loading weights \u2705\n{'-'*100}")
     
         #run prediction loop 
