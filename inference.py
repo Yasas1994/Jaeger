@@ -174,10 +174,11 @@ def process_string(string, t1=codon_mapper(), t3=c_mapper(),onehot=True, label_o
 def get_predictions(idataset, model):  #get predictions per batch  
 
     for batch in idataset:
-        probs= tf.keras.activations.softmax(model(batch[0])) #convert logits to probabilities 
+        logits = model(batch[0]).numpy()
+        probs= tf.nn.softmax(logits) #convert logits to probabilities 
         #probsperpos.append(probs) #probabilities per position
-        y_pred= tf.argmax(probs,-1) #get predicted class for each instance in the batch   
-        yield probs, y_pred, batch[1], batch[2], batch[3], batch[4], batch[5]
+        y_pred= np.argmax(probs,-1) #get predicted class for each instance in the batch   
+        yield logits , y_pred, batch[1], batch[2], batch[3], batch[4], batch[5]
 
 
 def extract_pred_entry(model,idataset, numclass=4):#takes a generator as input 
@@ -244,7 +245,7 @@ def average_per_class_score(yprob):
 
 def get_class(y_pred, get_all_classes=False): 
     '''Protista was removed from v2.0.0 '''
-    y_pred=y_pred/sum(y_pred)
+    #y_pred=y_pred/sum(y_pred)
     c=np.argmax(y_pred)
     if c == 0:
         return "Prokaryota" if get_all_classes else "Non-phage",round(y_pred[c],3)
