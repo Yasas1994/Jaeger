@@ -126,7 +126,7 @@ You can control the number of parallel computations using this parameter. By def
 
 ## Visualizing predictions 
 
-You can use phage_contig_annotator to annotate and visualize Jaeger predictions.
+You can use [phage_contig_annotator] (https://github.com/Yasas1994/phage_contig_annotator) to annotate and visualize Jaeger predictions.
 
 
 
