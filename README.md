@@ -14,11 +14,8 @@
 
 
 
-
 # yet AnothEr phaGE identifieR
-Identifying phage genome sequences concealed in metagenomes is a long standing problem in viral metagenomics and ecology. Although various methods have been introduced in the recent past, each methods has its own strengths and weaknesses. Recently, machine learning has gained popularity in detecting viruses in metagenome samples. Here, we introduce Jaeger a deep learning based, sensitive phage prediction tool.
-
-
+Identifying phage genome sequences concealed in metagenomes is a long standing problem in viral metagenomics and ecology. The Jaeger approach uses homology-free machine learning to identify both phages and prophages in metagenomic assemblies.
 ## Installation 
 
 ### Seting up the environment (Linux)
@@ -121,5 +118,15 @@ You can control the number of parallel computations using this parameter. By def
 ````
 
 ## What is in the output?
+
+
+## Predicting prophages with Jaeger
+![image](https://user-images.githubusercontent.com/34155351/201996217-807c638f-49e1-4147-baff-af6bf20441fa.png)
+
+
+## Visualizing predictions 
+
+You can use phage_contig_annotator to annotate and visualize Jaeger predictions.
+
 
 
