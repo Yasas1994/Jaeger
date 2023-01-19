@@ -58,8 +58,7 @@ conda install -n jaeger -c "nvidia/label/cuda-11.x.x" cudatoolkit=11.x
 
 conda install -n jaeger -c conda-forge cudnn
 
-conda activate jaeger 
-#or source activate path/to/jaeger/env depending on your cluster configuration
+conda activate jaeger #or source activate path/to/jaeger/env depending on your cluster configuration
 
 pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 
