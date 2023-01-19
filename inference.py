@@ -11,8 +11,8 @@
 
 import os
 import sys
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-#os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 from Bio import SeqIO
 import tensorflow as tf
 #tf.get_logger().setLevel('INFO')
@@ -36,7 +36,6 @@ import gzip
 import logging
 import lzma
 
-libpath=os.path.dirname(os.path.realpath(__file__))
 ###############################utils######################################
 def signal_fl(it):
     '''get a signal at the begining and the end of a iterator'''
@@ -174,11 +173,10 @@ def process_string(string, t1=codon_mapper(), t3=c_mapper(),onehot=True, label_o
 def get_predictions(idataset, model):  #get predictions per batch  
 
     for batch in idataset:
-        logits = model(batch[0]).numpy()
-        probs= tf.nn.softmax(logits) #convert logits to probabilities 
+        probs= tf.keras.activations.softmax(model(batch[0])) #convert logits to probabilities 
         #probsperpos.append(probs) #probabilities per position
-        y_pred= np.argmax(probs,-1) #get predicted class for each instance in the batch   
-        yield logits , y_pred, batch[1], batch[2], batch[3], batch[4], batch[5]
+        y_pred= tf.argmax(probs,-1) #get predicted class for each instance in the batch   
+        yield probs, y_pred, batch[1], batch[2], batch[3], batch[4], batch[5]
 
 
 def extract_pred_entry(model,idataset, numclass=4):#takes a generator as input 
@@ -245,7 +243,7 @@ def average_per_class_score(yprob):
 
 def get_class(y_pred, get_all_classes=False): 
     '''Protista was removed from v2.0.0 '''
-    #y_pred=y_pred/sum(y_pred)
+    y_pred=y_pred/sum(y_pred)
     c=np.argmax(y_pred)
     if c == 0:
         return "Prokaryota" if get_all_classes else "Non-phage",round(y_pred[c],3)
@@ -449,7 +447,7 @@ if __name__ == "__main__":
     #build model and load weights
         inputs, outputs = LSTM_model(input_shape=(None,))
         model = CustomModel(inputs=inputs, outputs=outputs)
-        model.load_weights(filepath=f'{libpath}/weights/lstm_codon_aa.h5')#.expect_partial() when loading weights from a chpt file
+        model.load_weights(filepath='./weights/lstm_codon_aa.h5')#.expect_partial() when loading weights from a chpt file
         print(f"initialiting model and loading weights \u2705\n{'-'*100}")
     
         #run prediction loop 
