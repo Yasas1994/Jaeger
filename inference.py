@@ -24,7 +24,7 @@ from tensorflow.keras.layers import InputSpec
 import tensorflow.keras.backend as K
 from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
 import numpy as np
-from nnlibv2 import LSTM_model
+from nnlib import *
 from cmodel import CustomModel
 from utils import DataPaths
 import argparse
@@ -447,9 +447,9 @@ if __name__ == "__main__":
     #generate predictions and write to the table
     with stratergy.scope():
     #build model and load weights
-        inputs, outputs = LSTM_model(input_shape=(None,))
+        inputs, outputs = WRes_model(input_shape=(None,))
         model = CustomModel(inputs=inputs, outputs=outputs)
-        model.load_weights(filepath=f'{libpath}/weights/lstm_codon_aa.h5')#.expect_partial() when loading weights from a chpt file
+        model.load_weights(filepath=f'{libpath}/weights/WRes_1024.h5')#.expect_partial() when loading weights from a chpt file
         print(f"initialiting model and loading weights \u2705\n{'-'*100}")
     
         #run prediction loop 
