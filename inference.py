@@ -24,7 +24,7 @@ from tensorflow.keras.layers import InputSpec
 import tensorflow.keras.backend as K
 from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
 import numpy as np
-from nnlibv2 import LSTM_model
+from nnlib import *
 from cmodel import CustomModel
 from utils import DataPaths
 import argparse
