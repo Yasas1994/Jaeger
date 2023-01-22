@@ -120,11 +120,49 @@ You can control the number of parallel computations using this parameter. By def
   -v, --verbose         increase output verbosity
   
 ````
+### Comming soon - Python Library
+Jaeger can be integreted into python scripts using the jaegeraa python library as follows.
+currenly the predict function accepts 4 diffent input types.
+1) Nucleotide sequence -> str
+2) List of Nucleotide sequences -> list(str,str,..)
+3) python fileobject -> (io.TextIOWrapper)
+4) python generator object that yields Nucleotide sequences as str (types.GeneratorType)
+5) Biopython Seq object
+
+```
+from jaegeraa.api import Predictions
+
+model=Predictor()
+predictions=model.predict(input,stride=2048,fragsize=2048,batch=100)
+
+```
+```model.predict()``` returns a dictionary of lists in the following format
+
+```
+{'contig_id': ['seq_0', 'seq_1'],
+ 'length': [19000, 10503],
+ '#num_prok_windows': [0, 0],
+ '#num_vir_windows': [9, 0],
+ '#num_fun_windows': [0, 5],
+ '#num_arch_windows': [0, 0],
+ 'prediction': ['Phage', 'Non-phage'],
+ 'bac_score': [-1.9552012549506292, -1.9441368103027343],
+ 'vir_score': [6.6312947273254395, -3.097817325592041],
+ 'fun_score': [-5.712721400790745, -0.6870137214660644],
+ 'arch_score': [-2.4369852013058133, -0.8941479325294495],
+ 'window_summary': ['9V', '5n']}
+ 
+```
+This dictionary can be easily converted to a pandas dataframe using DataFrame.from_dict() method
+```
+import pandas as pd
+df = DataFrame.from_dict(predictions)
+```
 
 ## What is in the output?
 
 
-## Predicting prophages with Jaeger
+## Comming soon - Predicting prophages with Jaeger
 ![image](https://user-images.githubusercontent.com/34155351/201996217-807c638f-49e1-4147-baff-af6bf20441fa.png)
 
 
