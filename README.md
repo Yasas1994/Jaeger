@@ -18,7 +18,7 @@
 
 
 
-# yet AnothEr phaGE identifieR
+# yet AnothEr phaGE pRedictor
 Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
 ## Installation 
 
