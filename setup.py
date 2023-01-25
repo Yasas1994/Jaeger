@@ -13,7 +13,7 @@ setup(name='jaeger',
       scripts=['bin/jaeger'],
       install_requires=[
     
-        'numpy==1.19.5',
+        'numpy >=1.19.5',
         'tqdm >=4.64.0',
         'biopython >=1.78',
         'tensorflow >=2.5.0'
