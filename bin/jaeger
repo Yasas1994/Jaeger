@@ -9,7 +9,7 @@ The Jaeger approach uses homology-free machine learning to identify
 
 import os
 import sys
-sys.path.append('/Users/javis/Documents/Jaeger/')
+#sys.path.append('/Users/javis/Documents/Jaeger/')
 import pkg_resources
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 from Bio import SeqIO
@@ -177,19 +177,22 @@ def main(args,logger):
     # if cpu mode, hide all gpus available on the system
     gpus=get_gpu_count()
     mode = None
+    device = "/cpu:0"
     if args.cpu:
         mode = 'CPU'
         tf.config.set_visible_devices([], 'GPU:1')
         logger.info('CPU only mode selected')
 
+
     elif gpus > 0:
         mode = 'GPU'
         logger.info(f"gpus detected: {gpus}")
+        device = "/gpu:0"
         
     else:
         mode = 'CPU'
         logger.info("We could not detect any gpu on this system.\nfor optimal performance run Jaeger on a GPU.")
-  
+        
     
     logger.info('Jaeger v1.1.1 will use following parameters')
     logger.info(f'Input file : {input_file}')
@@ -201,7 +204,7 @@ def main(args,logger):
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
     output_fh = get_output_filehandle(output_file_path)
-    stratergy = tf.distribute.MirroredStrategy()
+    stratergy = tf.distribute.OneDeviceStrategy("/cpu:0")
     c3 = [0,0,0,0]
     with stratergy.scope():
         inputs, outputs = WRes_model(input_shape=(None,))
@@ -233,7 +236,7 @@ def main(args,logger):
 
 
 def get_output_filehandle(file_name):
-    output_fh = open(file_name,'w',buffering=16)
+    output_fh = open(file_name,'w')
     output_fh.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('contig_id','length','#num_prok_windows',
                                                                                 '#num_vir_windows','#num_fun_windows',
                                                                                 '#num_arch_windows','prediction','bac_score',

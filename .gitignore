@@ -2,3 +2,5 @@ conda_recipe/*
 __pycache__/
 test/output/*
 notebooks/*
+build/
+jaeger.egg-info/

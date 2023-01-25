@@ -2,7 +2,7 @@ from setuptools import setup
 
 
 setup(name='jaeger',
-      version='1.1.1',
+      version='1.1.2',
       description='A homology-free machine learning tool to identify phage genome sequences that are hidden within metagenomes',
       url='https://github.com/Yasas1994/Jaeger',
       author='Yasas Wijesekra',
