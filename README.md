@@ -21,7 +21,7 @@
 # yet AnothEr phaGE pRedictor
 Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
 
-visit our wiki: https://github.com/Yasas1994/Jaeger/wiki
+visit our wiki: https://github.com/Yasas1994/Jaeger/wiki/%22Jaeger:-yet-AnothEr-phaGE-pRedictor%22
 
 ## Installation 
 
@@ -44,7 +44,7 @@ The performance of the Jaeger workflow can be significantly increased by utilizi
 if you have cuda=10.1 installed on your system, 
 
 ````
-conda create -n jaeger python=3.9.2
+conda create -n jaeger python=3.9.2 pip
 
 conda install -n jaeger -c conda-forge cudatoolkit=10.1 
 
@@ -58,7 +58,7 @@ conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=
 if you have cuda>=11.1 installed on your system,
 
 ````
-conda create -n jaeger python=3.9.2 
+conda create -n jaeger python=3.9.2 pip
 
 conda install -n jaeger -c "nvidia/label/cuda-11.x.x" cudatoolkit=11.x
 
@@ -66,7 +66,7 @@ conda install -n jaeger -c conda-forge cudnn
 
 conda activate jaeger #or source activate path/to/jaeger/env depending on your cluster configuration
 
-pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
+pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78 
 
 ````
 
@@ -74,13 +74,13 @@ pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78
 ### Setting up the environment (Apple silicon)
 
 ````
-  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9.2 tensorflow=2.6 tensorflow-deps=2.6.0 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9.2 pip tensorflow=2.6 tensorflow-deps=2.6.0 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
 ````
 to add support for apple silicon gpus run
 
 ````
 conda activate jaeger
-
+pip install tensorflow-macos
 pip install tensorflow-metal
 ````
 
