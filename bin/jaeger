@@ -1,0 +1,260 @@
+#!/usr/bin/env python
+"""Jaeger v1.1.1 - Copyright 2022 R. Y. Wijesekara
+
+Identifying phage genome sequences concealed in metagenomes is a 
+long standing problem in viral metagenomics and ecology. 
+The Jaeger approach uses homology-free machine learning to identify
+ both phages and prophages in metagenomic assemblies.
+"""
+
+import os
+import sys
+sys.path.append('/Users/javis/Documents/Jaeger/')
+import pkg_resources
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+from Bio import SeqIO
+import tensorflow as tf
+import tensorflow.keras as keras
+from tensorflow.keras.layers import InputSpec
+import tensorflow.keras.backend as K
+#from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
+import numpy as np
+from jaegeraa.nnlib.layers import WRes_model
+from jaegeraa.nnlib.cmodel import JaegerModel
+from jaegeraa.utils import get_compressed_file_handle
+from jaegeraa.preprocessing import fasta_gen, codon_mapper, process_string, c_mapper
+from jaegeraa.postprocessing import extract_pred_entry, per_class_preds, average_per_class_score, get_class, pred2string
+import argparse
+from tqdm import tqdm
+import logging
+
+
+LIBPATH=os.path.dirname(os.path.realpath(__file__))
+def dir_path(path):
+    '''checks path and creates if absent'''
+    if os.path.isdir(path):
+        return path
+    else:
+        os.mkdir(path)
+        return path
+
+
+def file_path(path):
+    '''checks if file is present'''
+    if os.path.isfile(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"ERROR:{path} is not a valid file")
+
+def cmdparser():
+    '''cmdline argument parser'''
+    parser = argparse.ArgumentParser(description='\n## Jaeger (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery https://github.com/Yasas1994/Jaeger.git',
+    usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-i","--input",
+                        type=file_path,
+                        required=True,
+                        help="path to input file")
+    parser.add_argument("-o","--output", 
+                        type=str,
+                        required=True,
+                        help='path to output directory')
+    parser.add_argument("-of","--ofasta", 
+                        type=str,
+                        required=False,
+                        help='path to output fasta file')
+    parser.add_argument("--cutoff", 
+                        type=float,
+                        required=False,
+                        default=2.9,
+                        help='fasta output cutoff score')
+    parser.add_argument("--stride", 
+                        type=int,
+                        nargs='?',
+                        default=2048, 
+                        help="stride of the sliding window. default:2048")
+    parser.add_argument("--batch", 
+                        type=int,
+                        nargs='?',
+                        default=2048, 
+                        help="parallel batch size, set to a lower value if your gpu runs out of memory. default:2048")
+    group = parser.add_mutually_exclusive_group()
+
+    group.add_argument("--cpu", 
+                        action="store_true",
+                        help="Number of threads to use for inference. default:False")
+    group.add_argument("--gpu",
+                        action="store_false",
+                        help='run on gpu, runs on all gpus on the system by default: default: True')
+
+    parser.add_argument("--getalllabels", 
+                        action="store_true",
+                        help="get predicted labels for Non-Viral contigs. default:False")
+    parser.add_argument("--meanscore",
+                        action="store_true", 
+                        help="output mean predictive score per contig. deafault:True")
+    parser.add_argument("--fragscore", 
+                        action="store_true", 
+                        help="output percentage of perclass predictions per contig. deafault:True")
+    misc = parser.add_argument_group('Misc. Options')
+
+    misc.add_argument('-v', '--verbose', action="count", default=-2,
+                  help='Verbosity level : -v warning, -vv info, -vvv debug, (default info)')
+
+    misc.add_argument('-f', '--overwrite', action="store_true", help='Overwrite existing files')    
+    
+    return parser.parse_args()
+
+def create_logger(args):
+    # Logging config
+    log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
+
+    logging.addLevelName(logging.WARNING, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
+    logging.addLevelName(logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
+    logging.addLevelName(logging.INFO, "\033[1;42m%s\033[1;0m" % logging.getLevelName(logging.INFO))
+    logging.addLevelName(logging.DEBUG, "\033[1;43m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
+    logging.getLogger().addFilter(logging.Filter("vcontact2"))
+
+    logger = logging.getLogger('jaeger')
+    logger.setLevel(log_levels[args.verbose])
+    ch = logging.StreamHandler()
+    ch.setLevel(log_levels[args.verbose])
+    ch.setFormatter(logging.Formatter('%(levelname)s:%(name)s: %(message)s'))
+    logger.addHandler(ch)
+    return logger
+
+def get_gpu_count():
+        gpus=0
+        for i in tf.config.get_visible_devices():
+            if 'GPU' in i.device_type:
+                gpus += 1
+        return gpus
+
+def configure_multi_gpu_inference(gpus):
+    if gpus > 0:
+            return tf.distribute.MirroredStrategy()
+    else:
+        None
+            
+def main(args,logger):
+
+    args = args() 
+    logger = logger(args)
+
+    logger.info("v1.1.1\n\n" + "{:-^80}".format("validating parameters"))
+    weights_root = pkg_resources.resource_filename('jaegeraa', 'data/')
+    weights_path = os.path.join(weights_root,'WRes_1024.h5')
+    if not os.path.exists(weights_path):
+        logger.error('Could not find model weights. Please check the data dir')
+    else:
+        logger.info(f'Using {weights_path} to build the model')
+
+    # prepare output directory
+    output_dir = args.output
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+        logger.info(f"Output directory {output_dir} created.")
+    else:
+        logger.info(f"Using existing directory {output_dir}")
+
+    #prepare output filename and check if exists
+    input_file_path=args.input
+    input_file = os.path.basename(input_file_path)
+    if input_file.endswith('fna') or input_file.endswith('fasta'):
+        output_file = f"{input_file.rsplit('.',1)[0]}_jaeger.tsv"
+        output_file_path= os.path.join(output_dir,output_file)
+        if os.path.exists(output_file_path):
+            if not args.overwrite:
+                logger.error("Outputfile exists. enable --overwrite option to overwrite the output file.")
+                exit(1)
+    else:
+        logger.error("Input file is not a valid fastafile")
+        exit(1)
+
+    
+    seed = 8959
+    tf.random.set_seed(seed)
+
+    # if cpu mode, hide all gpus available on the system
+    gpus=get_gpu_count()
+    mode = None
+    if args.cpu:
+        mode = 'CPU'
+        tf.config.set_visible_devices([], 'GPU:1')
+        logger.info('CPU only mode selected')
+
+    elif gpus > 0:
+        mode = 'GPU'
+        logger.info(f"gpus detected: {gpus}")
+        
+    else:
+        mode = 'CPU'
+        logger.info("We could not detect any gpu on this system.\nfor optimal performance run Jaeger on a GPU.")
+  
+    
+    logger.info('Jaeger v1.1.1 will use following parameters')
+    logger.info(f'Input file : {input_file}')
+    logger.info(f'Fragment size : {2048}')
+    logger.info(f'Stride : {args.stride}')
+    logger.info(f'Batch size : {args.batch}')
+    logger.info(f'Mode : {mode}')
+
+    input_fh = get_compressed_file_handle(input_file_path)
+    num = fasta_entries(input_fh)
+    output_fh = get_output_filehandle(output_file_path)
+    stratergy = tf.distribute.MirroredStrategy()
+    c3 = [0,0,0,0]
+    with stratergy.scope():
+        inputs, outputs = WRes_model(input_shape=(None,))
+        model = JaegerModel(inputs=inputs, outputs=outputs)
+        model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
+        logger.info(f"Model initialized \u2705\n{'-'*80}")
+
+        with tf.device('/cpu:0'):
+            input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=2048,stride=args.stride,num=num),
+                                                            output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
+            idataset=input_dataset.map(process_string,
+                                    num_parallel_calls=tf.data.AUTOTUNE).batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE)
+
+
+            for c,(a,s,d,f,l) in enumerate(extract_pred_entry(model,idataset)):
+                    #code for further processing goes here
+                    c1 = per_class_preds(s)
+                    c4 = average_per_class_score(a)
+                    c3[np.argmax(c1)]+=1
+                    c2 = get_class(c4, args.getalllabels)
+                    c5 = pred2string(s)
+                    write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5)
+                    
+
+            logger.info(f"processed {c}/{num} sequences 🦝" )
+
+    input_fh.close()
+    output_fh.close()
+
+
+def get_output_filehandle(file_name):
+    output_fh = open(file_name,'w',buffering=16)
+    output_fh.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('contig_id','length','#num_prok_windows',
+                                                                                '#num_vir_windows','#num_fun_windows',
+                                                                                '#num_arch_windows','prediction','bac_score',
+                                                                            'vir_score', 'fun_score','arch_score', 'window_summary'))
+            
+    return output_fh
+
+def write_to_output_filehandle(file_handle,d,l,c1,c2,c4,c5):
+    file_handle.write(f"{d[-1].decode()}\t{l[-1]}\t{c1[0]}\t{c1[1]}\t{c1[2]}\t{c1[3]}\t{c2[0]}\t{c4[0]:.4f}\t{c4[1]:.4f}\t{c4[2]:.4f}\t{c4[3]:.4f}\t{c5}\n")
+
+
+def fasta_entries(input_file_handle):
+    num = 0
+    for i in input_file_handle: 
+        if i.startswith('>'):
+            num+=1
+    input_file_handle.seek(0)
+    return num
+
+
+if __name__ == "__main__":
+    main(cmdparser,create_logger)
+     
+ 
