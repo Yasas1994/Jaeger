@@ -1,2 +1,4 @@
-*.jaegeraa
+conda_recipe/*
 __pycache__/
+test/output/*
+notebooks/*
