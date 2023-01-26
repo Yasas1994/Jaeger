@@ -80,7 +80,7 @@ to add support for apple silicon gpus run
 
 ````
 conda activate jaeger
-pip install tensorflow-macos
+pip install tensorflow-macos=2.6
 pip install tensorflow-metal
 ````
 
