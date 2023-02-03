@@ -112,7 +112,7 @@ def create_logger(args):
     logging.addLevelName(logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
     logging.addLevelName(logging.INFO, "\033[1;42m%s\033[1;0m" % logging.getLevelName(logging.INFO))
     logging.addLevelName(logging.DEBUG, "\033[1;43m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
-    logging.getLogger().addFilter(logging.Filter("vcontact2"))
+    logging.getLogger().addFilter(logging.Filter("jaeger"))
 
     logger = logging.getLogger('jaeger')
     logger.setLevel(log_levels[args.verbose])
