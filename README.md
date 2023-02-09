@@ -60,7 +60,7 @@ if you have cuda>=11.1 installed on your system,
 ````
 conda create -n jaeger python=3.9.2 pip
 
-conda install -n jaeger -c "nvidia/label/cuda-11.x.x" cudatoolkit=11.x
+conda install -n jaeger -c "nvidia/label/cuda-11.x.x" cudatoolkit=11
 
 conda install -n jaeger -c conda-forge cudnn
 
