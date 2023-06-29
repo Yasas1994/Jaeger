@@ -98,7 +98,7 @@ git clone https://github.com/Yasas1994/Jaeger
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed FASTA files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. By default, Jaeger will run on all GPUs present on the system, however, this behavior can be overridden by providing a list of GPU names to the -gnames option, which limits the number of GPUs available for Jaeger's use. The -ofasta option will write all potential viral contigs (contigs that meet the cutoff score) into a separate file.
 
 ````
-python inference.py -i input_file.fasta -o output_file.fasta --batch 128
+jaeger -i input_file.fasta -o output_file.fasta --batch 128
 ````
 ## selecting batch parameter 
 
