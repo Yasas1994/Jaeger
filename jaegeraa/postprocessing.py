@@ -1,5 +1,6 @@
 import numpy as np
 from Bio import SeqIO
+from tqdm import tqdm
 import tensorflow as tf
 
 def get_predictions(idataset, model):  #get predictions per batch  

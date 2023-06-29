@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""Jaeger v1.1.1 - Copyright 2022 R. Y. Wijesekara
+"""
+Copyright 2022 R. Y. Wijesekara
 
 Identifying phage genome sequences concealed in metagenomes is a 
 long standing problem in viral metagenomics and ecology. 
@@ -9,7 +10,10 @@ The Jaeger approach uses homology-free machine learning to identify
 
 import os
 import sys
-#sys.path.append('/Users/javis/Documents/Jaeger/')
+
+LIBPATH=os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.append(LIBPATH)
+
 import pkg_resources
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 from Bio import SeqIO
@@ -19,17 +23,17 @@ from tensorflow.keras.layers import InputSpec
 import tensorflow.keras.backend as K
 #from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
 import numpy as np
+from jaegeraa import __version__
 from jaegeraa.nnlib.layers import WRes_model
 from jaegeraa.nnlib.cmodel import JaegerModel
 from jaegeraa.utils import get_compressed_file_handle
-from jaegeraa.preprocessing import fasta_gen, codon_mapper, process_string, c_mapper
+from jaegeraa.preprocessing import fasta_gen, codon_mapper, process_string, c_mapper, process_string_textline
 from jaegeraa.postprocessing import extract_pred_entry, per_class_preds, average_per_class_score, get_class, pred2string
 import argparse
 from tqdm import tqdm
 import logging
 
 
-LIBPATH=os.path.dirname(os.path.realpath(__file__))
 def dir_path(path):
     '''checks path and creates if absent'''
     if os.path.isdir(path):
@@ -48,7 +52,7 @@ def file_path(path):
 
 def cmdparser():
     '''cmdline argument parser'''
-    parser = argparse.ArgumentParser(description='\n## Jaeger (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery https://github.com/Yasas1994/Jaeger.git',
+    parser = argparse.ArgumentParser(description=f'\n## Jaeger {__version__} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git',
     usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i","--input",
                         type=file_path,
@@ -67,16 +71,22 @@ def cmdparser():
                         required=False,
                         default=2.9,
                         help='fasta output cutoff score')
+    parser.add_argument("--fsize", 
+                        type=int,
+                        nargs='?',
+                        default=2048, 
+                        help="length of the sliding window (value must be 2^n). default:2048")
+
     parser.add_argument("--stride", 
                         type=int,
                         nargs='?',
                         default=2048, 
-                        help="stride of the sliding window. default:2048")
+                        help="stride of the sliding window. default:2048 (stride==fsize)")
     parser.add_argument("--batch", 
                         type=int,
                         nargs='?',
-                        default=2048, 
-                        help="parallel batch size, set to a lower value if your gpu runs out of memory. default:2048")
+                        default=128, 
+                        help="parallel batch size, set to a lower value if your gpu runs out of memory. default:128")
     group = parser.add_mutually_exclusive_group()
 
     group.add_argument("--cpu", 
@@ -140,7 +150,7 @@ def main(args,logger):
     args = args() 
     logger = logger(args)
 
-    logger.info("v1.1.1\n\n" + "{:-^80}".format("validating parameters"))
+    logger.info(f"{__version__}\n\n" + "{:-^80}".format("validating parameters"))
     weights_root = pkg_resources.resource_filename('jaegeraa', 'data/')
     weights_path = os.path.join(weights_root,'WRes_1024.h5')
     if not os.path.exists(weights_path):
@@ -159,7 +169,7 @@ def main(args,logger):
     #prepare output filename and check if exists
     input_file_path=args.input
     input_file = os.path.basename(input_file_path)
-    if input_file.endswith('fna') or input_file.endswith('fasta'):
+    if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
         output_file = f"{input_file.rsplit('.',1)[0]}_jaeger.tsv"
         output_file_path= os.path.join(output_dir,output_file)
         if os.path.exists(output_file_path):
@@ -194,9 +204,9 @@ def main(args,logger):
         logger.info("We could not detect any gpu on this system.\nfor optimal performance run Jaeger on a GPU.")
         
     
-    logger.info('Jaeger v1.1.1 will use following parameters')
+    logger.info(f'Jaeger {__version__} will use following parameters')
     logger.info(f'Input file : {input_file}')
-    logger.info(f'Fragment size : {2048}')
+    logger.info(f'Fragment size : {args.fsize}')
     logger.info(f'Stride : {args.stride}')
     logger.info(f'Batch size : {args.batch}')
     logger.info(f'Mode : {mode}')
@@ -204,32 +214,36 @@ def main(args,logger):
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
     output_fh = get_output_filehandle(output_file_path)
-    stratergy = tf.distribute.OneDeviceStrategy("/cpu:0")
+    stratergy = tf.distribute.OneDeviceStrategy(device)
     c3 = [0,0,0,0]
+
+    
     with stratergy.scope():
+
+        input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=args.fsize,stride=args.stride,num=num),
+                                                        output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
+        idataset=input_dataset.map(process_string,
+                                num_parallel_calls=tf.data.AUTOTUNE).batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE).prefetch(5)
+        
         inputs, outputs = WRes_model(input_shape=(None,))
         model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
+        model.compile(optimizer = tf.keras.optimizers.Adam())
         logger.info(f"Model initialized \u2705\n{'-'*80}")
 
-        with tf.device('/cpu:0'):
-            input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=2048,stride=args.stride,num=num),
-                                                            output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
-            idataset=input_dataset.map(process_string,
-                                    num_parallel_calls=tf.data.AUTOTUNE).batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE)
 
 
-            for c,(a,s,d,f,l) in enumerate(extract_pred_entry(model,idataset)):
-                    #code for further processing goes here
-                    c1 = per_class_preds(s)
-                    c4 = average_per_class_score(a)
-                    c3[np.argmax(c1)]+=1
-                    c2 = get_class(c4, args.getalllabels)
-                    c5 = pred2string(s)
-                    write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5)
-                    
+        for c,(a,s,d,f,l) in enumerate(extract_pred_entry(model,idataset)):
+                #code for further processing goes here
+                c1 = per_class_preds(s)
+                c4 = average_per_class_score(a)
+                c3[np.argmax(c1)]+=1
+                c2 = get_class(c4, args.getalllabels)
+                c5 = pred2string(s)
+                write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5)
 
-            logger.info(f"processed {c}/{num} sequences 🦝" )
+
+        logger.info(f"processed {c}/{num} sequences 🦝" )
 
     input_fh.close()
     output_fh.close()
