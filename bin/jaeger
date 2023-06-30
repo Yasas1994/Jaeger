@@ -17,6 +17,7 @@ sys.path.append(LIBPATH)
 import pkg_resources
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 from Bio import SeqIO
+from tensorflow import __version__ as tfv
 import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import InputSpec
@@ -205,6 +206,7 @@ def main(args,logger):
         
     
     logger.info(f'Jaeger {__version__} will use following parameters')
+    logger.info(f'tensorflow : {tfv}')
     logger.info(f'Input file : {input_file}')
     logger.info(f'Fragment size : {args.fsize}')
     logger.info(f'Stride : {args.stride}')
@@ -228,7 +230,6 @@ def main(args,logger):
         inputs, outputs = WRes_model(input_shape=(None,))
         model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
-        model.compile(optimizer = tf.keras.optimizers.Adam())
         logger.info(f"Model initialized \u2705\n{'-'*80}")
 
 
