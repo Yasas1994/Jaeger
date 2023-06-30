@@ -4,3 +4,4 @@ test/output/*
 notebooks/*
 build/
 jaeger.egg-info/
+.DS_store
