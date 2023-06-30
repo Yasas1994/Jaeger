@@ -129,7 +129,7 @@ def create_logger(args):
     logger.setLevel(log_levels[args.verbose])
     ch = logging.StreamHandler()
     ch.setLevel(log_levels[args.verbose])
-    ch.setFormatter(logging.Formatter('%(levelname)s:%(name)s: %(message)s'))
+    ch.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s',datefmt='%Y-%m-%d %H:%M:%S'))
     logger.addHandler(ch)
     return logger
 
@@ -234,7 +234,7 @@ def main(args,logger):
 
 
 
-        for c,(a,s,d,f,l) in enumerate(extract_pred_entry(model,idataset)):
+        for c,(a,s,d,f,l) in enumerate(extract_pred_entry(model,idataset),start=1):
                 #code for further processing goes here
                 c1 = per_class_preds(s)
                 c4 = average_per_class_score(a)
