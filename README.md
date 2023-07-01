@@ -31,9 +31,9 @@ Jaeger is currently tested only on python 3.9.2 therefore, we recomend you to se
 ##### for CPU only version
 
 ````
-conda create -n jaeger python=3.9.2
+conda create -n jaeger python=3.9
 
-conda install -n jaeger tensorflow=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+conda install -n jaeger 'tensorflow>=2.5' 'numpy>=1.19.5' 'tqdm>=4.64.0' biopython=1.78
 
 ````
 
@@ -44,13 +44,13 @@ The performance of the Jaeger workflow can be significantly increased by utilizi
 if you have cuda=10.1 installed on your system, 
 
 ````
-conda create -n jaeger python=3.9.2 pip
+conda create -n jaeger python=3.9 pip
 
 conda install -n jaeger -c conda-forge cudatoolkit=10.1 
 
 conda install -n jaeger -c conda-forge cudnn=7.6.5.32
 
-conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+conda install -n jaeger 'tensorflow>=2.5' 'numpy>=1.19.5' 'tqdm>=4.64.0' biopython=1.78
 
 ````
 
@@ -58,7 +58,7 @@ conda install -n jaeger tensorflow-gpu=2.4.1 numpy=1.19.5 tqdm=4.64.0 biopython=
 if you have cuda>=11.1 installed on your system,
 
 ````
-conda create -n jaeger python=3.9.2 pip
+conda create -n jaeger python=3.9 pip
 
 conda install -n jaeger -c "nvidia/label/cuda-11.x.x" cudatoolkit=11
 
@@ -66,7 +66,7 @@ conda install -n jaeger -c conda-forge cudnn
 
 conda activate jaeger #or source activate path/to/jaeger/env depending on your cluster configuration
 
-pip install tensorflow==2.5 numpy==1.19.5 tqdm==4.64.0 biopython==1.78 
+pip install 'tensorflow>=2.5' 'numpy>=1.19.5' 'tqdm>=4.64' 'biopython>=1.78' 
 
 ````
 
