@@ -44,7 +44,9 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence ge
     def c():
         #accepts a reference to a file handle
         
-            for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(filehandle), total=num, bar_format='{l_bar}{bar:80}{r_bar}{bar:-10b}'):
+            #for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(filehandle), total=num, bar_format='{l_bar}{bar:80}{r_bar}{bar:-10b}'):
+            for record in SeqIO.FastaIO.SimpleFastaParser(filehandle):
+
                 seqlen=len(record[1]) #move size filtering to a separate preprocessing step
                 if seqlen >= fragsize: #filters the sequence based on size
                     if fragsize is None: #if no fragsize, return the entire sequence 
@@ -129,7 +131,7 @@ def process_string(string, t1=codon_mapper(), t3=c_mapper(),onehot=True, label_o
 
 
 def process_string_textline(t1=codon_mapper(), t3=c_mapper(),onehot=True, label_onehot=True,numclasses=4):
-    @tf.function
+    
     def p(string):
         x = tf.strings.split(string, sep=',')
 

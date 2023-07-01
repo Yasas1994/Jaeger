@@ -10,6 +10,8 @@ The Jaeger approach uses homology-free machine learning to identify
 
 import os
 import sys
+import psutil
+
 
 LIBPATH=os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(LIBPATH)
@@ -191,7 +193,8 @@ def main(args,logger):
     device = "/cpu:0"
     if args.cpu:
         mode = 'CPU'
-        tf.config.set_visible_devices([], 'GPU:1')
+        #visible devices can not be changed after initialization
+        #tf.config.set_visible_devices([], 'GPU')
         logger.info('CPU only mode selected')
 
 
@@ -205,6 +208,8 @@ def main(args,logger):
         logger.info("We could not detect any gpu on this system.\nfor optimal performance run Jaeger on a GPU.")
         
     
+
+    #psutil.virtual_memory().available * 100 / psutil.virtual_memory().total   
     logger.info(f'Jaeger {__version__} will use following parameters')
     logger.info(f'tensorflow : {tfv}')
     logger.info(f'Input file : {input_file}')
@@ -212,6 +217,8 @@ def main(args,logger):
     logger.info(f'Stride : {args.stride}')
     logger.info(f'Batch size : {args.batch}')
     logger.info(f'Mode : {mode}')
+    logger.info(f'Total Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB')
+    logger.info(f'Avail cpus : {os.cpu_count()}')
 
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
@@ -230,11 +237,18 @@ def main(args,logger):
         inputs, outputs = WRes_model(input_shape=(None,))
         model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
-        logger.info(f"Model initialized \u2705\n{'-'*80}")
+        
+        logger.info(f"Model initialized \u2705")
+        logger.info(f'Avail Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB\n{"-"*80}')
 
+        
+        if mode == 'GPU':
+            gpu_devices = tf.config.list_physical_devices('GPU')
+            if gpu_devices:
+                gpu_mem = tf.config.experimental.get_memory_info(device)
+                logger.info(f'GPU mem usage : {gpu_mem["current"]/(1024.0 ** 2) : .2f}GB')
 
-
-        for c,(a,s,d,f,l) in enumerate(extract_pred_entry(model,idataset),start=1):
+        for c,(a,s,d,f,l) in tqdm(enumerate(extract_pred_entry(model,idataset),start=1),total=num):
                 #code for further processing goes here
                 c1 = per_class_preds(s)
                 c4 = average_per_class_score(a)
