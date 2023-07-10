@@ -32,8 +32,8 @@ from jaegeraa.nnlib.cmodel import JaegerModel
 from jaegeraa.utils import get_compressed_file_handle
 from jaegeraa.preprocessing import fasta_gen, codon_mapper, process_string, c_mapper, process_string_textline
 from jaegeraa.postprocessing import extract_pred_entry, per_class_preds, average_per_class_score, get_class, pred2string
+
 weights_root = pkg_resources.resource_filename('jaegeraa', 'data')
-print(weights_root)
 weights_path = os.path.join(weights_root,'WRes_1024.h5')
 
 
