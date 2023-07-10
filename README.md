@@ -33,7 +33,7 @@ Jaeger is currently tested only on python 3.9.2 therefore, we recomend you to se
 ````
 conda create -n jaeger python=3.9
 
-conda install -n jaeger 'tensorflow>=2.5' 'numpy>=1.19.5' 'tqdm>=4.64.0' biopython=1.78
+conda install -n jaeger 'tensorflow>=2.10' 'numpy>=1.19.5' 'tqdm>=4.64.0' biopython=1.78
 
 ````
 
@@ -50,7 +50,7 @@ conda install -n jaeger -c conda-forge cudatoolkit=10.1
 
 conda install -n jaeger -c conda-forge cudnn=7.6.5.32
 
-conda install -n jaeger 'tensorflow>=2.5' 'numpy>=1.19.5' 'tqdm>=4.64.0' biopython=1.78
+conda install -n jaeger 'tensorflow>=2.10' 'numpy>=1.19.5' 'tqdm>=4.64.0' biopython=1.78
 
 ````
 
@@ -66,7 +66,7 @@ conda install -n jaeger -c conda-forge cudnn
 
 conda activate jaeger #or source activate path/to/jaeger/env depending on your cluster configuration
 
-pip install 'tensorflow>=2.5' 'numpy>=1.19.5' 'tqdm>=4.64' 'biopython>=1.78' 
+pip install 'tensorflow>=2.10' 'numpy>=1.19.5' 'tqdm>=4.64' 'biopython>=1.78' 
 
 ````
 
@@ -90,6 +90,21 @@ pip install tensorflow-metal
 ````
 git clone https://github.com/Yasas1994/Jaeger
 ````
+
+## Environmnet variables
+
+* Tensorflow logging behaviour can be altered by 'TF_CPP_MIN_LOG_LEVEL' environment variable. Jaeger's default log level is 3
+
+````
+export TF_CPP_MIN_LOG_LEVEL=3
+````
+
+| levels | description|
+|--------|------------|
+|0 | all messages are logged (default behavior)|
+|1 | INFO messages are not printed|
+|2 | INFO and WARNING messages are not printed|
+|3 | INFO, WARNING, and ERROR messages are not printed|
 
 
 
@@ -122,6 +137,7 @@ optional arguments:
   --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:128
   --cpu                 Number of threads to use for inference. default:False
   --gpu                 run on gpu, runs on all gpus on the system by default: default: True
+  --gpunames            Specify a list of GPU identifiers to limit computations to (--gpunames gpu:0,gpu:3)
   --getalllabels        get predicted labels for Non-Viral contigs. default:False
   --meanscore           output mean predictive score per contig. deafault:True
   --fragscore           output percentage of perclass predictions per contig. deafault:True
@@ -129,6 +145,9 @@ optional arguments:
 Misc. Options:
   -v, --verbose         Verbosity level : -v warning, -vv info, -vvv debug, (default info)
   -f, --overwrite       Overwrite existing files
+  --simulategpus        Simulate multiple virtual GPUs to test MultiGPU inference mode
+  --numsimgpu           Number of virtual GPUs to initialize
+  --gpumem              Memory allocation for each virtual gpu in MB
 
   
 
