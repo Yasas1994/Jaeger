@@ -1,5 +1,5 @@
 from setuptools import setup
-
+from setuptools import find_packages
 
 setup(name='jaeger',
       version='1.1.2',
@@ -8,14 +8,12 @@ setup(name='jaeger',
       author='Yasas Wijesekra',
       author_email='yasas.wijesekara@uni-greifswald.de',
       license='MIT',
-      packages=['jaegeraa', 'jaegeraa.nnlib'],
+      packages=find_packages(exclude=('*test*',)),
       package_data={'jaegeraa': ['data/WRes_1024.h5']},
-      scripts=['bin/jaeger'],
+      scripts=['bin/Jaeger'],
       install_requires=[
     
-        'numpy >=1.19.5',
         'tqdm >=4.64.0',
         'biopython >=1.78',
-        'tensorflow >=2.5.0'
       ]
       )
