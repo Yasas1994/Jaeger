@@ -137,7 +137,7 @@ optional arguments:
   --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:128
   --cpu                 Number of threads to use for inference. default:False
   --gpu                 run on gpu, runs on all gpus on the system by default: default: True
-  --gpunames            Specify a list of GPU identifiers to limit computations to (--gpunames gpu:0,gpu:3)
+  --gpunames            Specify a list of GPU identifiers to limit computations to(--gpunames gpu:0,gpu:3)
   --getalllabels        get predicted labels for Non-Viral contigs. default:False
   --meanscore           output mean predictive score per contig. deafault:True
   --fragscore           output percentage of perclass predictions per contig. deafault:True
@@ -145,6 +145,7 @@ optional arguments:
 Misc. Options:
   -v, --verbose         Verbosity level : -v warning, -vv info, -vvv debug, (default info)
   -f, --overwrite       Overwrite existing files
+  --progressbar         Turns on the progressbar
   --simulategpus        Simulate multiple virtual GPUs to test MultiGPU inference mode
   --numsimgpu           Number of virtual GPUs to initialize
   --gpumem              Memory allocation for each virtual gpu in MB
