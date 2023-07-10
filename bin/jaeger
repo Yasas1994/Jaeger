@@ -299,7 +299,7 @@ def main(args,logger):
                 write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5)
 
 
-        logger.info(f"processed {c}/{num} sequences 🦝" )
+        logger.info(f"processed {c}/{num} sequences 🦝\n" )
 
     input_fh.close()
     output_fh.close()
