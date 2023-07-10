@@ -106,8 +106,10 @@ def fasta_gen_lib(filehandle,fragsize=None,stride=None,num=None): #fasta sequenc
     return c
 
 @tf.function
-def process_string(string, t1=codon_mapper(), t3=c_mapper(),onehot=True, label_onehot=True):
+def process_string(string, t1=codon_mapper, t3=c_mapper,onehot=True, label_onehot=True):
 
+    t1 = t1()
+    t3 = t3()
     x = tf.strings.split(string, sep=',')
     
 
@@ -130,9 +132,11 @@ def process_string(string, t1=codon_mapper(), t3=c_mapper(),onehot=True, label_o
     return {"forward_1": f1, "forward_2": f2, "forward_3": f3, "reverse_1": r1, "reverse_2" : r2, "reverse_3" : r3 }, x[1], x[2], x[3], x[4], x[5]
 
 
-def process_string_textline(t1=codon_mapper(), t3=c_mapper(),onehot=True, label_onehot=True,numclasses=4):
+def process_string_textline(t1=codon_mapper, t3=c_mapper,onehot=True, label_onehot=True,numclasses=4):
     
     def p(string):
+        t1 = t1()
+        t3 = t3()
         x = tf.strings.split(string, sep=',')
 
         label= tf.strings.to_number(x[0], tf.int32)
