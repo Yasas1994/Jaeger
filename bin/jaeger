@@ -90,6 +90,9 @@ def cmdparser():
                         nargs='?',
                         default=128, 
                         help="parallel batch size, set to a lower value if your gpu runs out of memory. default:128")
+    parser.add_argument('--getalllogits',
+                       action="store_true",
+                        help="return position-wise logits for each prediction window as a .npy file" )
     group = parser.add_mutually_exclusive_group()
 
     group.add_argument("--cpu", 
@@ -274,13 +277,14 @@ def main(args,logger):
         input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=args.fsize,stride=args.stride,num=num),
                                                         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
         idataset=input_dataset.map(process_string,
-                                num_parallel_calls=tf.data.AUTOTUNE).batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE).prefetch(5)
+                                   num_parallel_calls=tf.data.AUTOTUNE).batch(args.batch, 
+                                                                              num_parallel_calls=tf.data.AUTOTUNE).prefetch(5)
         
         inputs, outputs = WRes_model(input_shape=(None,))
         model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
         
-        logger.info(f"Model initialized \u2705")
+        logger.info(f"Model initialized ... ")
         logger.info(f'Avail Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB\n{"-"*80}')
 
         
@@ -288,22 +292,31 @@ def main(args,logger):
             for device_number,d in enumerate(device_names):
                 gpu_mem = tf.config.experimental.get_memory_info(d)
                 logger.info(f'GPU {device_number} current : {gpu_mem["current"]/(1024.0 ** 2) : .2f} GB  peak : {gpu_mem["peak"]/(1024.0 ** 2) : .2f}GB')
+        
+        if args.getalllogits:
+            output_logits = f"{input_file.rsplit('.',1)[0]}_jaeger.npy"
+            output_logits_path= os.path.join(output_dir,output_logits)
+            alllogits = {}
 
-        for c,(a,s,d,f,l) in tqdm(enumerate(extract_pred_entry(model,idataset),start=1),total=num):
+        for c,(a,s,d,_,l) in tqdm(enumerate(extract_pred_entry(model,idataset),start=1),total=num):
                 #code for further processing goes here
                 c1 = per_class_preds(s)
                 c4 = average_per_class_score(a)
-                c3[np.argmax(c1)]+=1
+                c3[np.argmax(c1)] += 1
                 c2 = get_class(c4, args.getalllabels)
                 c5 = pred2string(s)
                 write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5)
+                if args.getalllogits:
+                    alllogits[d[-1].decode()] = a
 
 
-        logger.info(f"processed {c}/{num} sequences 🦝\n" )
+        logger.info(f"processed {c}/{num} sequences \n" )
 
     input_fh.close()
     output_fh.close()
 
+    if args.getalllogits:
+        np.save(output_logits_path,alllogits)
 
 def get_output_filehandle(file_name):
     output_fh = open(file_name,'w')

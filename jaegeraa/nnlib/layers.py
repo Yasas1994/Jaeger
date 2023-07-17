@@ -146,7 +146,7 @@ def rc_resnet_block(x, name, kernel_size=[3,3],dilation_rate=[1,1], filters=[16,
 def ConvolutionalTower(inputs, num_res_blocks=5, add_residual=True):
     'Covolutional tower to increase the receptive filed size based on dilated convolutions'
 
-    x = rc_cnn(inputs, filters=128, stride=1, kernel_size=9, dilation_rate=1, padding='same')
+    x = rc_cnn(inputs, name='block1_0',filters=128, stride=1, kernel_size=9, dilation_rate=1, padding='same')
     x = rc_gelu(x)
     x = rc_batchnorm(x,name='block1_1')
     x = rc_maxpool(x,pool_size=2)

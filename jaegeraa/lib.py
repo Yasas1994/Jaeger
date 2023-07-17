@@ -1,14 +1,18 @@
 import os
+import io
 import sys
-sys.path.append('/Users/javis/Documents/Jaeger/')
+import argparse
+import logging
+import types
 import pkg_resources
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+
 from Bio import SeqIO
 from Bio.Seq import Seq
 import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import InputSpec
 import tensorflow.keras.backend as K
+
 #from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
 import numpy as np
 from jaegeraa.nnlib.layers import WRes_model
@@ -16,11 +20,7 @@ from jaegeraa.nnlib.cmodel import JaegerModel
 from jaegeraa.utils import get_compressed_file_handle
 from jaegeraa.preprocessing import fasta_gen_lib, codon_mapper, process_string, c_mapper
 from jaegeraa.postprocessing import extract_pred_entry, per_class_preds, average_per_class_score, get_class, pred2string
-import argparse
-from tqdm import tqdm
-import logging
-import types
-import io
+
 
 #write a new fasta_gen that accepts strings, file handles and SeqIO objects
 class Predictor:
