@@ -105,38 +105,44 @@ def fasta_gen_lib(filehandle,fragsize=None,stride=None,num=None): #fasta sequenc
                             yield str(seq)[index:index+fragsize]+","+str(headder.replace(',',''))+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
     return c
 
-@tf.function
-def process_string(string, t1=codon_mapper, t3=c_mapper,onehot=True, label_onehot=True):
 
-    t1 = t1()
-    t3 = t3()
-    x = tf.strings.split(string, sep=',')
-    
+def process_string(onehot=True, label_onehot=True, crop_size=2048):
+    @tf.function
+    def p(string):
+        t1,t3=codon_mapper(), c_mapper()
+        x = tf.strings.split(string, sep=',')
+        
+        if (crop_size%3) == 0:
+            offset = -2   
+        elif (crop_size%3) == 1:
+            offset = -1
+        elif (crop_size%3) == 2:
+            offset = 0
 
-    forward_strand = tf.strings.bytes_split(x[0])#split the string 
-    reverse_strand = t3.lookup(forward_strand[::-1])
-    
+        forward_strand = tf.strings.bytes_split(x[0])#split the string 
+        reverse_strand = t3.lookup(forward_strand[::-1])
+        
 
-    tri_forward =tf.strings.ngrams(forward_strand,ngram_width=3,separator='')
-    tri_reverse =tf.strings.ngrams(reverse_strand,ngram_width=3,separator='')
-    
-    f1=t1.lookup(tri_forward[::3])
-    f2=t1.lookup(tri_forward[1::3])
-    f3=t1.lookup(tri_forward[2::3])
-    
-    r1=t1.lookup(tri_reverse[::3])
-    r2=t1.lookup(tri_reverse[1::3])
-    r3=t1.lookup(tri_reverse[2::3])
-    
+        tri_forward =tf.strings.ngrams(forward_strand,ngram_width=3,separator='')
+        tri_reverse =tf.strings.ngrams(reverse_strand,ngram_width=3,separator='')
+        
+        f1=t1.lookup(tri_forward[0:-3+offset:3])
+        f2=t1.lookup(tri_forward[1:-2+offset:3])
+        f3=t1.lookup(tri_forward[2:-1+offset:3])
+        
+        r1=t1.lookup(tri_reverse[0:-3+offset:3])
+        r2=t1.lookup(tri_reverse[1:-2+offset:3])
+        r3=t1.lookup(tri_reverse[2:-1+offset:3])
+        
 
-    return {"forward_1": f1, "forward_2": f2, "forward_3": f3, "reverse_1": r1, "reverse_2" : r2, "reverse_3" : r3 }, x[1], x[2], x[3], x[4], x[5]
+        return {"forward_1": f1, "forward_2": f2, "forward_3": f3, "reverse_1": r1, "reverse_2" : r2, "reverse_3" : r3 }, x[1], x[2], x[3], x[4], x[5]
+    return p
 
-
-def process_string_textline(t1=codon_mapper, t3=c_mapper,onehot=True, label_onehot=True,numclasses=4):
+def process_string_textline(onehot=True, label_onehot=True,numclasses=4):
     
     def p(string):
-        t1 = t1()
-        t3 = t3()
+        t1,t3=codon_mapper(), c_mapper()
+
         x = tf.strings.split(string, sep=',')
 
         label= tf.strings.to_number(x[0], tf.int32)

@@ -276,8 +276,8 @@ def main(args,logger):
 
         input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=args.fsize,stride=args.stride,num=num),
                                                         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
-        idataset=input_dataset.map(process_string,
-                                   num_parallel_calls=tf.data.AUTOTUNE).batch(args.batch, 
+        idataset=input_dataset.map(process_string(crop_size=args.fsize),
+                                    num_parallel_calls=tf.data.AUTOTUNE,).batch(args.batch, 
                                                                               num_parallel_calls=tf.data.AUTOTUNE).prefetch(5)
         
         inputs, outputs = WRes_model(input_shape=(None,))

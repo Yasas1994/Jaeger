@@ -42,8 +42,8 @@ class Predictor:
         with tf.device('/cpu:0'):
             input_dataset = tf.data.Dataset.from_generator(fasta_gen_lib(input,fragsize=fragsize,stride=stride),
                                                         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
-            idataset=input_dataset.map(process_string,
-                                num_parallel_calls=tf.data.AUTOTUNE).batch(batch_size=batch, num_parallel_calls=tf.data.AUTOTUNE)
+            idataset=input_dataset.map(process_string(crop_size=fragsize,),
+                                num_parallel_calls=tf.data.AUTOTUNE,).batch(batch_size=batch, num_parallel_calls=tf.data.AUTOTUNE)
             for c,(a,s,d,f,l) in enumerate(extract_pred_entry(self.model,idataset)):
                 #code for further processing goes here
                 c1 = per_class_preds(s)
