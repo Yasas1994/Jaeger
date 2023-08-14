@@ -10,7 +10,7 @@ setup(name='jaeger',
       license='MIT',
       packages=find_packages(exclude=('*test*',)),
       package_data={'jaegeraa': ['data/WRes_1024.h5']},
-      scripts=['bin/Jaeger'],
+      scripts=['bin/jaeger'],
       install_requires=[
     
         'tqdm >=4.64.0',
