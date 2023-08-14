@@ -15,5 +15,6 @@ setup(name='jaeger',
     
         'tqdm >=4.64.0',
         'biopython >=1.78',
+        'psutil >=5',
       ]
       )
