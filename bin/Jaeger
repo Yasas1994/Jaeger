@@ -102,8 +102,8 @@ def cmdparser():
                         action="store_false",
                         help='run on gpu, runs on all gpus on the system by default: default: True')
     parser.add_argument("--simulategpus",
-                    action="store_false",
-                    help='simulate gpus to test multigpu mode: default: True')
+                    action="store_true",
+                    help='simulate gpus to test multigpu mode: default: False')
     
     parser.add_argument("--getalllabels", 
                         action="store_true",
