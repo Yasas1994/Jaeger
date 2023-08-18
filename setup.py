@@ -10,11 +10,12 @@ setup(name='jaeger',
       license='MIT',
       packages=find_packages(exclude=('*test*',)),
       package_data={'jaegeraa': ['data/WRes_1024.h5']},
-      scripts=['bin/Jaeger'],
+      scripts=['bin/Jaeger', 'bin/Jaeger_parallel'],
       install_requires=[
     
         'tqdm >=4.64.0',
         'biopython >=1.78',
         'psutil >=5',
+        'pandas >= 1.5'
       ]
       )
