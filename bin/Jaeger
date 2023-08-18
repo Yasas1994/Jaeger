@@ -303,7 +303,7 @@ def main(args,logger):
             output_logits_path= os.path.join(output_dir,output_logits)
             alllogits = {}
 
-        for c,(a,s,d,_,l) in tqdm(enumerate(extract_pred_entry(model,idataset),start=1),total=num):
+        for c,(a,s,d,_,l) in tqdm(enumerate(extract_pred_entry(model,idataset),start=1),total=num, position=0):
                 #code for further processing goes here
                 c1 = per_class_preds(s)
                 c4 = average_per_class_score(a)
