@@ -17,7 +17,7 @@
 ````
 
 
-[![Readme Quotes](https://quotes-github-readme.vercel.app/api?type=horizontal&theme=dark&quote='All+models+are+wrong,+but+some+are+useful'&author='George+Box')](https://github.com/piyushsuthar/github-readme-quotes)
+[![Readme Quotes](https://quotes-github-readme.vercel.app/api?type=horizontal&theme=light&quote='All+models+are+wrong,+but+some+are+useful'&author='George+Box')](https://github.com/piyushsuthar/github-readme-quotes)
 
 
 
