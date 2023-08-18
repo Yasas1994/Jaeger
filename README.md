@@ -16,8 +16,9 @@
  
 ````
 
+### Always keep in mind that ...
 
-[![Readme Quotes](https://quotes-github-readme.vercel.app/api?type=horizontal&theme=light&quote='All+models+are+wrong,+but+some+are+useful'&author='George+Box')](https://github.com/piyushsuthar/github-readme-quotes)
+[![Readme Quotes](https://quotes-github-readme.vercel.app/api?type=horizontal&theme=light&quote=All+models+are+wrong,+but+some+are+useful&author=George+Box)](https://github.com/piyushsuthar/github-readme-quotes)
 
 
 
@@ -115,10 +116,14 @@ export TF_CPP_MIN_LOG_LEVEL=3
 
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed FASTA files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. By default, Jaeger will run on all GPUs present on the system, however, this behavior can be overridden by providing a list of GPU names to the -gnames option, which limits the number of GPUs available for Jaeger's use. The -ofasta option will write all potential viral contigs (contigs that meet the cutoff score) into a separate file.
 
-````
-jaeger -i input_file.fasta -o output_file.fasta --batch 128
-````
-## selecting batch parameter 
+```Jaeger -i input_file.fasta -o output_dir --batch 128```
+## NEW : Running Jaeger in multi-GPU mode
+
+We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a csv file with paths to all input fasta files. Column with the file paths should be named as 'paths'. All other arguments reamains similar to 'Jaeger' program.
+
+``` Jaeger_parallel -i input_file.csv -o output_dir --batch 128 ```
+
+## Selecting batch parameter 
 
 You can control the number of parallel computations using this parameter. By default it is set to 512. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 128 is good enough for a grraphics card with 6 Gb of memory.
 
