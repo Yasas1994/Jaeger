@@ -100,11 +100,15 @@ def cmdparser():
                         help="Number of threads to use for inference. default:False")
     group.add_argument("--gpu",
                         action="store_false",
-                        help='run on gpu, runs on all gpus on the system by default: default: True')
-    parser.add_argument("--simulategpus",
+                        help='run on gpu, runs on gpu:0 by default. default: True')
+    parser.add_argument("--virtualgpu",
                     action="store_true",
-                    help='simulate gpus to test multigpu mode: default: False')
-    
+                    help='create and run jaeger on a virtualgpu. default: False')
+    parser.add_argument("--physicalid",
+                    type=int,
+                    nargs='?',
+                    default=0,
+                    help='sets the default gpu device id (for multi-gpu systems). default:0')
     parser.add_argument("--getalllabels", 
                         action="store_true",
                         help="get predicted labels for Non-Viral contigs. default:False")
@@ -213,7 +217,6 @@ def main(args,logger):
     # tf.debugging.set_log_device_placement(True)
     # if cpu mode, hide all gpus available on the system
     gpus = tf.config.list_physical_devices('GPU')
-    logger.info(gpus)
     mode = None
     if args.cpu:
         mode = 'CPU'
@@ -224,16 +227,18 @@ def main(args,logger):
 
     elif len(gpus) > 0:
         mode = 'GPU'
-        logger.info(f"gpus detected: {gpus}")
-        if args.simulategpus:
-            logger.info('Trying to simulate 2 virtual GPUs with 2048MB of mem each')
+        tf.config.set_visible_devices([gpus[args.physicalid]], 'GPU')
+        if args.virtualgpu:
+            logger.info(f'Trying to create {gpus[args.physicalid]} a virtual GPU with 4096MB of mem ')
             # Create n virtual GPUs with user defined amount of memory each
             try:
                 tf.config.set_logical_device_configuration(
-                    gpus[0],
-                    [tf.config.LogicalDeviceConfiguration(memory_limit=4096) for i in range(3)])
+                    gpus[args.physicalid],
+                    [tf.config.LogicalDeviceConfiguration(memory_limit=4096,
+                                                          experimental_device_ordinal=0) for i in range(1)])
                 logical_gpus = tf.config.list_logical_devices('GPU')
-                if len(logical_gpus) == 1:
+                logger.info(logical_gpus)
+                if len(logical_gpus) == 0:
                     logger.info('Failed to create virtual GPUs, switching back to single GPU mode')
             except Exception as e:
                 # Virtual devices must be set before GPUs have been initialized
@@ -260,19 +265,19 @@ def main(args,logger):
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
     output_fh = get_output_filehandle(output_file_path)
-    device = tf.config.list_physical_devices(mode)
+    device = tf.config.list_logical_devices(mode)
     device_names = [get_device_name(i) for i in device]
 
     if len(device) > 1:
         logger.info(f'Using MirroredStrategy {device_names}')
-        stratergy = tf.distribute.MirroredStrategy(device_names)
+        strategy = tf.distribute.MirroredStrategy(device_names)
     else:
         logger.info(f'Using OneDeviceStrategy {device_names}')
-        stratergy = tf.distribute.MirroredStrategy(device_names)
+        strategy = tf.distribute.MirroredStrategy(device_names)
 
     c3 = [0,0,0,0]
     tf.config.set_soft_device_placement(True)
-    with stratergy.scope():
+    with strategy.scope():
 
         input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=args.fsize,stride=args.stride,num=num),
                                                         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
