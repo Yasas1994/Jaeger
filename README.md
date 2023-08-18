@@ -116,12 +116,16 @@ export TF_CPP_MIN_LOG_LEVEL=3
 
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed FASTA files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. By default, Jaeger will run on all GPUs present on the system, however, this behavior can be overridden by providing a list of GPU names to the -gnames option, which limits the number of GPUs available for Jaeger's use. The -ofasta option will write all potential viral contigs (contigs that meet the cutoff score) into a separate file.
 
-```Jaeger -i input_file.fasta -o output_dir --batch 128```
+```
+Jaeger -i input_file.fasta -o output_dir --batch 128
+```
 ## NEW : Running Jaeger in multi-GPU mode
 
 We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a csv file with paths to all input fasta files. Column with the file paths should be named as 'paths'. All other arguments reamains similar to 'Jaeger' program.
 
-``` Jaeger_parallel -i input_file.csv -o output_dir --batch 128 ```
+``` 
+Jaeger_parallel -i input_file.csv -o output_dir --batch 128 
+```
 
 ## Selecting batch parameter 
 
