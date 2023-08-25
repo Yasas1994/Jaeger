@@ -97,10 +97,10 @@ def cmdparser():
 
     group.add_argument("--cpu", 
                         action="store_true",
-                        help="Number of threads to use for inference. default:False")
-    group.add_argument("--gpu",
-                        action="store_false",
-                        help='run on gpu, runs on gpu:0 by default. default: True')
+                        help="ignore available gpus and explicitly run jaeger on cpu. default: False")
+    # group.add_argument("--gpu",
+    #                     action="store_true",
+    #                     help='run on gpu, runs on gpu:0 by default. default: False')
     parser.add_argument("--virtualgpu",
                     action="store_true",
                     help='create and run jaeger on a virtualgpu. default: False')
