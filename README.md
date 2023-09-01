@@ -93,7 +93,15 @@ pip install tensorflow-metal
 
 ````
 git clone https://github.com/Yasas1994/Jaeger
+
 ````
+
+and install Jaeger
+
+```
+pip install ./Jaeger/.
+
+```
 
 ## Environmnet variables
 
