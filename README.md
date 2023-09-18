@@ -244,7 +244,9 @@ You can use [phage_contig_annotator](https://github.com/Yasas1994/phage_contig_a
 ## Acknowlegements
 
 This work was supported by the European Union’s Horizon 2020 research and innovation program, under the Marie Skłodowska-Curie Actions Innovative Training Networks grant agreement no. 955974 ([VIROINF](https://viroinf.eu/)), the European Research Council (ERC) Consolidator grant 865694 
-![Viroinf](image.png) ![MSCA](image-1.png)
+
+<img src=image.png width="210" height="84">
+<img src=image-1.png width="100" height="100">
 
 
 ascii art from  <font size="12"> https://ascii.co.uk/ </font>
