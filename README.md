@@ -241,6 +241,11 @@ This table provides information about various contigs in a metagenomic assembly.
 
 You can use [phage_contig_annotator](https://github.com/Yasas1994/phage_contig_annotator) to annotate and visualize Jaeger predictions.
 
+## Acknowlegements
+
+This work was supported by the European Union’s Horizon 2020 research and innovation program, under the Marie Skłodowska-Curie Actions Innovative Training Networks grant agreement no. 955974 ([VIROINF](https://viroinf.eu/)), the European Research Council (ERC) Consolidator grant 865694 
+![Viroinf](image.png) ![MSCA](image-1.png)
+
 
 ascii art from  <font size="12"> https://ascii.co.uk/ </font>
 
