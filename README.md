@@ -143,7 +143,7 @@ You can control the number of parallel computations using this parameter. By def
 
 ````
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -i INPUT, --input INPUT
                         path to input file
@@ -154,10 +154,15 @@ optional arguments:
   --cutoff CUTOFF       fasta output cutoff score
   --fsize [FSIZE]       length of the sliding window (value must be 2^n). default:2048
   --stride [STRIDE]     stride of the sliding window. default:2048 (stride==fsize)
+  -m {default,experimental_1,experimental_2}, --model {default,experimental_1,experimental_2}
+                        select a deep-learning model to use. default:default
   --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:128
-  --cpu                 Number of threads to use for inference. default:False
-  --gpu                 run on gpu, runs on all gpus on the system by default: default: True
-  --gpunames            Specify a list of GPU identifiers to limit computations to(--gpunames gpu:0,gpu:3)
+  --getalllogits        return position-wise logits for each prediction window as a .npy file
+  --usecutoffs          use cutoffs to obtain the class prediction
+  --cpu                 ignore available gpus and explicitly run jaeger on cpu. default: False
+  --virtualgpu          create and run jaeger on a virtualgpu. default: False
+  --physicalid [PHYSICALID]
+                        sets the default gpu device id (for multi-gpu systems). default:0
   --getalllabels        get predicted labels for Non-Viral contigs. default:False
   --meanscore           output mean predictive score per contig. deafault:True
   --fragscore           output percentage of perclass predictions per contig. deafault:True
@@ -165,10 +170,7 @@ optional arguments:
 Misc. Options:
   -v, --verbose         Verbosity level : -v warning, -vv info, -vvv debug, (default info)
   -f, --overwrite       Overwrite existing files
-  --progressbar         Turns on the progressbar
-  --simulategpus        Simulate multiple virtual GPUs to test MultiGPU inference mode
-  --numsimgpu           Number of virtual GPUs to initialize
-  --gpumem              Memory allocation for each virtual gpu in MB
+  --progressbar         show progress bar
 
   
 
