@@ -3,6 +3,7 @@ import tensorflow.keras as keras
 from tensorflow.keras.layers import InputSpec
 import tensorflow.keras.backend as K
 import numpy as np
+from jaegeraa.nnlib.cmodel import JaegerModel
 
 class HighWay(keras.layers.Layer):
     def __init__(self, units=32, input_dim=32, weights_initializer=None):
@@ -345,6 +346,29 @@ def WRes_model(type_spec=None,input_shape=None): #archeae model 1
     out = tf.keras.layers.Dense(4,name='outdense')(x)
     return [f1input,f2input,f3input,r1input,r2input,r3input],out
 
+def WRes_model_embeddings(type_spec=None,input_shape=None): #archeae model 1
+    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
+    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
+    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = []
+
+    for l in [f1input,f2input,f3input,r1input,r2input,r3input]:
+        embeddings.append(embedding_layer(l))
+    #B block
+    x=ConvolutionalTower(embeddings, num_res_blocks=5, add_residual=False)
+    x=tf.keras.layers.GlobalMaxPool1D()(x)
+    #C block
+    x = tf.keras.layers.Dropout(0.1)(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name='augdense-1')(x)
+    x = tf.keras.layers.Dropout(0.1)(x)
+    gmp = tf.keras.layers.Dense(128, activation=tf.nn.gelu,name='augdense-2')(x)
+    out = tf.keras.layers.Dense(4,name='outdense')(gmp)
+    return [f1input,f2input,f3input,r1input,r2input,r3input],[out,gmp]
+
 def LSTM_model(type_spec=None,input_shape=None): #archeae model 1
     f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
     f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
@@ -425,3 +449,182 @@ def Vitra(input_shape=(None,),type_spec=None,num_patches=512,transformer_layers 
     # Create the Keras model.
     return [f1input,f2input,f3input,r1input,r2input,r3input],logits
 
+####layers for the second generation models
+class GlobalMaxPoolingPerFeature(tf.keras.layers.Layer):
+    ''''Apply max_reduce along the last axis. Re-implementation of GlobalMaxPooling1D layer for 
+    Biological sequences'''
+    def __init__(self, **kwargs):
+        super(GlobalMaxPoolingPerFeature, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        # Take the maximum value along the feature axis
+        return tf.reduce_max(inputs, axis=-1, keepdims=False, name='global_max_per_position')
+
+    def compute_output_shape(self, input_shape):
+        # Output shape will have the same batch size and the number of features
+        return (input_shape[0], input_shape[2])
+    
+class MaxReduce(tf.keras.layers.Layer):
+    '''Apply max_reduce along the frame axis'''
+    def __init__(self, **kwargs):
+        super(MaxReduce, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        # Take the maximum value along the frame axis
+        return tf.reduce_max(inputs, axis=1, keepdims=False, name='max_reduce')
+
+    def compute_output_shape(self, input_shape):
+        # Output shape will have the same batch size and the number of features
+        return (input_shape[0],input_shape[2], input_shape[3])
+    
+class MeanReduce(tf.keras.layers.Layer):
+    '''Apply mean_reduce along the frame axis'''
+    def __init__(self, **kwargs):
+        super(MeanReduce, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        # Take the maximum value along the frame axis
+        return tf.reduce_mean(inputs, axis=1, keepdims=False, name='max_reduce')
+
+    def compute_output_shape(self, input_shape):
+        # Output shape will have the same batch size and the number of features
+        return (input_shape[0],input_shape[2], input_shape[3])
+    
+class SumReduce(tf.keras.layers.Layer):
+    '''Apply sum_reduce along the frame axis'''
+    def __init__(self, **kwargs):
+        super(SumReduce, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        # Take the maximum value along the frame axis
+        return tf.reduce_sum(inputs, axis=1, keepdims=False, name='max_reduce')
+
+    def compute_output_shape(self, input_shape):
+        # Output shape will have the same batch size and the number of features
+        return (input_shape[0],input_shape[2], input_shape[3])
+    
+class CustomPooling1D(tf.keras.layers.Layer):
+    '''Apply 1D pooling along a defined axis'''
+    def __init__(self, pool_size, axis, **kwargs):
+        super(CustomPooling1D, self).__init__(**kwargs)
+        self.pool_size = pool_size
+        self.axis = axis
+
+    def call(self, inputs):
+        return tf.nn.pool(inputs, window_shape=[1, self.pool_size, 1, 1], strides=[1, self.pool_size, 1, 1],
+                          pooling_type='MAX', padding='SAME', data_format='NHWC')
+
+    def compute_output_shape(self, input_shape):
+        output_shape = list(input_shape)
+        output_shape[self.axis] = (input_shape[self.axis] - self.pool_size) // self.pool_size + 1
+        return tuple(output_shape)
+   
+    
+def resnet_block_g2(x, name, kernel_size=[3,3],dilation_rate=[1,1], filters=[16,16],add_residual=True): #simple resnet for viruses#
+    '''x: input tensor
+       name:name for the block
+       kernel_size: a list specifying the kernel size of each conv layer
+       dilation_rate: a list specifying the dilation rate of each conv layer
+       filter:  a list specifying the number of filters of each conv layer
+       shared_weights: whether to use reverse conplement parameter sharing.(True)
+       add_residual: whether to add residual connections.(True)
+    '''
+
+    
+    xx=tf.keras.layers.Conv1D(filters[0], kernel_size[0], strides=1, dilation_rate=dilation_rate[0],
+                             padding='same',name=f'{name}_{1}',
+                             kernel_initializer=tf.keras.initializers.Orthogonal(gain=2))(x)
+    
+    xx = tf.keras.layers.BatchNormalization(axis=-1,name=f'{name}_{1}_norm')(xx)
+    xx = tf.nn.relu(xx)
+    # Create layers
+    for n, (k, d, f) in enumerate(zip(kernel_size[1:], dilation_rate[1:], filters[1:]),1):
+        
+
+        xx = tf.keras.layers.Conv1D(f, k, strides=1, dilation_rate=d,
+                                 padding='same',name=f'{name}_{n+2}',
+                                 kernel_initializer=tf.keras.initializers.Orthogonal(gain=2))(xx)
+        
+        xx = tf.keras.layers.BatchNormalization(axis=-1,name=f'{name}_{n+2}_norm')(xx)
+        xx = tf.nn.leaky_relu(xx,alpha=0.1)
+
+    #scale up the skip connection output if the filter sizes are different 
+    
+    if (x.shape[-1] != filters[-1]) and add_residual:
+        
+        x = tf.keras.layers.Conv1D(filters[-1], 1, strides=1, dilation_rate=1,
+                         name=f'{name}_skip',
+                         kernel_initializer=tf.keras.initializers.Orthogonal(gain=2))(x)
+        
+        
+        x = tf.keras.layers.BatchNormalization(axis=-1,name=f'{name}_skip_norm')(x)
+        x = tf.nn.leaky_relu(x,alpha=0.1)
+    
+    # Add Residue
+    if add_residual:
+        return tf.keras.layers.Add()([x,xx])
+    else:
+        return xx
+
+def ConvolutionalTower_g2(x, num_res_blocks=5, add_residual=True):
+    'Covolutional tower to increase the receptive filed size with dilated convolutions'
+    
+    x=tf.keras.layers.Conv1D(128, 9, strides=1, dilation_rate=1,
+                         padding='same',name=f'conv1',
+                         kernel_initializer=tf.keras.initializers.Orthogonal(gain=2))(x)
+    
+    x = tf.keras.layers.MaxPooling2D(pool_size=(1,2))(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1,name=f'block1_1')(x)
+    x = tf.nn.leaky_relu(x,alpha=0.1)
+
+    x = tf.keras.layers.Conv1D(128, 3, strides=1, dilation_rate=2,
+                         padding='same',name=f'conv2',
+                         kernel_initializer=tf.keras.initializers.Orthogonal(gain=2))(x)
+    
+    x = tf.keras.layers.BatchNormalization(axis=-1,name=f'block1_2')(x)
+    x = tf.nn.leaky_relu(x,alpha=0.1)
+  #  x = tf.keras.layers.MaxPooling1D(pool_size=2)(x)
+
+    if num_res_blocks:
+        for i,n in enumerate(range(num_res_blocks)):
+            x = (lambda x,n : resnet_block_g2(x,
+                                         name=f'block2_{n}',
+                                         kernel_size=[3,3],
+                                         dilation_rate=[3,3], 
+                                         filters=[256,256], 
+                                         add_residual=add_residual))(x,n)
+
+    return x
+
+def create_jaeger_model(input_shape,vocab_size=22,embedding_size=4,out_shape=6,bias_init=None):
+    
+    inputs = tf.keras.Input(shape=input_shape,name="translated")
+#     embedding_layer = tf.keras.layers.Embedding(vocab_size,
+#                                                 embedding_size, 
+#                                                 name="aa-embedding",
+#                                                 mask_zero=True)
+
+#     x = embedding_layer(inputs)
+    x = ConvolutionalTower_g2(inputs, num_res_blocks=10, add_residual=True)
+    #A block 
+    x = SumReduce()(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1,name=f'sum_reduce_norm')(x)
+    x = tf.keras.layers.GlobalAveragePooling1D()(x) #create amino acid feature vec
+    #x batch-norm and dropout do not play nicely together https://doi.org/10.48550/arXiv.1801.05134
+    x = tf.keras.layers.Dense(32, activation=tf.nn.relu, name='augdense-1', 
+                              kernel_initializer=tf.keras.initializers.HeNormal(),
+                              kernel_regularizer=tf.keras.regularizers.L2(1e-4))(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1,name=f'dense1')(x)
+    x = tf.keras.layers.Dense(32, activation=tf.nn.relu, name='augdense-2',
+                              kernel_initializer=tf.keras.initializers.HeNormal(),
+                              kernel_regularizer=tf.keras.regularizers.L2(1e-4))(x)
+    x1 = tf.keras.layers.BatchNormalization(axis=-1,name=f'dense2')(x)
+    #x = tf.keras.layers.Dense(dense_c2_nodes, activation=tf.nn.gelu,name='augdense-2',
+    #                          kernel_regularizer=tf.keras.regularizers.L2(1e-4))(x)
+    if bias_init is not None:
+        bias_init = tf.keras.initializers.Constant(bias_init)
+    out = tf.keras.layers.Dense(out_shape, name='outdense', dtype='float32',
+                                kernel_initializer=tf.keras.initializers.HeNormal(),
+                                use_bias=True, bias_initializer=bias_init)(x1) #validation loss jumps when bias is removed
+
+    return JaegerModel(inputs,[out,x1])

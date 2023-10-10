@@ -9,14 +9,17 @@ The Jaeger approach uses homology-free machine learning to identify
 """
 
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import sys
 import psutil
 import argparse
 import logging
 import numpy as np
-import pkg_resources
+from importlib_resources import files
 from tqdm import tqdm
 from functools import partialmethod
+import json
+import h5py
 
 from Bio import SeqIO
 from tensorflow import __version__ as tfv
@@ -27,14 +30,13 @@ import tensorflow.keras.backend as K
 #from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
 
 from jaegeraa import __version__
-from jaegeraa.nnlib.layers import WRes_model
+from jaegeraa.nnlib.layers import WRes_model, create_jaeger_model
 from jaegeraa.nnlib.cmodel import JaegerModel
 from jaegeraa.utils import get_compressed_file_handle
-from jaegeraa.preprocessing import fasta_gen, codon_mapper, process_string, c_mapper, process_string_textline
-from jaegeraa.postprocessing import extract_pred_entry, per_class_preds, average_per_class_score, get_class, pred2string
+from jaegeraa.preprocessing import fasta_gen, codon_mapper, process_string, process_string_gen2, c_mapper, process_string_textline
+from jaegeraa.postprocessing import extract_pred_entry, per_class_preds, average_per_class_score, get_class, pred2string, get_ood_probability
 
-weights_root = pkg_resources.resource_filename('jaegeraa', 'data')
-weights_path = os.path.join(weights_root,'WRes_1024.h5')
+
 
 
 def dir_path(path):
@@ -55,7 +57,7 @@ def file_path(path):
 
 def cmdparser():
     '''cmdline argument parser'''
-    parser = argparse.ArgumentParser(description=f'\n## Jaeger {__version__} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git',
+    parser = argparse.ArgumentParser(description=f'\n\n## Jaeger {__version__} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git',
     usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i","--input",
                         type=file_path,
@@ -79,12 +81,15 @@ def cmdparser():
                         nargs='?',
                         default=2048, 
                         help="length of the sliding window (value must be 2^n). default:2048")
-
     parser.add_argument("--stride", 
                         type=int,
                         nargs='?',
                         default=2048, 
                         help="stride of the sliding window. default:2048 (stride==fsize)")
+    parser.add_argument("-m", "--model", 
+                            choices=['default', 'experimental_1', 'experimental_2'],
+                            default='default', 
+                            help="select a deep-learning model to use. default:default")
     parser.add_argument("--batch", 
                         type=int,
                         nargs='?',
@@ -93,14 +98,15 @@ def cmdparser():
     parser.add_argument('--getalllogits',
                        action="store_true",
                         help="return position-wise logits for each prediction window as a .npy file" )
+    parser.add_argument('--usecutoffs',
+                       action="store_true",
+                        help="use cutoffs to obtain the class prediction" )
     group = parser.add_mutually_exclusive_group()
 
     group.add_argument("--cpu", 
                         action="store_true",
                         help="ignore available gpus and explicitly run jaeger on cpu. default: False")
-    # group.add_argument("--gpu",
-    #                     action="store_true",
-    #                     help='run on gpu, runs on gpu:0 by default. default: False')
+
     parser.add_argument("--virtualgpu",
                     action="store_true",
                     help='create and run jaeger on a virtualgpu. default: False')
@@ -173,18 +179,62 @@ def create_virtual_gpus(logger, num_gpus=2, memory_limit=2048):
             # Virtual devices must be set before GPUs have been initialized
             logger.error(e)
             
+def get_output_filehandle(file_name, config):
+    output_fh = open(file_name,'w')
+
+    output_fh.write("\t".join(config['header'])+"\n")
+            
+    return output_fh
+
+def write_to_output_filehandle(file_handle,d,l,c1,c2,c4,c5,c6):
+    frag_counts = "\t".join([str(i) for i in c1])
+    scores = "\t".join([str(round(i,3)) for i in c4])
+    file_handle.write(f"{d[-1].decode()}\t{l[-1]}\t{frag_counts}\t{c2[0]}\t{scores}\t{c5}\t{c6}\n")
+
+
+def fasta_entries(input_file_handle):
+    num = 0
+    for i in input_file_handle: 
+        if i.startswith('>'):
+            num+=1
+    input_file_handle.seek(0)
+    return num
+    
 def main(args,logger):
 
     args = args() 
     logger = logger(args)
-
+    config =json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
     logger.info(f"{__version__}\n\n" + "{:-^80}".format("validating parameters"))
-    weights_root = pkg_resources.resource_filename('jaegeraa', 'data')
-    weights_path = os.path.join(weights_root,'WRes_1024.h5')
+
+
+    weights_path = files('jaegeraa.data').joinpath(config[args.model]['weights'])
+    num_class = config[args.model]['num_classes']
+    ood_params = None
     if not os.path.exists(weights_path):
         logger.error('Could not find model weights. Please check the data dir')
     else:
         logger.info(f'Using {weights_path} to build the model')
+    
+    if config[args.model]['ood']:
+        ood_weights_path = files('jaegeraa.data').joinpath(config[args.model]['ood'])
+        hf = h5py.File(ood_weights_path, 'r')
+
+        ood_params = {'coeff': np.array(hf['coeff']), 
+                      'intercept' : np.array(hf['intercept']),
+                      'mean_batch' : np.array(hf['mean_batch'], dtype='float16')}
+        hf.close()
+        
+    if args.usecutoffs:
+        cutoffs = config[args.model]['cutoffs']
+        cutoffs = np.array([[cutoffs[str(i)] for i in range(len(cutoffs))]])
+    else:
+        cutoffs = None
+    
+    if args.getalllabels:
+        labels = [v for k,v in config[args.model]['all_labels'].items()]
+    else:
+        labels = [v for k,v in config[args.model]['default_labels'].items()]
 
     # prepare output directory
     output_dir = args.output
@@ -198,7 +248,7 @@ def main(args,logger):
     input_file_path=args.input
     input_file = os.path.basename(input_file_path)
     if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
-        output_file = f"{input_file.rsplit('.',1)[0]}_jaeger.tsv"
+        output_file = f"{input_file.rsplit('.',1)[0]}_{config[args.model]['suffix']}_jaeger.tsv"
         output_file_path= os.path.join(output_dir,output_file)
         if os.path.exists(output_file_path):
             if not args.overwrite:
@@ -211,7 +261,7 @@ def main(args,logger):
         #disable progressbar
         tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
         
-    seed = 8959
+    seed = 54920
     tf.random.set_seed(seed)
     # enables switching to a compatible GPU/CPU if the specified gpu is invalid 
     # tf.debugging.set_log_device_placement(True)
@@ -264,7 +314,7 @@ def main(args,logger):
 
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
-    output_fh = get_output_filehandle(output_file_path)
+    output_fh = get_output_filehandle(output_file_path, config[args.model])
     device = tf.config.list_logical_devices(mode)
     device_names = [get_device_name(i) for i in device]
     #print(device, device_names)
@@ -276,20 +326,34 @@ def main(args,logger):
         logger.info(f'Using OneDeviceStrategy {device_names}')
         strategy = tf.distribute.OneDeviceStrategy(device_names[0])
 
-    c3 = [0,0,0,0]
+    c3 = [0 for i in range(num_class)]
     tf.config.set_soft_device_placement(True)
     with strategy.scope():
 
         input_dataset = tf.data.Dataset.from_generator(fasta_gen(input_fh,fragsize=args.fsize,stride=args.stride,num=num),
                                                         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)))
-        idataset=input_dataset.map(process_string(crop_size=args.fsize),
-                                    num_parallel_calls=tf.data.AUTOTUNE,).batch(args.batch, 
-                                                                              num_parallel_calls=tf.data.AUTOTUNE).prefetch(5)
+        if args.model == "default":
+            idataset=input_dataset.map(process_string(crop_size=args.fsize),
+                                        num_parallel_calls=tf.data.AUTOTUNE,).batch(args.batch, 
+                                        num_parallel_calls=tf.data.AUTOTUNE).prefetch(5)
+            inputs, outputs = WRes_model(input_shape=(None,))
+            model = JaegerModel(inputs=inputs, outputs=outputs)
+            
+        else:
+            insize = (int(args.fsize)//3)-1 
+            idataset=input_dataset.map(process_string_gen2(crop_size=args.fsize),
+                            num_parallel_calls=tf.data.AUTOTUNE,).padded_batch(args.batch, 
+                            padded_shapes=(({
+                                    'nucleotide': [2,int(args.fsize),4], 
+                                    'translated': [6,insize,11], },(),(),(),(),()))).prefetch(5)
+                  
+                      
+            model = create_jaeger_model(input_shape=(6,insize,11),out_shape=num_class)
+            
         
-        inputs, outputs = WRes_model(input_shape=(None,))
-        model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
-        
+        #model.summary()
+        #print(model.layers[-5].weights)
         logger.info(f"Model initialized ... ")
         logger.info(f'Avail Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB\n{"-"*80}')
 
@@ -305,14 +369,16 @@ def main(args,logger):
             alllogits = {}
 
         c = 0
-        for c,(a,s,d,_,l) in tqdm(enumerate(extract_pred_entry(model,idataset),start=1),total=num, position=0):
+        #print(ood_params)
+        for c,(a,s,ood,d,_,l) in tqdm(enumerate(extract_pred_entry(model,idataset,num_class,cutoffs,ood_params=ood_params),start=1),total=num, position=0):
                 #code for further processing goes here
-                c1 = per_class_preds(s)
+                c1 = per_class_preds(s, numclass=num_class)
                 c4 = average_per_class_score(a)
                 c3[np.argmax(c1)] += 1
-                c2 = get_class(c4, args.getalllabels)
-                c5 = pred2string(s)
-                write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5)
+                c2 = get_class(c4, labels)
+                c5 = pred2string(s, config[args.model]['vindex'])
+                c6 = get_ood_probability(ood)
+                write_to_output_filehandle(output_fh,d,l,c1,c2,c4,c5,c6)
                 if args.getalllogits:
                     alllogits[d[-1].decode()] = a
 
@@ -325,26 +391,7 @@ def main(args,logger):
     if args.getalllogits:
         np.save(output_logits_path,alllogits)
 
-def get_output_filehandle(file_name):
-    output_fh = open(file_name,'w')
-    output_fh.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format('contig_id','length','#num_prok_windows',
-                                                                                '#num_vir_windows','#num_fun_windows',
-                                                                                '#num_arch_windows','prediction','bac_score',
-                                                                            'vir_score', 'fun_score','arch_score', 'window_summary'))
-            
-    return output_fh
 
-def write_to_output_filehandle(file_handle,d,l,c1,c2,c4,c5):
-    file_handle.write(f"{d[-1].decode()}\t{l[-1]}\t{c1[0]}\t{c1[1]}\t{c1[2]}\t{c1[3]}\t{c2[0]}\t{c4[0]:.4f}\t{c4[1]:.4f}\t{c4[2]:.4f}\t{c4[3]:.4f}\t{c5}\n")
-
-
-def fasta_entries(input_file_handle):
-    num = 0
-    for i in input_file_handle: 
-        if i.startswith('>'):
-            num+=1
-    input_file_handle.seek(0)
-    return num
 
 
 if __name__ == "__main__":
