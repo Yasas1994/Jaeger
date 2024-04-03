@@ -297,7 +297,6 @@ def main(args):
         split_indices = np.where(np.array(y_pred['meta'][2], dtype=np.int32) == 1)[0]+1
         if y_pred['y_hat']['output'].shape[0] == split_indices[-1]:
             split_indices = split_indices[:-1]
-        print(y_pred['y_hat']['output'])
         predictions = np.split(y_pred['y_hat']['output'], split_indices, axis=0)
         headers = np.split(np.array(y_pred['meta'][0], dtype=np.unicode_),split_indices, axis=0)
         lengths = np.split(np.array(y_pred['meta'][4], dtype=np.int32),split_indices, axis=0)
