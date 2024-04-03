@@ -57,7 +57,24 @@ def rc_cnn(x, name='', filters=16, stride=1, kernel_size=5,dilation_rate=1,paddi
         
     return outputs
 
+class SplitLayer(tf.keras.layers.Layer):
+    def __init__(self, num_splits, axis=1, **kwargs):
+        super(SplitLayer, self).__init__(**kwargs)
+        self.num_splits = num_splits
+        self.axis = axis
 
+    def build(self, input_shape):
+        # No trainable weights needed
+        super(SplitLayer, self).build(input_shape)
+
+    def call(self, inputs):
+        splits = tf.split(inputs, self.num_splits, axis=self.axis)
+        return splits
+
+    def compute_output_shape(self, input_shape):
+        output_shape = list(input_shape)
+        output_shape[self.axis] = input_shape[self.axis] // self.num_splits
+        return [tuple(output_shape) for _ in range(self.num_splits)]
     
 def rc_batchnorm(x, name):
 
@@ -70,7 +87,14 @@ def rc_batchnorm(x, name):
         
     return outputs
 
-        
+def rc_batchnorm2(x, name):
+
+    splits = len(x)
+    x = tf.keras.layers.Concatenate(axis=0)(x)
+    x = tf.keras.layers.BatchNormalization(name=f'bn_{name}')(x)
+    x = SplitLayer(axis=0,num_splits=splits)(x)
+
+    return x       
 
 def rc_maxpool(x, pool_size=2):
     f = tf.keras.layers.MaxPooling1D(pool_size=pool_size)
@@ -108,6 +132,7 @@ def rc_resnet_block(x, name, kernel_size=[3,3],dilation_rate=[1,1], filters=[16,
                 dilation_rate=dilation_rate[0])
     xx= rc_gelu(xx)
     xx = rc_batchnorm(xx,name=f'{name}{1}')
+    
     # Create layers
     for n, (k, d, f) in enumerate(zip(kernel_size[1:], dilation_rate[1:], filters[1:])):
         xx = rc_cnn(xx,
@@ -118,6 +143,7 @@ def rc_resnet_block(x, name, kernel_size=[3,3],dilation_rate=[1,1], filters=[16,
                                 dilation_rate=d)
         xx = rc_gelu(xx)
         xx = rc_batchnorm(xx,name=f'{name}{n+2}')
+        
     
 
     #scale up the skip connection output if the filter sizes are different 
@@ -132,6 +158,7 @@ def rc_resnet_block(x, name, kernel_size=[3,3],dilation_rate=[1,1], filters=[16,
         x = rc_gelu(x)
         x = rc_batchnorm(x,name=f'{name}_skip')
         
+        
     # Add Residue
     outputs = []
     add = tf.keras.layers.Add()
@@ -143,6 +170,15 @@ def rc_resnet_block(x, name, kernel_size=[3,3],dilation_rate=[1,1], filters=[16,
     else:
         return rc_gelu(xx)
 
+'''
+order of operations
+
+original batch norm paper suggested that BN should be applied
+before the non-linear transformation. However, in practice, BN 
+is applied after the non-linearity as it is shown perform better.
+
+linear transformation -> non-linearity -> batch norm
+'''
 
 def ConvolutionalTower(inputs, num_res_blocks=5, add_residual=True):
     'Covolutional tower to increase the receptive filed size based on dilated convolutions'
@@ -151,6 +187,7 @@ def ConvolutionalTower(inputs, num_res_blocks=5, add_residual=True):
     x = rc_gelu(x)
     x = rc_batchnorm(x,name='block1_1')
     x = rc_maxpool(x,pool_size=2)
+
     x = rc_cnn(x,name='block1_1',filters=128, stride=1, kernel_size=5, dilation_rate = 2,padding='same')
     x = rc_gelu(x)
     x = rc_batchnorm(x, name='block1_2')
@@ -344,7 +381,7 @@ def WRes_model(type_spec=None,input_shape=None): #archeae model 1
     x = tf.keras.layers.Dropout(0.1)(x)
     x = tf.keras.layers.Dense(128, activation=tf.nn.gelu,name='augdense-2')(x)
     out = tf.keras.layers.Dense(4,name='outdense')(x)
-    return [f1input,f2input,f3input,r1input,r2input,r3input],out
+    return [f1input,f2input,f3input,r1input,r2input,r3input],{'output':out}
 
 def WRes_model_embeddings(type_spec=None,input_shape=None): #archeae model 1
     f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
@@ -627,4 +664,4 @@ def create_jaeger_model(input_shape,vocab_size=22,embedding_size=4,out_shape=6,b
                                 kernel_initializer=tf.keras.initializers.HeNormal(),
                                 use_bias=True, bias_initializer=bias_init)(x1) #validation loss jumps when bias is removed
 
-    return JaegerModel(inputs,[out,x1])
+    return inputs,out

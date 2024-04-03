@@ -26,17 +26,33 @@ def codon_mapper():
     trimer_table = tf.lookup.StaticHashTable(trimer_init, default_value=0)
     
     return trimer_table
+def amino_mapper():
+    '''maps each amino acid to a integer'''
+    aa = tf.constant(['F','L','I','M','V',
+                      'S','P','T','A','Y',
+                      '*','H','Q','N','K',
+                      'D','E','C','W',
+                      'R','G',])
+    aa_num = tf.constant([1,2,3,4,5,
+                          6,7,8,9,10,
+                          21,11,12,13,
+                          14,15,16,17,
+                          18,19,20])
+    aa_init = tf.lookup.KeyValueTensorInitializer(aa, aa_num)
+    aa_table = tf.lookup.StaticHashTable(aa_init, default_value=0)
+    
+    return aa_table
 
 def c_mapper():
     '''returns a hash table that maps the input nucleotide string to its complementry sequence'''
     rc_keys = tf.constant([b'A', b'T', b'G', b'C',b'a', b't', b'g', b'c'])
-    rc_vals = tf.constant([b'T', b'A', b'C', b'G',b'T', b'A', b'C', b'G'])
+    rc_vals = tf.constant([b'T', b'A', b'C', b'G',b't', b'a', b'c', b'g'])
     rc_init = tf.lookup.KeyValueTensorInitializer(rc_keys, rc_vals)
     rc_table = tf.lookup.StaticHashTable(rc_init, default_value="N")
     
     return rc_table
 
-def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence generator
+def fasta_gen(filehandle,fragsize=None,stride=None,num=None, disable=False): #fasta sequence generator
     '''returns a nucleotide fragment generator '''
     #filename here is a reference to a file handle
     #should also be able to handle small sequences
@@ -44,17 +60,17 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None): #fasta sequence ge
     def c():
         #accepts a reference to a file handle
         
-            #for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(filehandle), total=num, bar_format='{l_bar}{bar:80}{r_bar}{bar:-10b}'):
-            for record in SeqIO.FastaIO.SimpleFastaParser(filehandle):
-
+            for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(filehandle), total=num, ascii=' >=',bar_format='{l_bar}{bar:10}{r_bar}',dynamic_ncols=True,unit='seq' ,colour='green', disable=disable):
+            #for record in SeqIO.FastaIO.SimpleFastaParser(filehandle):
                 seqlen=len(record[1]) #move size filtering to a separate preprocessing step
+                sequence = str(record[1]).upper()
                 if seqlen >= fragsize: #filters the sequence based on size
                     if fragsize is None: #if no fragsize, return the entire sequence 
-                        yield str(record[1])+","+str(record[0].replace(',','_')) #sequence and sequence headder 
+                        yield sequence +","+str(record[0].replace(',','_')) #sequence and sequence headder 
                     elif fragsize is not None:
                         
                         for i,(l,index) in enumerate(signal_l(range(0,seqlen-(fragsize-1),fragsize if stride is None else stride))):
-                            yield str(record[1])[index:index+fragsize]+","+str(record[0].split(',')[0])+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
+                            yield sequence[index:index+fragsize]+","+str(record[0].split(',')[0])+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
     return c
 
 
@@ -138,6 +154,26 @@ def process_string(onehot=True, label_onehot=True, crop_size=2048):
         
 
         return {"forward_1": f1, "forward_2": f2, "forward_3": f3, "reverse_1": r1, "reverse_2" : r2, "reverse_3" : r3 }, x[1], x[2], x[3], x[4], x[5]
+    return p
+
+def process_string_textline_protein(label_onehot=True,numclasses=4):
+    
+    def p(string):
+        t1=amino_mapper()
+
+        x = tf.strings.split(string, sep=',')
+
+        label= tf.strings.to_number(x[0], tf.int32)
+        label= tf.cast(label, dtype=tf.int32)
+
+        prot_strand = tf.strings.bytes_split(x[1])#split the string 
+
+        protein=t1.lookup(prot_strand)
+
+        if label_onehot:
+            label = tf.one_hot(label, depth=numclasses, dtype=tf.float32, on_value=1, off_value=0)
+
+        return protein, label
     return p
 
 def process_string_textline(onehot=True, label_onehot=True,numclasses=4):
@@ -276,22 +312,22 @@ def codon_bias_mapper():
 #convert to complement 
 def complement_mapper():
     rc_keys = tf.constant([b'A', b'T', b'G', b'C',b'a', b't', b'g', b'c'])
-    rc_vals = tf.constant([b'T', b'A', b'C', b'G',b'T', b'A', b'C', b'G'])
+    rc_vals = tf.constant([b'T', b'A', b'C', b'G',b't', b'a', b'c', b'g'])
     rc_init = tf.lookup.KeyValueTensorInitializer(rc_keys, rc_vals)
     rc_table = tf.lookup.StaticHashTable(rc_init, default_value="N")
     
     return rc_table
 
 def nuc_enc_mapper():
-    keys_tensor = tf.constant([b'A', b'G', b'C', b'T'])
-    vals_tensor = tf.constant([0,1,2,3])
+    keys_tensor = tf.constant([b'A', b'G', b'C', b'T',b'a', b'g', b'c', b't'])
+    vals_tensor = tf.constant([0,1,2,3,0,1,2,3])
     ini = tf.lookup.KeyValueTensorInitializer(keys_tensor, vals_tensor)
     nem = tf.lookup.StaticHashTable(ini, default_value=-1)
     return nem
 
 def alt_nuc_enc_mapper():
-    keys_tensor = tf.constant([b'A', b'G', b'C', b'T'])
-    vals_tensor = tf.constant([0,1,1,0])
+    keys_tensor = tf.constant([b'A', b'G', b'C', b'T',b'a', b'g', b'c', b't'])
+    vals_tensor = tf.constant([0,1,1,0,0,1,1,0])
     ini = tf.lookup.KeyValueTensorInitializer(keys_tensor, vals_tensor)
     anem = tf.lookup.StaticHashTable(ini, default_value=-1)
     return anem
@@ -375,10 +411,10 @@ def process_string_gen2(onehot=True,
             seq = tf.stack([f1,f2,f3,r1,r2,r3],1)
         else:
             seq = tf.stack([f1,f2,f3,r1,r2,r3],0)
-            nuc = tf.stack([nuc1,nuc2],0)
+            #nuc = tf.stack([nuc1,nuc2],0)
             # code = tf.stack([fb1,fb2,fb3,rb1,rb2,rb3],0) # codon bias encoder
             
 
-        return {'translated':tf.one_hot(seq,depth=11, dtype=tf.float32, on_value=1, off_value=0),
-                'nucleotide': tf.one_hot(nuc, depth=4, dtype=tf.float32, on_value=1, off_value=0)}, x[1], x[2], x[3], x[4], x[5]
+        return {'translated':tf.one_hot(seq,depth=11, dtype=tf.float32, on_value=1, off_value=0)},x[1], x[2], x[3], x[4], x[5]
+                #'nucleotide': tf.one_hot(nuc, depth=4, dtype=tf.float32, on_value=1, off_value=0)}, 
     return p

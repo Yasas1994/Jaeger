@@ -6,7 +6,7 @@ from tqdm import tqdm
 import argparse
 import pandas as pd
 from collections import defaultdict
-from jaegeraa import __version__
+from importlib.metadata import metadata, version
 
 
 def dir_path(path):
@@ -27,7 +27,7 @@ def file_path(path):
         
 def cmdparser():
     '''cmdline argument parser'''
-    parser = argparse.ArgumentParser(description=f'\n## Jaeger {__version__} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery (parallel execution) \nhttps://github.com/Yasas1994/Jaeger.git',
+    parser = argparse.ArgumentParser(description=f'\n## Jaeger {version("jaeger")} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery (parallel execution) \nhttps://github.com/Yasas1994/Jaeger.git',
     usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i","--input",
                         type=file_path,
