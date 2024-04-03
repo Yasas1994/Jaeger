@@ -7,3 +7,6 @@ notebooks/*
 build/
 jaeger.egg-info/
 .DS_store
+test/new
+test/all_prophages
+test_config.py
