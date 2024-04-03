@@ -1,6 +1,7 @@
 conda_recipe/*
 __pycache__/
 test/output/*
+test/*jaeger*
 notebooks
 notebooks/*
 build/
