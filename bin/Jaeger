@@ -1,6 +1,7 @@
 #!/usr/bin/env python
+
 """
-Copyright 2022 R. Y. Wijesekara
+Copyright 2022 R. Y. Wijesekara - University Medicine Greifswald, Germany
 
 Identifying phage genome sequences concealed in metagenomes is a 
 long standing problem in viral metagenomics and ecology. 
@@ -21,6 +22,7 @@ from tqdm import tqdm
 from functools import partialmethod
 import json
 import h5py
+import joblib
 
 from Bio import SeqIO
 import pandas as pd
@@ -28,14 +30,13 @@ import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import InputSpec
 import tensorflow.keras.backend as K
-#from tensorflow.data import Dataset, TextLineDataset, TFRecordDataset
 
 
-from jaegeraa.nnlib.layers import WRes_model, create_jaeger_model
+from jaegeraa.nnlib.layers import WRes_model_embeddings, create_jaeger_model
 from jaegeraa.nnlib.cmodel import JaegerModel
 from jaegeraa.utils import get_compressed_file_handle, dir_path, file_path, fasta_entries, get_device_name, create_logger, remove_directory
 from jaegeraa.preprocessing import fasta_gen,process_string, process_string_gen2
-from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plot_scores, segment, get_cordinates
+from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plot_scores, segment, get_cordinates, ood_predict_default, softmax_entropy
 
 
 
@@ -144,13 +145,29 @@ def main(args):
     
     if config[args.model]['ood']:
         ood_weights_path = files('jaegeraa.data').joinpath(config[args.model]['ood'])
-        hf = h5py.File(ood_weights_path, 'r')
+        if ood_weights_path.suffix =='.h5':
 
-        ood_params = {'coeff': np.array(hf['coeff']), 
-                      'intercept' : np.array(hf['intercept']),
-                      'mean_batch' : np.array(hf['mean_batch'], dtype='float16')}
-        hf.close()
-        
+            hf = h5py.File(ood_weights_path, 'r')
+
+            ood_params = {
+                        'type':'params',
+                        'coeff': np.array(hf['coeff']), 
+                        'intercept' : np.array(hf['intercept']),
+                        'batch_mean' : np.array(hf['batch_mean']),
+                        'batch_std' : np.array(hf['batch_std'])}
+            hf.close()
+
+        elif ood_weights_path.suffix == '.pkl':
+
+            mean_file = files('jaegeraa.data').joinpath('batch_means.npy')
+            std_file = files('jaegeraa.data').joinpath('batch_std.npy')
+            batch_mean = np.load(mean_file)
+            batch_std = np.load(std_file)
+            ood_params = {'type':'sklearn',
+                          'model':joblib.load(ood_weights_path),
+                          'batch_mean' : batch_mean,
+                          'batch_std' :batch_std }
+
     if args.usecutoffs:
         cutoffs = config[args.model]['cutoffs']
         cutoffs = np.array([[cutoffs[str(i)] for i in range(len(cutoffs))]])
@@ -184,7 +201,7 @@ def main(args):
         logger.error("Input file is not a valid fastafile")
         exit(1)
     if args.progressbar:
-        #disable progressbar
+        # disables progressbar
         tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
         
     seed = 54920
@@ -261,7 +278,7 @@ def main(args):
             idataset=input_dataset.map(process_string(crop_size=args.fsize),
                                         num_parallel_calls=tf.data.AUTOTUNE,).batch(args.batch, 
                                         num_parallel_calls=tf.data.AUTOTUNE).prefetch(25)
-            inputs, outputs = WRes_model(input_shape=(None,))
+            inputs, outputs = WRes_model_embeddings(input_shape=(None,), dropout_active=False)
             model = JaegerModel(inputs=inputs, outputs=outputs)
             
         else:
@@ -294,25 +311,36 @@ def main(args):
             logger.error(f'Annother process is running on {"|".join(device_names)}! Terminate the process and try again or switch to CPU mode!!')
             sys.exit(1)
 
+        # output preprocessing 
         split_indices = np.where(np.array(y_pred['meta'][2], dtype=np.int32) == 1)[0]+1
         if y_pred['y_hat']['output'].shape[0] == split_indices[-1]:
             split_indices = split_indices[:-1]
         predictions = np.split(y_pred['y_hat']['output'], split_indices, axis=0)
+
+        ood = np.split(y_pred['y_hat']['embedding'], split_indices, axis=0) #get params
+        ood = list(map(lambda x : ood_predict_default(x, ood_params)[0], ood))
+
         headers = np.split(np.array(y_pred['meta'][0], dtype=np.unicode_),split_indices, axis=0)
         lengths = np.split(np.array(y_pred['meta'][4], dtype=np.int32),split_indices, axis=0)
         lengths = np.array(list(map(lambda x : x[0], lengths)))
         headers = np.array(list(map(lambda x : x[0], headers)))
         pred_sum = np.array(list(map(lambda x: np.mean(x,axis=0),predictions)),np.float16)
-        pred_std = np.array(list(map(lambda x: np.std(x,axis=0),predictions)),np.float16)
+        pred_var = np.array(list(map(lambda x: np.var(x,axis=0),predictions)),np.float16)
         consensus = np.argmax(pred_sum, axis=1)
         frag_pred = list(map(lambda x: np.argmax(x,axis=-1),predictions))
         per_class_counts = list(map(lambda x : np.unique(x, return_counts=True),frag_pred))
         per_class_counts = list(map(lambda x,n=config[args.model]['num_classes'] : update_dict(x,n) , per_class_counts))
+        entropy_pred = list(map(lambda x: softmax_entropy(x),predictions))
+        entropy_mean = np.array(list(map(lambda x: np.mean(x,axis=0),entropy_pred)),np.float16)    
 
+        prophage_contam  = (pred_sum[:,1] < pred_var[:,1]) * (consensus == 0)
+        host_contam = (pred_sum[:,1] < pred_var[:,1]) * (consensus == 1)
 
         data = {'headers':headers, 'length' : lengths,
                 'consensus':consensus,'per_class_counts' : per_class_counts,
-                'pred_sum':pred_sum, 'pred_std':pred_std, 'frag_pred':frag_pred }
+                'pred_sum':pred_sum, 'pred_var':pred_var, 'frag_pred':frag_pred,
+                'ood':ood, 'entropy' : entropy_mean, 'host_contam' :host_contam,
+                'prophage_contam' : prophage_contam }
 
         write_output(args, config, data, output_file_path)
 
@@ -324,7 +352,7 @@ def main(args):
             np.save(output_logits_path,dict(zip(headers, predictions)), allow_pickle=True)
     
         if args.prophage:
-            # alpha version - needs more testing!!!!
+            # still experimental - needs more testing!!!!
             try:
                 logits_df = logits_to_df(predictions, headers=headers, lengths=lengths, cutoff_length = args.lc)
                 if logits_df:

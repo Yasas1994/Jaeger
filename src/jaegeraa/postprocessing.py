@@ -65,6 +65,24 @@ def update_dict(x, num_classes = 4):
     d = {i:0 for i in range(num_classes)}
     d.update(dict(zip(x[0],x[1])))
     return d
+def shanon_entropy(p): #aka information gain
+    p = np.array(p)
+    result = np.where(p > 0.0000000001, p, -10)
+    p_log = np.log2(result, out=result, where=result > 0)
+    return -np.sum(p*p_log, axis=-1)
+
+def softmax_entropy(x):
+    ex = np.exp(x)
+    return shanon_entropy(ex/np.sum(ex, axis=-1).reshape(-1,1))
+
+def smoothen_scores(x,w=5):
+    bac = np.convolve(x[:,0],np.ones(w)/w, mode='same')
+    phg = np.convolve(x[:,1],np.ones(w)/w, mode='same')
+    euk = np.convolve(x[:,2],np.ones(w)/w, mode='same')
+    arch = np.convolve(x[:,3],np.ones(w)/w, mode='same')
+    return np.squeeze(np.dstack([bac,phg,euk, arch]))
+
+
 
 def ood_predict(x_features, params):
     #use parameters extimated using sklearn
@@ -72,6 +90,30 @@ def ood_predict(x_features, params):
     logits = np.dot(x_features,params['coeff'].reshape(-1,1)) + params['intercept']
     return (1/(1+ np.exp(logits))).flatten(), logits
 
+def normalize(x):
+    x_mean = x.mean(axis=1).reshape(-1,1)
+    x_std = x.std(axis=1).reshape(-1,1) 
+    return (x- x_mean)/x_std
+
+def normalize_with_batch_stats(x, mean, std):
+    return  (x - mean)/std
+
+def normalize_l2(x):
+    return x/np.linalg.norm(x,2, axis=1).reshape(-1,1)
+
+def ood_predict_default(x_features, params):
+    #use parameters extimated using sklearn
+    if params['type'] == 'params':
+        x_features = normalize_with_batch_stats(x_features, params['batch_mean']),params['batch_std']
+        x_features = normalize(x_features)
+        logits = np.dot(x_features,params['coeff'].reshape(-1,1)) + params['intercept']
+        return (1/(1+ np.exp(-logits))).flatten(), logits
+    #use a saved a sklearn model
+    elif params['type'] == 'sklearn':
+        features_data = normalize_with_batch_stats(x_features, params['batch_mean'], params['batch_std'])
+        features_data_l2 = normalize_l2(features_data)
+        
+        return params['model'].predict_proba(features_data_l2)[:,0],0
 
 def get_ood_probability(ood):
     if ood is not None:
@@ -117,35 +159,46 @@ def get_ood_probability(ood):
 
 def write_output(args, config, data, output_file_path):
     try:
-        values = []
-        keys = config[args.model]['header']
+        #values = []
+        #keys = config[args.model]['header']
         class_map = config['labels'] #comes from config
 
         lab = {int(k):v for k,v in config[args.model]['all_labels'].items()}
 
+        #consider adding other infomation such as GC content in the future
         columns ={'contig_id': data['headers'],
-                'length' : data['length'],
-                'prediction' : list(map(lambda x: class_map[x],data['consensus'])),}
+                  'length' : data['length'],
+                  'prediction' : list(map(lambda x: class_map[x],data['consensus'])),
+                  'entropy' : data['entropy'],
+                  'realiability_score' : list(map(lambda x: np.mean(x) ,data['ood'])),
+                  'host_contam' : data['host_contam'],
+                  'prophage_contam' : data['prophage_contam']
+                  }
 
         if args.model == "deafult":
+            # finds and appends the second highest class to the dict-> prediction_2
             ev = np.product(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([2,1]), axis=1)
             av = np.product(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([3,1]), axis=1)*2
             bv = np.product(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([0,1]), axis=1)*3
             class_map2 = {int(k):v for k,v in config[args.model]['second'].items()} #comes from config
             columns['prediction_2'] = list(map(lambda x: class_map2[x],ev+av+bv)) #only for deafult mode
+            
 
         for i,label in lab.items():
+            # appends the number of class-wise windows to the dict 
             columns[f'#_{label}_windows'] = list(map(lambda x,index=i : x[index], data['per_class_counts']))
 
         for i,label in lab.items():
+            # appends the class-wise scores and score variance to the dict
             columns[f'{label}_score'] = list(map(lambda x, index=i : x[index] ,data['pred_sum']))
-            columns[f'{label}_std'] =list(map(lambda x, index=i :x [index] ,data['pred_std']))
-
-        columns['window_summary'] = list(map(lambda x, phage_pos=config[args.model]['vindex']: get_window_summary(x, phage_pos)  ,data['frag_pred']))
-
+            columns[f'{label}_var'] =list(map(lambda x, index=i :x [index] ,data['pred_var']))
+        # append the window_summary col to the dict
+        columns['window_summary'] = list(map(lambda x, phage_pos=config[args.model]['vindex']: get_window_summary((x == 1)*1, phage_pos)  ,data['frag_pred']))
+        
 
         df=pd.DataFrame(columns)
-        df.to_csv(output_file_path, sep='\t',index=False) 
+        df['host_contamination'] = df.apply(lambda x :(x['Phage_score'] < x['Phage_var'])*(x['prediction'] == 'Phage'), axis=1)
+        df.to_csv(output_file_path, sep='\t', index=None, float_format='%.3f') 
 
     except Exception as e:
         logger.exception(e)

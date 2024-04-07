@@ -383,7 +383,30 @@ def WRes_model(type_spec=None,input_shape=None): #archeae model 1
     out = tf.keras.layers.Dense(4,name='outdense')(x)
     return [f1input,f2input,f3input,r1input,r2input,r3input],{'output':out}
 
-def WRes_model_embeddings(type_spec=None,input_shape=None): #archeae model 1
+# def WRes_model_embeddings(type_spec=None,input_shape=None): #archeae model 1
+#     f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
+#     f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
+#     f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
+#     r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
+#     r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
+#     r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+#     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+#     embeddings = []
+
+#     for l in [f1input,f2input,f3input,r1input,r2input,r3input]:
+#         embeddings.append(embedding_layer(l))
+#     #B block
+#     x=ConvolutionalTower(embeddings, num_res_blocks=5, add_residual=False)
+#     x=tf.keras.layers.GlobalMaxPool1D()(x)
+#     #C block
+#     x = tf.keras.layers.Dropout(0.1)(x)
+#     x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name='augdense-1')(x)
+#     x = tf.keras.layers.Dropout(0.1)(x)
+#     gmp = tf.keras.layers.Dense(128, activation=tf.nn.gelu,name='augdense-2')(x)
+#     out = tf.keras.layers.Dense(4,name='outdense')(gmp)
+#     return [f1input,f2input,f3input,r1input,r2input,r3input],[out,gmp]
+
+def WRes_model_embeddings(type_spec=None,input_shape=None, dropout_active=True): #archeae model 1
     f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
     f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
     f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
@@ -399,12 +422,12 @@ def WRes_model_embeddings(type_spec=None,input_shape=None): #archeae model 1
     x=ConvolutionalTower(embeddings, num_res_blocks=5, add_residual=False)
     x=tf.keras.layers.GlobalMaxPool1D()(x)
     #C block
-    x = tf.keras.layers.Dropout(0.1)(x)
+    x = tf.keras.layers.Dropout(0.5)(x, training=dropout_active)
     x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name='augdense-1')(x)
-    x = tf.keras.layers.Dropout(0.1)(x)
+    x = tf.keras.layers.Dropout(0.5)(x, training=dropout_active)
     gmp = tf.keras.layers.Dense(128, activation=tf.nn.gelu,name='augdense-2')(x)
     out = tf.keras.layers.Dense(4,name='outdense')(gmp)
-    return [f1input,f2input,f3input,r1input,r2input,r3input],[out,gmp]
+    return [f1input,f2input,f3input,r1input,r2input,r3input],{'output':out, 'embedding':gmp}
 
 def LSTM_model(type_spec=None,input_shape=None): #archeae model 1
     f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
