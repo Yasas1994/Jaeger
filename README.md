@@ -17,19 +17,10 @@
 ```
 
 
-Jaeger : A Fast, accurate pipeline for identifying phages in sequence assmblies
+Jaeger : A quick and precise pipeline for detecting phages in sequence assemblies.
 ===============
 
-![GitHub](https://img.shields.io/github/license/Yasas1994/Jaeger)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/Jaeger/Jaeger-AA?color=8a35da)
-![Conda](https://img.shields.io/conda/v/bioconda/phables)
-![Conda](https://img.shields.io/conda/dn/bioconda/phables)
-# [![PyPI version](https://badge.fury.io/py/Jaeger.svg)](https://badge.fury.io/py/jaeger)
-# [![Downloads](https://static.pepy.tech/badge/jaeger)](https://pepy.tech/project/jaeger)
-[![CI](https://github.com/Yasas1994/Jaeger/actions/workflows/testing.yml/badge.svg)](https://github.com/Yasas1994/Jaeger/actions/workflows/testing.yml)
-[![CodeQL](https://github.com/Yasas1994/Jaeger/actions/workflows/codeql.yml/badge.svg)](https://github.com/Yasas1994/Jaeger/actions/workflows/codeql.yml)
-[![Documentation Status](https://readthedocs.org/projects/jaeger/badge/?version=latest)](https://jaeger.readthedocs.io/en/latest/?badge=latest)
+
 Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
 
 visit our wiki: https://github.com/Yasas1994/Jaeger/wiki/%22Jaeger:-yet-AnothEr-phaGE-pRedictor%22

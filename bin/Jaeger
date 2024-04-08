@@ -42,7 +42,7 @@ from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plo
 
 def cmdparser():
     '''cmdline argument parser'''
-    parser = argparse.ArgumentParser(description=f'\n\n## Jaeger {version("jaeger")} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git',
+    parser = argparse.ArgumentParser(description=f'\n\n## Jaeger {version("jaeger-bio")} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git',
     usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i","--input",
                         type=file_path,
@@ -133,7 +133,7 @@ def main(args):
     args = args() 
     logger = create_logger(args)
     config =json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
-    logger.info(f"{version('jaeger')} Deep-learning based phage discovery\nhttps://github.com/Yasas1994/Jaeger.git\n\n" + "{:-^80}".format("validating parameters"))
+    logger.info(f"{version('jaeger-bio')} Deep-learning based phage discovery\nhttps://github.com/Yasas1994/Jaeger.git\n\n" + "{:-^80}".format("validating parameters"))
 
     weights_path = files('jaegeraa.data').joinpath(config[args.model]['weights'])
     num_class = config[args.model]['num_classes']

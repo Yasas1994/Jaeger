@@ -1,3 +1,9 @@
+"""
+
+Copyright (c) 2024 Yasas Wijesekara
+
+"""
+
 import os
 import numpy as np
 from Bio import SeqIO
@@ -197,7 +203,6 @@ def write_output(args, config, data, output_file_path):
         
 
         df=pd.DataFrame(columns)
-        df['host_contamination'] = df.apply(lambda x :(x['Phage_score'] < x['Phage_var'])*(x['prediction'] == 'Phage'), axis=1)
         df.to_csv(output_file_path, sep='\t', index=None, float_format='%.3f') 
 
     except Exception as e:

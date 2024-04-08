@@ -1,3 +1,9 @@
+"""
+
+Copyright (c) 2024 Yasas Wijesekara
+
+"""
+
 import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import InputSpec
@@ -314,13 +320,13 @@ def mlp(x, hidden_units, dropout_rate):
         x = tf.keras.layers.Dropout(dropout_rate)(x)
     return x
 
-def Baseline_model(type_spec=None,input_shape=None): #archeae model 1
-    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+def Baseline_model(input_shape=None): #archeae model 1
+    f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+    f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+    r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
     embeddings = []
 
@@ -337,13 +343,13 @@ def Baseline_model(type_spec=None,input_shape=None): #archeae model 1
     out = tf.keras.layers.Dense(4,name='outdense')(x)
     return [f1input,f2input,f3input,r1input,r2input,r3input],out
 
-def Res_model(type_spec=None,input_shape=None): #archeae model 1
-    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+def Res_model(input_shape=None): #archeae model 1
+    f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+    f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+    r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
     embeddings = []
 
@@ -360,13 +366,13 @@ def Res_model(type_spec=None,input_shape=None): #archeae model 1
     out = tf.keras.layers.Dense(4,name='outdense')(x)
     return [f1input,f2input,f3input,r1input,r2input,r3input],out
 
-def WRes_model(type_spec=None,input_shape=None): #archeae model 1
-    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+def WRes_model(input_shape=None): #archeae model 1
+    f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+    f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+    r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
     embeddings = []
 
@@ -383,13 +389,13 @@ def WRes_model(type_spec=None,input_shape=None): #archeae model 1
     out = tf.keras.layers.Dense(4,name='outdense')(x)
     return [f1input,f2input,f3input,r1input,r2input,r3input],{'output':out}
 
-# def WRes_model_embeddings(type_spec=None,input_shape=None): #archeae model 1
-#     f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-#     f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-#     f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-#     r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-#     r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-#     r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+# def WRes_model_embeddings(input_shape=None): #archeae model 1
+#     f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+#     f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+#     f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+#     r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+#     r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+#     r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
 #     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
 #     embeddings = []
 
@@ -406,13 +412,13 @@ def WRes_model(type_spec=None,input_shape=None): #archeae model 1
 #     out = tf.keras.layers.Dense(4,name='outdense')(gmp)
 #     return [f1input,f2input,f3input,r1input,r2input,r3input],[out,gmp]
 
-def WRes_model_embeddings(type_spec=None,input_shape=None, dropout_active=True): #archeae model 1
-    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+def WRes_model_embeddings(input_shape=None, dropout_active=True): #archeae model 1
+    f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+    f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+    r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
     embeddings = []
 
@@ -429,13 +435,13 @@ def WRes_model_embeddings(type_spec=None,input_shape=None, dropout_active=True):
     out = tf.keras.layers.Dense(4,name='outdense')(gmp)
     return [f1input,f2input,f3input,r1input,r2input,r3input],{'output':out, 'embedding':gmp}
 
-def LSTM_model(type_spec=None,input_shape=None): #archeae model 1
-    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+def LSTM_model(input_shape=None):
+    f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+    f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+    r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
     embeddings = []
     for l in [f1input,f2input,f3input,r1input,r2input,r3input]:
@@ -453,16 +459,16 @@ def LSTM_model(type_spec=None,input_shape=None): #archeae model 1
     out = tf.keras.layers.Dense(4,name='outdense')(x)
     return [f1input,f2input,f3input,r1input,r2input,r3input],out
 
-def Vitra(input_shape=(None,),type_spec=None,num_patches=512,transformer_layers = 4,num_heads=4,  att_dropout=0.1,
+def Vitra(input_shape=(None,),num_patches=512,transformer_layers = 4,num_heads=4,  att_dropout=0.1,
                           projection_dim=128, att_hidden_units=[128,128],mlp_hidden_units=[128,128],
                           mlp_dropout=0.1, use_global=True, global_type='max'):
     
-    f1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_1")
-    f2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_2")
-    f3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="forward_3")
-    r1input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_1")
-    r2input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_2")
-    r3input = tf.keras.Input(shape=input_shape,type_spec=type_spec,name="reverse_3")
+    f2input = tf.keras.Input(shape=input_shape,name="forward_2")
+    f3input = tf.keras.Input(shape=input_shape,name="forward_3")
+    r1input = tf.keras.Input(shape=input_shape,name="reverse_1")
+    r2input = tf.keras.Input(shape=input_shape,name="reverse_2")
+    f1input = tf.keras.Input(shape=input_shape,name="forward_1")
+    r3input = tf.keras.Input(shape=input_shape,name="reverse_3")
     embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
     embeddings = []
     for l in [f1input,f2input,f3input,r1input,r2input,r3input]:

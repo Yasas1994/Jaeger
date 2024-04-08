@@ -11,3 +11,5 @@ test/new
 test/all_prophages
 test_config.py
 src/*egg*
+bioconda
+dist
