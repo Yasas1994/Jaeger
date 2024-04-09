@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(name='jaeger-bio',
-      version='1.1.25',
+      version='1.1.26',
       description='A quick and precise pipeline for detecting phages in sequence assemblies.',
       long_description=long_description,
       long_description_content_type="text/markdown",
@@ -21,6 +21,8 @@ setup(name='jaeger-bio',
       scripts=['bin/Jaeger', 'bin/Jaeger_parallel'],
 
       install_requires=[
+          
+        'h5py >=3.8',
         'tensorflow[and-cuda] >=2.15, <2.16',
         'tqdm >=4.64.0',
         'biopython >=1.78',
@@ -32,7 +34,8 @@ setup(name='jaeger-bio',
         'keras >= 2.10',
         'seaborn >= 0.12.2',
         'matplotlib >= 3.7',
-        'scikit-learn == 1.3.2'
+        'scikit-learn == 1.3.2',
+        'parasail == 1.3.4 '
       ],
 
       classifiers=[

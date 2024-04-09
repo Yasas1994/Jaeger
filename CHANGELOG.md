@@ -1,6 +1,7 @@
 ## version 1.1.25
 ---
 - Added CHANGELOG.md
+- pypi version 1.1.251 - reason : patch
 - Better error messages and handling
 - Easy installation via bioconda and pip
 - Significant speed improvements compared to 1.1.23
