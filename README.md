@@ -156,7 +156,42 @@ pip install jaeger-bio
   pip install jaeger-bio
 ````
 
+After installation, check if the program is installed successfully by running:
+```Jaeger -h```
+The expected outcome is:
+```
+## Jaeger 1.1.26 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery
+https://github.com/Yasas1994/Jaeger.git
 
+optional arguments:
+  -h, --help            show this help message and exit
+  -i INPUT, --input INPUT
+                        path to input file
+  -o OUTPUT, --output OUTPUT
+                        path to output directory
+  --fsize [FSIZE]       length of the sliding window (value must be 2^n). default:2048
+  --stride [STRIDE]     stride of the sliding window. default:2048 (stride==fsize)
+  -m {default,experimental_1,experimental_2}, --model {default,experimental_1,experimental_2}
+                        select a deep-learning model to use. default:default
+  -p, --prophage        extract and report prophage-like regions. default:False
+  -s [SENSITIVITY], --sensitivity [SENSITIVITY]
+                        sensitivity of the prophage extraction algorithm (between 0 - 4). default: 1.5
+  --lc [LC]             minimum contig length to run prophage extraction algorithm. default: 500000 bp
+  --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:96
+  --workers [WORKERS]   number of threads to use. default:4
+  --getalllogits        return position-wise logits for each prediction window as a .npy file
+  --usecutoffs          use cutoffs to obtain the class prediction
+  --cpu                 ignore available gpus and explicitly run jaeger on cpu. default: False
+  --virtualgpu          create and run jaeger on a virtualgpu. default: False
+  --physicalid [PHYSICALID]
+                        sets the default gpu device id (for multi-gpu systems). default:0
+  --getalllabels        get predicted labels for Non-Viral contigs. default:False
+
+Misc. Options:
+  -v, --verbose         Verbosity level : -v warning, -vv info, -vvv debug, (default info)
+  -f, --overwrite       Overwrite existing files
+  --progressbar         show progress bar
+```
 
 
 ---
