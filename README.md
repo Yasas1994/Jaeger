@@ -1,18 +1,18 @@
 ```          
-                         .                                                                     
-                      ,'/ \`.                                                                
-                     |\/___\/|                                                       
-                     \'\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗   
-                      `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗   
-                         |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝   
-                         |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗    
-                        |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║   
-                   /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝     
-               ,'`.  \/ |=| \/  ,'`.                                                        
-             ,'    `.|\ `-' /|,'    `.                                                         
-           ,'   .-._ \ `---' / _,-.   `.                                                      
-              ,'    `-`-._,-'-'    `.                                                                     
-             '                                                                                    
+                    .                                                                     
+                 ,'/ \`.                                                                
+                |\/___\/|                                                      
+                \'\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗  
+                 `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗  
+                    |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝  
+                    |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗   
+                   |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║  
+              /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝    
+          ,'`.  \/ |=| \/  ,'`.                                                       
+        ,'    `.|\ `-' /|,'    `.                                                        
+      ,'   .-._ \ `---' / _,-.   `.                                                     
+         ,'    `-`-._,-'-'   `.                                                                     
+        '                                                                                    
  
 ```
 
@@ -25,7 +25,7 @@ Jaeger is a tool that utilizes homology-free machine learning to identify phage 
 
 ---
 ## Installation 
----
+
 ### <u> Linux and Mac (x64_86)</u>
 
 #####  option 1 : bioconda
@@ -43,7 +43,7 @@ conda activate jaeger
 
 ##### troubleshooting
 
-If you have a GPU on the system, and jaeger fails to detect it, try these steps.
+If you have a NVIDIA GPU on the system, and jaeger fails to detect it, try these steps.
 
 1. If you are on a HPC check whether cuda-toolkit is available as a module. (Skip this step if you are trying this out on your PC)
 
@@ -100,35 +100,35 @@ Check whether Jaeger detects the GPU now.
 
 If that fails you will have to manually configure the conda environment as shown in step 3.
 
-3. * cuda-toolkit for cuda>=11.1 can be found here https://anaconda.org/nvidia/cuda-toolkit (not recommended)
+3. * cuda-toolkit for cuda>=11.1 can be found here https://anaconda.org/nvidia/cuda-toolkit 
 
-This example shows the installation process for cuda=11.3.0. Simply change the version number on the second "nvidia/label/cuda-11.x.x" command to install a different version
+Following example shows the installation process for cuda=11.3.0. Simply change the version number on the second "nvidia/label/cuda-11.x.x" command to install a different version
  
 ````
 libcudnn_cnn_infer.so.8
 
 # create a conda environment
-conda create -n jaeger python=3.9 pip
+conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip
 
 # cudatoolkit and cudnn
 conda install -n jaeger -c "nvidia/label/cuda-11.3.0" cudatoolkit=11
 conda install -n jaeger -c conda-forge cudnn
 
 # install jaeger
-conda install -n jaeger -c conda-forge -c anaconda -c bioconda jaeger
+conda install -n jaeger -c conda-forge -c bioconda -c defaults jaeger
 
 # activate environment
 conda activate jaeger
 ````
-More inoformation on properly setting setting up tensorflow can be found [here](https://www.tensorflow.org/install/pip)
+More information on properly setting setting up tensorflow can be found [here](https://www.tensorflow.org/install/pip)
 
-##### option 2 : Installing from pypi (not recommended)
+##### option 2 : Installing from pypi
 
 
 
 ```
 # create a conda environment and activate  
-conda create -n jaeger python=3.9 pip
+conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip
 conda activate jaeger
 
 #install jaeger
@@ -156,7 +156,7 @@ pip install jaeger-bio
 
 ---
 ## Running Jaeger
----
+
 #### CPU/GPU mode
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed .fasta files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. 
 
@@ -182,7 +182,7 @@ Jaeger --help
 ````
 ````
 
-## Jaeger 1.1.25 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
+## Jaeger 1.1.251 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
 https://github.com/Yasas1994/Jaeger.git
 
 optional arguments:
@@ -270,7 +270,7 @@ It's recommended to use the output of this program in conjunction with other met
 
 ---
 ### What is in the output?
----
+
 
 | contig_id                           |   length | prediction   |   entropy |   realiability_score | host_contam   | prophage_contam   |   #_Bacteria_windows |   #_Phage_windows |   #_Eukarya_windows |   #_Archaea_windows |   Bacteria_score |   Bacteria_var |   Phage_score |   Phage_var |   Eukarya_score |   Eukarya_var |   Archaea_score |   Archaea_var | window_summary   
 |:------------------------------------|---------:|:-------------|----------:|---------------------:|:--------------|:------------------|---------------------:|------------------:|--------------------:|--------------------:|-----------------:|---------------:|--------------:|------------:|----------------:|--------------:|----------------:|--------------:|:-----------------|
@@ -284,7 +284,7 @@ This table provides information about various contigs in a metagenomic assembly.
 
 ---
 ### Predicting prophages with Jaeger
----
+
 
 ```
 Jaeger -p -i NZ_CP033092.fna -o outdir 
