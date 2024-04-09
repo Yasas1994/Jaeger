@@ -24,6 +24,11 @@ Jaeger : A quick and precise pipeline for detecting phages in sequence assemblie
 Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
 
 ---
+## Citing Jaeger
+If you use Jaeger in your work, please consider citing its manuscript:
+Jaeger:  a deep learning pipeline for bacteriophage detection
+
+
 ## Installation 
 
 ### <u> Linux and Mac (x64_86)</u>
