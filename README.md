@@ -17,17 +17,21 @@
 ```
 
 
+
 Jaeger : A quick and precise pipeline for detecting phages in sequence assemblies.
 ===============
+![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio) 
+
 
 
 Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
 
 ---
-## Citing Jaeger
+#### Citing Jaeger
 If you use Jaeger in your work, please consider citing its manuscript:
 Jaeger:  a deep learning pipeline for bacteriophage detection
 
+---
 
 ## Installation 
 
@@ -156,6 +160,7 @@ pip install jaeger-bio
   pip install jaeger-bio
 ````
 
+### Singularity 
 
 
 
