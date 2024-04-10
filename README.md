@@ -18,7 +18,7 @@
 
 
 
-Jaeger : A quick and precise pipeline for detecting phages in sequence assemblies.
+Jaeger : A quick and precise pipeline for detecting phages in sequence assemblies
 ===============
 ![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio) 
 
@@ -37,14 +37,14 @@ Jaeger:  a deep learning pipeline for bacteriophage detection
 
 ### <u> Linux and Mac (x64_86)</u>
 
-#####  option 1 : bioconda
+#####  option 1 : bioconda (NEW!)
 
 The performance of the Jaeger workflow can be significantly increased by utilizing GPUs. To enable GPU support, the CUDA Toolkit and cuDNN library must be accessible to conda.
 
 ````
 
 # create conda environment and install jaeger
-conda create -n jaeger -c conda-forge -c anaconda -c bioconda jaeger
+conda create -n jaeger -c conda-forge -c bioconda -c defaults jaeger-bio
 
 # activate environment
 conda activate jaeger
@@ -71,7 +71,7 @@ bedtools/2.30.0     ceres-solver/2.1.0  cuda/12.0.0   gcc/12.2.0
 
 If so, load it
 ```
-module load cuda/11.7
+module load cuda/12.0.0
 ```
 
 2. Next, check whether the [NVIDIA GPU driver](https://www.nvidia.com/Download/index.aspx) is properly configured.
@@ -83,26 +83,25 @@ nvidia-smi
 Above command returns the following output if everything is properly set-up. You can also determine the cuda version from it. For example here it is 11.7 (for step 3)
 ````
 Mon Apr  8 14:26:43 2024       
-+-----------------------------------------------------------------------------+
-| NVIDIA-SMI 515.86.01    Driver Version: 515.86.01    CUDA Version: 11.7     |
-|-------------------------------+----------------------+----------------------+
-| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
-|                               |                      |               MIG M. |
-|===============================+======================+======================|
-|   0  NVIDIA GeForce ...  Off  | 00000000:01:00.0  On |                  N/A |
-| N/A   51C    P8     6W /  N/A |   5344MiB /  6144MiB |     27%      Default |
-|                               |                      |                  N/A |
-+-------------------------------+----------------------+----------------------+
-                                                                               
-+-----------------------------------------------------------------------------+
-| Processes:                                                                  |
-|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
-|        ID   ID                                                   Usage      |
-|=============================================================================|
-|    0   N/A  N/A      2198      G   /usr/lib/xorg/Xorg                 69MiB |
-|    0   N/A  N/A   1247272      C   ...a3/envs/jaeger/bin/python     5271MiB |
-+-----------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.171.04             Driver Version: 535.171.04   CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA GeForce GTX 1660 Ti     Off | 00000000:01:00.0 Off |                  N/A |
+| N/A   47C    P8               2W /  80W |      6MiB /  6144MiB |      0%      Default |
+|                                         |                      |                  N/A |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|    0   N/A  N/A      2196      G   /usr/lib/xorg/Xorg                            4MiB |
++---------------------------------------------------------------------------------------+
 ````
 
 Check whether Jaeger detects the GPU now.
