@@ -123,7 +123,7 @@ conda install -n jaeger -c "nvidia/label/cuda-11.3.0" cudatoolkit=11
 conda install -n jaeger -c conda-forge cudnn
 
 # install jaeger
-conda install -n jaeger -c conda-forge -c bioconda -c defaults jaeger
+conda install -n jaeger -c conda-forge -c bioconda -c defaults jaeger-bio
 
 # activate environment
 conda activate jaeger
