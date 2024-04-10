@@ -44,7 +44,7 @@ The performance of the Jaeger workflow can be significantly increased by utilizi
 ````
 
 # create conda environment and install jaeger
-conda create -n jaeger -c conda-forge -c bioconda -c defaults jaeger-bio
+conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip jaeger-bio
 
 # activate environment
 conda activate jaeger
