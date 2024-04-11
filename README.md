@@ -33,6 +33,19 @@ Jaeger:  a deep learning pipeline for bacteriophage detection
 
 ---
 
+
+
+- [Installation](#installation)
+  - [Linux and Mac (x64_86)](#linux-and-mac-x64_86)
+    - [Bioconda](#option-1--bioconda-new)
+      - [Troubleshooting](#troubleshooting)
+    - [PyPi](#option-2--installing-from-pypi)
+  - [Mac (arm)](#mac-arm)
+- [Running Jaeger](#running-jaeger)
+- [What is in the output](#what-is-in-the-output)
+- [Predicting prophages](#predicting-prophages-with-jaeger)
+
+--- 
 ## Installation 
 
 ### <u> Linux and Mac (x64_86)</u>
