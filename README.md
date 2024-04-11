@@ -55,9 +55,14 @@ Jaeger:  a deep learning pipeline for bacteriophage detection
 The performance of the Jaeger workflow can be significantly increased by utilizing GPUs. To enable GPU support, the CUDA Toolkit and cuDNN library must be accessible to conda.
 
 ````
+# setup bioconda
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+conda config --set channel_priority strict
 
 # create conda environment and install jaeger
-conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip jaeger-bio
+conda create -n jaeger python=3.9 pip jaeger-bio
 
 # activate environment
 conda activate jaeger
