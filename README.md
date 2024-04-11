@@ -49,6 +49,16 @@ conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip jae
 # activate environment
 conda activate jaeger
 ````
+Test the installation with test data
+```
+# download test data
+wget https://github.com/Yasas1994/Jaeger/blob/main/test/bin.460.fna
+
+# run jaeger on test data
+Jaeger -i bin.460.fna -o outpath --progressbar
+```
+
+
 
 ##### troubleshooting
 
@@ -159,7 +169,7 @@ pip install jaeger-bio
   pip install jaeger-bio
 ````
 
-### Singularity 
+### <u>Singularity (coming soon)</u>
 
 
 
