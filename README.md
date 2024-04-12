@@ -70,7 +70,7 @@ conda activate jaeger
 Test the installation with test data
 ```
 # download test data
-wget https://github.com/Yasas1994/Jaeger/blob/main/test/bin.460.fna
+wget https://raw.githubusercontent.com/Yasas1994/Jaeger/main/test/bin.460.fna
 
 # run jaeger on test data
 Jaeger -i bin.460.fna -o outpath --progressbar
