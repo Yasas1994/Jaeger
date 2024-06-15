@@ -28,7 +28,7 @@ Jaeger is a tool that utilizes homology-free machine learning to identify phage 
 ---
 #### Citing Jaeger
 If you use Jaeger in your work, please consider citing its manuscript:
-Jaeger:  a deep learning pipeline for bacteriophage detection
+<b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> 
 
 ---
 
@@ -211,6 +211,22 @@ Jaeger_parallel -i input_file.csv -o output_dir --batch 128
 
 You can control the number of parallel computations using this parameter. By default it is set to 512. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 128 is good enough for a graphics card with 6 Gb of memory.
 
+## What is in the output?
+
+All predictions are summarized in a table located at ```output_dir/<input_file>_default.jaeger.tsv```
+
+| contig_id                           |   length | prediction   |   entropy |   realiability_score | host_contam   | prophage_contam   |   #_Bacteria_windows |   #_Phage_windows |   #_Eukarya_windows |   #_Archaea_windows |   Bacteria_score |   Bacteria_var |   Phage_score |   Phage_var |   Eukarya_score |   Eukarya_var |   Archaea_score |   Archaea_var | window_summary   
+|:------------------------------------|---------:|:-------------|----------:|---------------------:|:--------------|:------------------|---------------------:|------------------:|--------------------:|--------------------:|-----------------:|---------------:|--------------:|------------:|----------------:|--------------:|----------------:|--------------:|:-----------------|
+NODE_94_length_44776_cov_27.159388  |    44776 | Phage        |     0.385 |                0.719 | False         | False             |                    2 |                19 |                   0 |                   0 |            0.966 |          1.27  |         3.66  |       1.679 |          -5.832 |         2.477 |          -3.199 |         1.619 | 5V1n14V1n        |
+NODE_123_length_36569_cov_24.228077 |    36569 | Phage        |     0.503 |                0.695 | False         | False             |                    1 |                16 |                   0 |                   0 |            0.945 |          0.766 |         3.453 |       1.116 |          -6.02  |         2.471 |          -2.795 |         1.554 | 9V1n7V           |
+NODE_149_length_32942_cov_23.754006 |    32942 | Phage        |     0.458 |                0.758 | False         | False             |                    1 |                14 |                   1 |                   0 |           -0.023 |          0.602 |         3.924 |       3.352 |          -7.18  |         5.324 |          -2.023 |         3.229 | 3V2n11V          |
+NODE_231_length_24276_cov_21.832294 |    24276 | Phage        |     0.502 |                0.761 | False         | False             |                    2 |                 9 |                   0 |                   0 |            1.08  |          0.978 |         3.297 |       1.479 |          -5.773 |         1.05  |          -2.682 |         1.467 | 1V1n3V1n5V       |
+ NODE_262_length_22786_cov_22.465664 |    22786 | Phage        |     0.452 |                0.709 | False         | False             |                    1 |                 9 |                   0 |                   1 |            0.383 |          0.768 |         3.465 |       1.919 |          -6.875 |         1.275 |          -1.683 |         4.078 | 2V1n6V1n1V       |
+
+This table provides information about various contigs in a metagenomic assembly. Each row represents a single contig, and the columns provide information about the contig's ID, length, the number of windows identified as prokaryotic, viral, eukaryotic, and archaeal, the prediction of the contig (Phage or Non-phage), the score of the contig for each category (bacterial, viral, eukaryotic and archaeal), and a summary of the windows. The table can be used to identify potential phage sequences in the metagenomic assembly based on the prediction column. The score columns can be used to further evaluate the confidence of the prediction and the window summary column can be used to understand the count of windows that contributed to the final prediction.
+
+---
+
 #### options
 
 ````
@@ -218,7 +234,7 @@ Jaeger --help
 ````
 ````
 
-## Jaeger 1.1.251 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
+## Jaeger 1.1.30 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
 https://github.com/Yasas1994/Jaeger.git
 
 optional arguments:
@@ -305,29 +321,53 @@ df = DataFrame.from_dict(predictions)
 It's recommended to use the output of this program in conjunction with other methods for phage genome identification.
 
 ---
-## What is in the output?
 
-
-| contig_id                           |   length | prediction   |   entropy |   realiability_score | host_contam   | prophage_contam   |   #_Bacteria_windows |   #_Phage_windows |   #_Eukarya_windows |   #_Archaea_windows |   Bacteria_score |   Bacteria_var |   Phage_score |   Phage_var |   Eukarya_score |   Eukarya_var |   Archaea_score |   Archaea_var | window_summary   
-|:------------------------------------|---------:|:-------------|----------:|---------------------:|:--------------|:------------------|---------------------:|------------------:|--------------------:|--------------------:|-----------------:|---------------:|--------------:|------------:|----------------:|--------------:|----------------:|--------------:|:-----------------|
-NODE_94_length_44776_cov_27.159388  |    44776 | Phage        |     0.385 |                0.719 | False         | False             |                    2 |                19 |                   0 |                   0 |            0.966 |          1.27  |         3.66  |       1.679 |          -5.832 |         2.477 |          -3.199 |         1.619 | 5V1n14V1n        |
-NODE_123_length_36569_cov_24.228077 |    36569 | Phage        |     0.503 |                0.695 | False         | False             |                    1 |                16 |                   0 |                   0 |            0.945 |          0.766 |         3.453 |       1.116 |          -6.02  |         2.471 |          -2.795 |         1.554 | 9V1n7V           |
-NODE_149_length_32942_cov_23.754006 |    32942 | Phage        |     0.458 |                0.758 | False         | False             |                    1 |                14 |                   1 |                   0 |           -0.023 |          0.602 |         3.924 |       3.352 |          -7.18  |         5.324 |          -2.023 |         3.229 | 3V2n11V          |
-NODE_231_length_24276_cov_21.832294 |    24276 | Phage        |     0.502 |                0.761 | False         | False             |                    2 |                 9 |                   0 |                   0 |            1.08  |          0.978 |         3.297 |       1.479 |          -5.773 |         1.05  |          -2.682 |         1.467 | 1V1n3V1n5V       |
- NODE_262_length_22786_cov_22.465664 |    22786 | Phage        |     0.452 |                0.709 | False         | False             |                    1 |                 9 |                   0 |                   1 |            0.383 |          0.768 |         3.465 |       1.919 |          -6.875 |         1.275 |          -1.683 |         4.078 | 2V1n6V1n1V       |
-
-This table provides information about various contigs in a metagenomic assembly. Each row represents a single contig, and the columns provide information about the contig's ID, length, the number of windows identified as prokaryotic, viral, eukaryotic, and archaeal, the prediction of the contig (Phage or Non-phage), the score of the contig for each category (bacterial, viral, eukaryotic and archaeal), and a summary of the windows. The table can be used to identify potential phage sequences in the metagenomic assembly based on the prediction column. The score columns can be used to further evaluate the confidence of the prediction and the window summary column can be used to understand the count of windows that contributed to the final prediction.
-
----
 ## Predicting prophages with Jaeger
 
 
 ```
-Jaeger -p -i NZ_CP033092.fna -o outdir 
+Jaeger -p -i NC_002695.fna -o outdir 
 ```
-![image](https://user-images.githubusercontent.com/34155351/201996217-807c638f-49e1-4147-baff-af6bf20441fa.png)
+The outdir will contain the following files
+```
+|____Escherichia_coli_O157-H7_prophages
+| |____plots
+| | |____NC_002695_Escherichia_coli_O157-H7_jaeger.pdf
+| |____prophages_jaeger.tsv
+|____Escherichia_coli_O157-H7_jaeger.log
+|____Escherichia_coli_O157-H7_default_jaeger.tsv
+```
+
+users can find the following visulaization in the ```plots``` directory 
 
 
+![image](https://github.com/Yasas1994/Jaeger/assets/34155351/1d98cf0c-06d0-42cb-90a1-559c5e393cea)
+
+list of prophage coordinates can be found in ```prophages_jaeger.tsv```
+```
+┌─────────────┬────────────┬──────────┬──────────┬───┬──────────┬────────┬────────────┬────────────┐
+│ contig_id   ┆ alignment_ ┆ identiti ┆ identity ┆ … ┆ gc%      ┆ reject ┆ attL       ┆ attR       │
+│             ┆ length     ┆ es       ┆          ┆   ┆          ┆        ┆            ┆            │
+╞═════════════╪════════════╪══════════╪══════════╪═══╪══════════╪════════╪════════════╪════════════╡
+│ NC_002695   ┆ 16.0       ┆ 16.0     ┆ 1.0      ┆ … ┆ 0.435049 ┆ false  ┆ GCACCATTTA ┆ GCACCATTTA │
+│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ AATCAA     ┆ AATCAA     │
+│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
+│ NC_002695   ┆ 15.0       ┆ 15.0     ┆ 1.0      ┆ … ┆ 0.493497 ┆ false  ┆ GCTTTTTTAT ┆ GCTTTTTTAT │
+│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ ACTAA      ┆ ACTAA      │
+│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
+│ NC_002695   ┆ 60.0       ┆ 60.0     ┆ 1.0      ┆ … ┆ 0.511819 ┆ false  ┆ TGGCGGAAGC ┆ TGGCGGAAGC │
+│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ GCAGAGATTC ┆ GCAGAGATTC │
+│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆ GAACTCTGGA ┆ GAACTCTGGA │
+│             ┆            ┆          ┆          ┆   ┆          ┆        ┆ AC…        ┆ AC…        │
+│ NC_002695   ┆ 16.0       ┆ 16.0     ┆ 1.0      ┆ … ┆ 0.499516 ┆ false  ┆ TTCTTTATTA ┆ TTCTTTATTA │
+│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ CCGGCG     ┆ CCGGCG     │
+│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
+│ NC_002695   ┆ 14.0       ┆ 14.0     ┆ 1.0      ┆ … ┆ 0.529465 ┆ false  ┆ CGTCATCAAG ┆ CGTCATCAAG │
+│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ TGCA       ┆ TGCA       │
+│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
+└─────────────┴────────────┴──────────┴──────────┴───┴──────────┴────────┴────────────┴────────────┘
+
+```
 #### Visualizing predictions 
 
 
