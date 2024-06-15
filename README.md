@@ -392,8 +392,8 @@ You can use [phage_contig_annotator](https://github.com/Yasas1994/phage_contig_a
 
 This work was supported by the European Union’s Horizon 2020 research and innovation program, under the Marie Skłodowska-Curie Actions Innovative Training Networks grant agreement no. 955974 ([VIROINF](https://viroinf.eu/)), the European Research Council (ERC) Consolidator grant 865694 
 
-<img src=https://github.com/Yasas1994/Jaeger/assets/34155351/0cad76c6-6e4d-4b89-8e73-257137cf73a8 width="210" height="84"><img src=https://github.com/Yasas1994/Jaeger/assets/34155351/41b3d6e1-709a-4833-a9d7-d69e833797a8 width="100" height="100">
+<img src=https://github.com/Yasas1994/Jaeger/assets/34155351/0cad76c6-6e4d-4b89-8e73-257137cf73a8 width="210" height="84">  &nbsp;&nbsp;&nbsp;  <img src=https://github.com/Yasas1994/Jaeger/assets/34155351/fef3bc35-8a8c-44c9-85ca-35ab0c68130e width="100" height="100">  &nbsp;&nbsp;&nbsp;   <img src=https://github.com/Yasas1994/Jaeger/assets/34155351/f15ab9b6-cade-4315-941c-e897f753dad9 width="150" height="100">
 
-ascii art from  <font size="3"> https://ascii.co.uk/ </font>
+The ascii art logo is from  <font size="3"> https://ascii.co.uk/ </font>
 
 
