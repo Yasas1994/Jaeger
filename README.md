@@ -215,13 +215,18 @@ You can control the number of parallel computations using this parameter. By def
 
 All predictions are summarized in a table located at ```output_dir/<input_file>_default.jaeger.tsv```
 
-| contig_id                           |   length | prediction   |   entropy |   realiability_score | host_contam   | prophage_contam   |   #_Bacteria_windows |   #_Phage_windows |   #_Eukarya_windows |   #_Archaea_windows |   Bacteria_score |   Bacteria_var |   Phage_score |   Phage_var |   Eukarya_score |   Eukarya_var |   Archaea_score |   Archaea_var | window_summary   
-|:------------------------------------|---------:|:-------------|----------:|---------------------:|:--------------|:------------------|---------------------:|------------------:|--------------------:|--------------------:|-----------------:|---------------:|--------------:|------------:|----------------:|--------------:|----------------:|--------------:|:-----------------|
-NODE_94_length_44776_cov_27.159388  |    44776 | Phage        |     0.385 |                0.719 | False         | False             |                    2 |                19 |                   0 |                   0 |            0.966 |          1.27  |         3.66  |       1.679 |          -5.832 |         2.477 |          -3.199 |         1.619 | 5V1n14V1n        |
-NODE_123_length_36569_cov_24.228077 |    36569 | Phage        |     0.503 |                0.695 | False         | False             |                    1 |                16 |                   0 |                   0 |            0.945 |          0.766 |         3.453 |       1.116 |          -6.02  |         2.471 |          -2.795 |         1.554 | 9V1n7V           |
-NODE_149_length_32942_cov_23.754006 |    32942 | Phage        |     0.458 |                0.758 | False         | False             |                    1 |                14 |                   1 |                   0 |           -0.023 |          0.602 |         3.924 |       3.352 |          -7.18  |         5.324 |          -2.023 |         3.229 | 3V2n11V          |
-NODE_231_length_24276_cov_21.832294 |    24276 | Phage        |     0.502 |                0.761 | False         | False             |                    2 |                 9 |                   0 |                   0 |            1.08  |          0.978 |         3.297 |       1.479 |          -5.773 |         1.05  |          -2.682 |         1.467 | 1V1n3V1n5V       |
- NODE_262_length_22786_cov_22.465664 |    22786 | Phage        |     0.452 |                0.709 | False         | False             |                    1 |                 9 |                   0 |                   1 |            0.383 |          0.768 |         3.465 |       1.919 |          -6.875 |         1.275 |          -1.683 |         4.078 | 2V1n6V1n1V       |
+```
+┌───────────────────────────────────┬────────┬────────────┬─────────┬───┬─────────────┬────────────────┬──────────────────┬───────────────┐
+│ contig_id                         ┆ length ┆ prediction ┆ entropy ┆ … ┆ Archaea_var ┆ window_summary ┆ terminal_repeats ┆ repeat_length │
+╞═══════════════════════════════════╪════════╪════════════╪═════════╪═══╪═════════════╪════════════════╪══════════════════╪═══════════════╡
+│ NODE_1109_length_9622_cov_23.163… ┆ 9622   ┆ Phage      ┆ 0.43    ┆ … ┆ 0.143       ┆ 1V1n2V         ┆ null             ┆ null          │
+│ NODE_1181_length_9275_cov_26.864… ┆ 9275   ┆ Phage      ┆ 0.327   ┆ … ┆ 0.504       ┆ 4V             ┆ null             ┆ null          │
+│ NODE_123_length_36569_cov_24.228… ┆ 36569  ┆ Phage      ┆ 0.503   ┆ … ┆ 1.554       ┆ 9V1n7V         ┆ null             ┆ null          │
+│ NODE_149_length_32942_cov_23.754… ┆ 32942  ┆ Phage      ┆ 0.458   ┆ … ┆ 3.229       ┆ 3V1n1n11V      ┆ null             ┆ null          │
+│ NODE_231_length_24276_cov_21.832… ┆ 24276  ┆ Phage      ┆ 0.502   ┆ … ┆ 1.467       ┆ 1V1n3V1n5V     ┆ null             ┆ null          │
+└───────────────────────────────────┴────────┴────────────┴─────────┴───┴─────────────┴────────────────┴──────────────────┴───────────────┘
+
+```
 
 This table provides information about various contigs in a metagenomic assembly. Each row represents a single contig, and the columns provide information about the contig's ID, length, the number of windows identified as prokaryotic, viral, eukaryotic, and archaeal, the prediction of the contig (Phage or Non-phage), the score of the contig for each category (bacterial, viral, eukaryotic and archaeal), and a summary of the windows. The table can be used to identify potential phage sequences in the metagenomic assembly based on the prediction column. The score columns can be used to further evaluate the confidence of the prediction and the window summary column can be used to understand the count of windows that contributed to the final prediction.
 
