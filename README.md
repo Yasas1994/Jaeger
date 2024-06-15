@@ -338,13 +338,17 @@ The outdir will contain the following files
 |____Escherichia_coli_O157-H7_default_jaeger.tsv
 ```
 
-users can find the following visulaization in the ```plots``` directory 
+users can find the following visulaization in the ```plots``` directory <br><br>
 
 
-<p align="center">
-  <img src="https://github.com/Yasas1994/Jaeger/assets/34155351/d96f4951-5f2f-4144-a538-7b49b6fddd46#gh-light-mode-only" width="500" title="phables logo" alt="phables logo">
-  <img src="https://github.com/Yasas1994/Jaeger/assets/34155351/b53e6bfb-0a92-420d-857c-af6fb8d3b5e7#gh-dark-mode-only" width="500" title="phables logo" alt="phables logo">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Yasas1994/Jaeger/assets/34155351/3efcd886-e45a-454f-9f61-53f954932b84">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/Yasas1994/Jaeger/assets/34155351/6acc1561-2c36-42c5-94ba-523721e902a5">
+  <img alt="dark mode" src="https://github.com/Yasas1994/Jaeger/assets/34155351/3efcd886-e45a-454f-9f61-53f954932b84">
+</picture>
+
+ <br><br>
+
 
 list of prophage coordinates can be found in ```prophages_jaeger.tsv```
 ```
