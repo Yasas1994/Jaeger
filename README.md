@@ -341,7 +341,10 @@ The outdir will contain the following files
 users can find the following visulaization in the ```plots``` directory 
 
 
-![image](https://github.com/Yasas1994/Jaeger/assets/34155351/d96f4951-5f2f-4144-a538-7b49b6fddd46)
+<p align="center">
+  <img src="https://github.com/Yasas1994/Jaeger/assets/34155351/d96f4951-5f2f-4144-a538-7b49b6fddd46#gh-light-mode-only" width="500" title="phables logo" alt="phables logo">
+  <img src="https://github.com/Yasas1994/Jaeger/assets/34155351/b53e6bfb-0a92-420d-857c-af6fb8d3b5e7#gh-dark-mode-only" width="500" title="phables logo" alt="phables logo">
+</p>
 
 list of prophage coordinates can be found in ```prophages_jaeger.tsv```
 ```
