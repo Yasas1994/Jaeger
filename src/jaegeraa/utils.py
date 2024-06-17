@@ -15,9 +15,27 @@ def safe_divide(numerator, denominator):
     try:
         result = round(numerator / denominator, 2)
     except ZeroDivisionError:
-        logger.error("Error: Division by zero!")
+        logger.debug("Error: Division by zero!")
         result = 0
     return result
+
+def description(version):
+    return f'''
+                  .                                                         
+               ,'/ \`.                                                               
+              |\/___\/|                                                     
+              \'\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗
+               `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗                   
+                  |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝ 
+                  |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗
+                 |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║
+            /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
+        ,'`.  \/ |=| \/  ,'`.                                                 
+      ,'    `.|\ `-' /|,'    `.                                              
+    ,'   .-._ \ `---' / _,-.   `.                                            
+       ,'    `-`-._,-'-'   `.       
+      '  
+    \n\n## Jaeger {version} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git'''
 
 class Compression(Enum):
     gzip = auto()
@@ -101,33 +119,80 @@ def remove_directory(directory):
         # Once all files are removed, remove the directory itself
         os.rmdir(directory)
 
-def create_logger(args):
-    input_file_path=args.input
-    input_file = os.path.basename(input_file_path)
-    # Logging config
-    log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
+class LOGGER:
+    def __init__(self,args):
+        self.input_file_path=args.input
+        self.input_file = os.path.basename(self.input_file_path)
+        log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
 
-    logging.addLevelName(logging.WARNING, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
-    logging.addLevelName(logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
-    logging.addLevelName(logging.INFO, "\033[1;42m%s\033[1;0m" % logging.getLevelName(logging.INFO))
-    logging.addLevelName(logging.DEBUG, "\033[1;43m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
-    logging.getLogger().addFilter(logging.Filter("Jaeger"))
+        logging.addLevelName(logging.WARNING, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
+        logging.addLevelName(logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
+        logging.addLevelName(logging.INFO, "\033[1;42m%s\033[1;0m" % logging.getLevelName(logging.INFO))
+        logging.addLevelName(logging.DEBUG, "\033[1;43m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
+        logging.getLogger().addFilter(logging.Filter("Jaeger"))
 
-    logger = logging.getLogger('Jaeger')
-    file_handler = logging.FileHandler(os.path.join(args.output,f"{input_file.rsplit('.',1)[0]}_jaeger.log"))
-    #args.output,f"jaeger_{str(datetime.now()).replace(' ', '_').replace(':','').replace('.','')}.log"
-    logger.addHandler(file_handler)
-    logger.setLevel(log_levels[args.verbose])
+        logger = logging.getLogger('Jaeger')
+        self.file_handler = logging.FileHandler(os.path.join(args.output,f"{self.input_file.rsplit('.',1)[0]}_jaeger.log"))
+        logger.addHandler(self.file_handler)
+        logger.setLevel(log_levels[args.verbose])
 
-    stderr_handler = logging.StreamHandler()
-    stderr_handler.setLevel(log_levels[args.verbose])
-    stderr_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-    file_handler.setFormatter(logging.Formatter('%(asctime)s : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S'))
-    logger.addHandler(stderr_handler)
-    logger.addHandler(file_handler)
+        self.stderr_handler = logging.StreamHandler()
+        self.stderr_handler.setLevel(log_levels[args.verbose])
 
-    return logger
+        self.formatter_stdout = logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_log =logging.Formatter('%(asctime)s : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_clean=logging.Formatter('')
 
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+        logger.addHandler(self.stderr_handler)
+        logger.addHandler(self.file_handler)
+        self.logger = logger
+
+    def info(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.info(message)
+            self.reset_handler()
+        else:
+            self.logger.info(message)
+
+    def warn(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.warn(message)
+            self.reset_handler()
+        else:
+            self.logger.warn(message)  
+
+    def error(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.error(message)
+            self.reset_handler()
+        else:
+            self.logger.error(message)  
+
+    def debug(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.debug(message)
+            self.reset_handler()
+        else:
+            self.logger.debug(message)         
+
+    def reset_handler(self):
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
         
 def configure_multi_gpu_inference(gpus):
     if gpus > 0:
@@ -154,6 +219,10 @@ def create_virtual_gpus(logger, num_gpus=2, memory_limit=2048):
             # Virtual devices must be set before GPUs have been initialized
             logger.error(e)
             
+def format_seconds(seconds):
+    minutes = seconds // 60
+    remaining_seconds = seconds % 60
+    return f'{minutes} minutes and {remaining_seconds} seconds'            
 
 def fasta_entries(input_file_handle):
     num = 0

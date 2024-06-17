@@ -13,6 +13,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import sys
 import psutil
+import time
 import argparse
 import logging
 import numpy as np
@@ -34,7 +35,7 @@ import tensorflow.keras.backend as K
 
 from jaegeraa.nnlib.layers import WRes_model_embeddings, create_jaeger_model
 from jaegeraa.nnlib.cmodel import JaegerModel
-from jaegeraa.utils import get_compressed_file_handle, dir_path, file_path, fasta_entries, get_device_name, create_logger, remove_directory
+from jaegeraa.utils import LOGGER, get_compressed_file_handle,file_path, fasta_entries, get_device_name, description
 from jaegeraa.preprocessing import fasta_gen,process_string, process_string_gen2
 from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plot_scores, segment, get_cordinates, ood_predict_default, softmax_entropy, scan_for_terminal_repeats
 
@@ -42,23 +43,8 @@ from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plo
 
 def cmdparser():
     '''cmdline argument parser'''
-    parser = argparse.ArgumentParser(description=f'''
-                  .                                                         
-               ,'/ \`.                                                               
-              |\/___\/|                                                     
-              \'\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗
-               `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗                   
-                  |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝ 
-                  |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗
-                 |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║
-            /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
-        ,'`.  \/ |=| \/  ,'`.                                                 
-      ,'    `.|\ `-' /|,'    `.                                              
-    ,'   .-._ \ `---' / _,-.   `.                                            
-       ,'    `-`-._,-'-'   `.       
-      '  
-    \n\n## Jaeger {version("jaeger-bio")} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git''',
-    usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=description(version("jaeger-bio")),
+                                    usage=argparse.SUPPRESS,formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-i","--input",
                         type=file_path,
                         required=True,
@@ -145,6 +131,7 @@ def cmdparser():
 
 def main(args):
 
+    current_process = psutil.Process()
     args = args() 
     # prepare output directory
     output_dir = args.output
@@ -154,9 +141,9 @@ def main(args):
     # else:
     #     logger.info(f"Using existing directory {output_dir}")
         
-    logger = create_logger(args)
-    config =json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
-    logger.info(f"{version('jaeger-bio')} Deep-learning based phage discovery\nhttps://github.com/Yasas1994/Jaeger.git\n\n" + "{:-^80}".format("validating parameters"))
+    logger = LOGGER(args)
+    config = json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
+    logger.info(description(version('jaeger-bio'))+ "\n{:-^80}".format('validating parameters'), cleanformat=True)
 
     weights_path = files('jaegeraa.data').joinpath(config[args.model]['weights'])
     num_class = config[args.model]['num_classes']
@@ -270,7 +257,7 @@ def main(args):
     logger.info(f'Stride : {args.stride}')
     logger.info(f'Batch size : {args.batch}')
     logger.info(f'Mode : {mode}')
-    logger.info(f'Total Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB')
+    logger.info(f'Avail mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB')
     logger.info(f'Avail cpus : {os.cpu_count()}\n'+"{:-^80}".format(""))
 
     input_fh = get_compressed_file_handle(input_file_path)
@@ -322,7 +309,7 @@ def main(args):
         if mode == 'GPU':
             for device_number,d in enumerate(device_names):
                 gpu_mem = tf.config.experimental.get_memory_info(d)
-                logger.info(f'GPU {device_number} current : {gpu_mem["current"]/(1024.0 ** 2) : .2f} GB  peak : {gpu_mem["peak"]/(1024.0 ** 2) : .2f}GB')
+                logger.info(f'GPU {device_number} current : {gpu_mem["current"]/(1024.0 ** 2) : .2f}GB  peak : {gpu_mem["peak"]/(1024.0 ** 2) : .2f}GB')
         
 
         try:
@@ -405,6 +392,9 @@ def main(args):
             except Exception as e:
                 logger.exception(e)
                 #remove_directory(pro_dir)
+        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
+        logger.info(f"Wall time(s) : {time.time() - current_process.create_time():.2f}")
+        logger.info(f"Memory usage : {current_process.memory_full_info().rss/1024**3:.2f}Gb ({current_process.memory_percent():.2f}%)")
 
 if __name__ == "__main__":
     main(cmdparser)
