@@ -311,7 +311,7 @@ def gc_at_skew(seq : str, window:int=2048) -> dict:
         #t = seq.count("T", i, i+window)
 
         #at_skew.append((a - t) / (a + t))
-        gc_skew.append(safe_divide((g - c) / (g + c)))
+        gc_skew.append(safe_divide((g - c),(g + c)))
         lengths.append(i)
     gc_skew =  scale_range(np.convolve(np.array(gc_skew) , np.ones(10)/10, mode='same')  , min=-1, max=1)
     #at_skew =  scale_range(np.convolve(np.array(at_skew) , np.ones(10)/10, mode='same'), min=-1, max=1)

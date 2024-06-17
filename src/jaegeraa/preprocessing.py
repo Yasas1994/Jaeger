@@ -83,7 +83,7 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None, disable=False): #fa
                             #a = seq.count("A")
                             #t = seq.count("T")
                             #at_skew.append((a - t) / (a + t))
-                            gc_skew = safe_divide((g - c) / (g + c))
+                            gc_skew = safe_divide((g - c) , (g + c))
                             #sequnce_fragment, contig_id, index, contig_end, i, g, c, gc_skew
                             yield sequence[index:index+fragsize]+","+str(record[0].replace(',','__'))+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)+","+f"{g : .3f}"+","+f"{c : .3f}"+","+f"{gc_skew : .3f}"
     return c
