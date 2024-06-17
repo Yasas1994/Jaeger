@@ -1,6 +1,7 @@
 from typing import Iterable, Any, Tuple
 from enum import Enum, auto
 import tensorflow as tf
+from datetime import datetime
 import bz2
 import gzip
 import logging
@@ -93,6 +94,8 @@ def remove_directory(directory):
         os.rmdir(directory)
 
 def create_logger(args):
+    input_file_path=args.input
+    input_file = os.path.basename(input_file_path)
     # Logging config
     log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
 
@@ -103,12 +106,17 @@ def create_logger(args):
     logging.getLogger().addFilter(logging.Filter("Jaeger"))
 
     logger = logging.getLogger('Jaeger')
+    file_handler = logging.FileHandler(os.path.join(args.output,f"{input_file.rsplit('.',1)[0]}_jaeger.log"))
+    #args.output,f"jaeger_{str(datetime.now()).replace(' ', '_').replace(':','').replace('.','')}.log"
+    logger.addHandler(file_handler)
     logger.setLevel(log_levels[args.verbose])
 
-    ch = logging.StreamHandler()
-    ch.setLevel(log_levels[args.verbose])
-    ch.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-    logger.addHandler(ch)
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setLevel(log_levels[args.verbose])
+    stderr_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+    file_handler.setFormatter(logging.Formatter('%(asctime)s : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S'))
+    logger.addHandler(stderr_handler)
+    logger.addHandler(file_handler)
 
     return logger
 
