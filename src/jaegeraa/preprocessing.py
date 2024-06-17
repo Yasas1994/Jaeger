@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tqdm import tqdm
 from Bio import SeqIO, Seq
-from jaegeraa.utils import signal_fl, signal_l, safe_devide
+from jaegeraa.utils import signal_fl, signal_l, safe_divide
 import io
 import types
 
