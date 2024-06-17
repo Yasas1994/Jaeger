@@ -36,7 +36,7 @@ from jaegeraa.nnlib.layers import WRes_model_embeddings, create_jaeger_model
 from jaegeraa.nnlib.cmodel import JaegerModel
 from jaegeraa.utils import get_compressed_file_handle, dir_path, file_path, fasta_entries, get_device_name, create_logger, remove_directory
 from jaegeraa.preprocessing import fasta_gen,process_string, process_string_gen2
-from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plot_scores, segment, get_cordinates, ood_predict_default, softmax_entropy
+from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plot_scores, segment, get_cordinates, ood_predict_default, softmax_entropy, scan_for_terminal_repeats
 
 
 
@@ -131,6 +131,14 @@ def cmdparser():
 def main(args):
 
     args = args() 
+    # prepare output directory
+    output_dir = args.output
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    #     logger.info(f"Output directory {output_dir} created.")
+    # else:
+    #     logger.info(f"Using existing directory {output_dir}")
+        
     logger = create_logger(args)
     config =json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
     logger.info(f"{version('jaeger-bio')} Deep-learning based phage discovery\nhttps://github.com/Yasas1994/Jaeger.git\n\n" + "{:-^80}".format("validating parameters"))
@@ -148,13 +156,14 @@ def main(args):
         if ood_weights_path.suffix =='.h5':
 
             hf = h5py.File(ood_weights_path, 'r')
-
             ood_params = {
                         'type':'params',
                         'coeff': np.array(hf['coeff']), 
                         'intercept' : np.array(hf['intercept']),
-                        'batch_mean' : np.array(hf['batch_mean']),
-                        'batch_std' : np.array(hf['batch_std'])}
+                        'batch_mean' : np.array(hf['mean_batch']),
+                        #'batch_std' : np.array(hf['std_batch'])
+                        }
+
             hf.close()
 
         elif ood_weights_path.suffix == '.pkl':
@@ -179,13 +188,6 @@ def main(args):
     else:
         config['labels'] = [v for k,v in config[args.model]['default_labels'].items()]
 
-    # prepare output directory
-    output_dir = args.output
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
-        logger.info(f"Output directory {output_dir} created.")
-    else:
-        logger.info(f"Using existing directory {output_dir}")
 
     #prepare output filename and check if exists
     input_file_path=args.input
@@ -254,10 +256,12 @@ def main(args):
     logger.info(f'Batch size : {args.batch}')
     logger.info(f'Mode : {mode}')
     logger.info(f'Total Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB')
-    logger.info(f'Avail cpus : {os.cpu_count()}')
+    logger.info(f'Avail cpus : {os.cpu_count()}\n'+"{:-^80}".format(""))
 
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
+    logger.info("scaning for terminal repeats")
+    term_repeats = scan_for_terminal_repeats(input_fh)
     device = tf.config.list_logical_devices(mode)
     device_names = [get_device_name(i) for i in device]
     logger.debug(f'{device}, {device_names}')
@@ -293,9 +297,10 @@ def main(args):
             inputs, outputs  = create_jaeger_model(input_shape=(6,insize,11),out_shape=num_class)
             model = JaegerModel(inputs=inputs, outputs=outputs)
         
+        #scan for terminal repeats
+       
+        logger.info(f"loading model to memory")
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
-
-        logger.info(f"Model initialized ... ")
         logger.info(f'Avail Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB\n{"-"*80}')
 
         
@@ -306,6 +311,7 @@ def main(args):
         
 
         try:
+            logger.info(f"starting model inference" )
             y_pred = model.predict(idataset, workers=args.workers, verbose=0)
         except Exception as e:
             logger.error(f'Annother process is running on {"|".join(device_names)}! Terminate the process and try again or switch to CPU mode!!')
@@ -313,6 +319,7 @@ def main(args):
 
         # output preprocessing 
         split_indices = np.where(np.array(y_pred['meta'][2], dtype=np.int32) == 1)[0]+1
+
         if y_pred['y_hat']['output'].shape[0] == split_indices[-1]:
             split_indices = split_indices[:-1]
         predictions = np.split(y_pred['y_hat']['output'], split_indices, axis=0)
@@ -322,8 +329,15 @@ def main(args):
 
         headers = np.split(np.array(y_pred['meta'][0], dtype=np.unicode_),split_indices, axis=0)
         lengths = np.split(np.array(y_pred['meta'][4], dtype=np.int32),split_indices, axis=0)
+        gc_skews =  np.split(y_pred['meta'][-1].astype(float),split_indices, axis=0)
+        g =  y_pred['meta'][-2].astype(float)
+        c =  y_pred['meta'][-3].astype(float)
+        gcs = (g+c)/args.fsize
+        gcs =  np.split(gcs, split_indices, axis=0)
+
         lengths = np.array(list(map(lambda x : x[0], lengths)))
         headers = np.array(list(map(lambda x : x[0], headers)))
+
         pred_sum = np.array(list(map(lambda x: np.mean(x,axis=0),predictions)),np.float16)
         pred_var = np.array(list(map(lambda x: np.var(x,axis=0),predictions)),np.float16)
         consensus = np.argmax(pred_sum, axis=1)
@@ -336,15 +350,18 @@ def main(args):
         prophage_contam  = (pred_sum[:,1] < pred_var[:,1]) * (consensus == 0)
         host_contam = (pred_sum[:,1] < pred_var[:,1]) * (consensus == 1)
 
+
+
+
         data = {'headers':headers, 'length' : lengths,
                 'consensus':consensus,'per_class_counts' : per_class_counts,
                 'pred_sum':pred_sum, 'pred_var':pred_var, 'frag_pred':frag_pred,
                 'ood':ood, 'entropy' : entropy_mean, 'host_contam' :host_contam,
-                'prophage_contam' : prophage_contam }
+                'prophage_contam' : prophage_contam, 'repeats':term_repeats}
 
         write_output(args, config, data, output_file_path)
 
-        logger.info(f"processed {headers.shape[0]}/{num} sequences \n" )
+        logger.info(f"processed {headers.shape[0]}/{num} sequences" )
 
         if args.getalllogits:
             output_logits = f"{input_file.rsplit('.',1)[0]}_jaeger.npy"
@@ -354,9 +371,9 @@ def main(args):
         if args.prophage:
             # still experimental - needs more testing!!!!
             try:
-                logits_df = logits_to_df(predictions, headers=headers, lengths=lengths, cutoff_length = args.lc)
+                logits_df = logits_to_df(args=args,config=config,logits=predictions, headers=headers, lengths=lengths, gc_skews=gc_skews, gcs=gcs,cutoff_length = args.lc)
                 if logits_df:
-                    logger.info(f"Identifying prophage regions")
+                    logger.info(f"Identifying prophage regions\n")
                     pro_dir = os.path.join(output_dir,f'{os.path.basename(input_file).split(".")[0]}_prophages')
                     plots_dir = os.path.join(pro_dir,'plots')
                     for dir in [pro_dir,plots_dir]:
@@ -364,14 +381,15 @@ def main(args):
                             os.mkdir(dir)
  
                     
-                    plot_scores(logits_df, outdir=plots_dir)
+                    
                     phage_cord = segment(logits_df, outdir=plots_dir, cutoff_length = args.lc, sensitivity=args.sensitivity)
-                    get_cordinates(args.input, phage_cord, pro_dir)
+                    plot_scores(logits_df, phage_cordinates=phage_cord,args=args, config=config, outdir=plots_dir)
+                    get_cordinates(args, input_fh, phage_cord, pro_dir)
                 else:
                     logger.info(f"No prophage regions found")
             except Exception as e:
                 logger.exception(e)
-                remove_directory(pro_dir)
+                #remove_directory(pro_dir)
 
 if __name__ == "__main__":
     main(cmdparser)
