@@ -11,6 +11,14 @@ import argparse
 import logging
 logger = logging.getLogger(__name__)
 
+def safe_divide(numerator, denominator):
+    try:
+        result = round(numerator / denominator, 2)
+    except ZeroDivisionError:
+        logger.error("Error: Division by zero!")
+        result = 0
+    return result
+
 class Compression(Enum):
     gzip = auto()
     bzip2 = auto()

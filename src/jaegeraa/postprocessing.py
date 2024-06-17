@@ -20,7 +20,7 @@ import parasail
 from kneed import KneeLocator
 import scipy
 from pycirclize import Circos
-
+from jaegeraa.utils import safe_divide
 
 # logging_module.py
 import logging
@@ -745,13 +745,7 @@ def get_cordinates(args, filehandle, prophage_cordinates, outdir):
         df['contig_id'] = df['contig_id'].apply(lambda x : x.replace('__', ','))
         df.to_csv(os.path.join(outdir,'prophages_jaeger.tsv'), sep='\t',index=False)
 
-def safe_divide(numerator, denominator):
-    try:
-        result = round(numerator / denominator, 2)
-    except ZeroDivisionError:
-        logger.error("Error: Division by zero!")
-        result = 0
-    return result
+
 
 def get_alignment_summary(result_object, seq_len,record_id, input_length, type_='DTR'):
     ltr_cutoff = 250
