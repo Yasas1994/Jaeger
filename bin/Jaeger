@@ -35,7 +35,7 @@ import tensorflow.keras.backend as K
 
 from jaegeraa.nnlib.layers import WRes_model_embeddings, create_jaeger_model
 from jaegeraa.nnlib.cmodel import JaegerModel
-from jaegeraa.utils import LOGGER, get_compressed_file_handle,file_path, fasta_entries, get_device_name, description
+from jaegeraa.utils import JaegerLogger, get_compressed_file_handle,file_path, fasta_entries, get_device_name, description
 from jaegeraa.preprocessing import fasta_gen,process_string, process_string_gen2
 from jaegeraa.postprocessing import update_dict, write_output, logits_to_df, plot_scores, segment, get_cordinates, ood_predict_default, softmax_entropy, scan_for_terminal_repeats
 
@@ -126,9 +126,6 @@ def cmdparser():
     return parser.parse_args()
 
 
-
-  
-
 def main(args):
 
     current_process = psutil.Process()
@@ -138,36 +135,38 @@ def main(args):
 
     input_file_path=args.input
     input_file = os.path.basename(input_file_path)
+
+    file_base = os.path.splitext(input_file)[0]
+    output_dir = os.path.join(args.output,file_base)
+
+    args.output = output_dir
+    logger = JaegerLogger(args)
+
     if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
-        file_base = os.path.splitext(input_file)[0]
-        output_dir = os.path.join(args.output,file_base)
+
         if not os.path.isdir(output_dir):
             os.makedirs(output_dir)
 
         output_file = f"{file_base}_{config[args.model]['suffix']}_jaeger.tsv"
         output_file_path= os.path.join(output_dir, output_file)
-        if os.path.exists(output_file_path):
-            if not args.overwrite:
-                logger.error("output file exists. enable --overwrite option to overwrite the output file.")
-                exit(1)
     else:
         logger.error("input file is not a valid fastafile")
         exit(1)
     # prepare output directory
 
 
-    #     logger.info(f"Output directory {output_dir} created.")
-    # else:
-    #     logger.info(f"Using existing directory {output_dir}")
-    args.output = output_dir
-    logger = LOGGER(args)
+    if os.path.exists(output_file_path):
+        if not args.overwrite:
+            logger.error("output file exists. enable --overwrite option to overwrite the output file.")
+            exit(1)
+
     logger.info(description(version('jaeger-bio'))+ "\n{:-^80}".format('validating parameters'), cleanformat=True)
 
     weights_path = files('jaegeraa.data').joinpath(config[args.model]['weights'])
     num_class = config[args.model]['num_classes']
     ood_params = None
     if not os.path.exists(weights_path):
-        logger.error('could not find model weights. Please check the data dir')
+        logger.error('could not find model weights.please check the data dir')
     # else:
     #    logger.info(f'Using {weights_path} to build the model')
     
@@ -271,7 +270,6 @@ def main(args):
 
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
-    logger.info("scaning for terminal repeats")
     term_repeats = scan_for_terminal_repeats(input_fh,num)
     device = tf.config.list_logical_devices(mode)
     device_names = [get_device_name(i) for i in device]
@@ -327,7 +325,6 @@ def main(args):
         except Exception as e:
             logger.debug(e)
             logger.error(f'annother process is running on {"|".join(device_names)}! Terminate the process and try again or switch to CPU mode!!')
-        finally:
             exit(1)
 
         # output preprocessing 

@@ -1,9 +1,12 @@
 import tensorflow as tf
 from tqdm import tqdm
+import logging
 from Bio import SeqIO, Seq
 from jaegeraa.utils import signal_fl, signal_l, safe_divide
 import io
 import types
+
+logger = logging.getLogger("Jaeger")
 
 def codon_mapper():
     '''hash table convert codons to corresponding aminoacid.

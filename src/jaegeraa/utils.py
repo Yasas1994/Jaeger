@@ -196,7 +196,87 @@ class LOGGER:
 
         self.stderr_handler.setFormatter(self.formatter_stdout)
         self.file_handler.setFormatter(self.formatter_log)
-        
+
+class JaegerLogger(logging.Logger):
+    def __init__(self, args):
+        super().__init__(args)
+
+        self.input_file_path=args.input
+        self.input_file = os.path.basename(self.input_file_path)
+        log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
+
+        logging.addLevelName(logging.WARNING, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
+        logging.addLevelName(logging.ERROR, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
+        logging.addLevelName(logging.INFO, "\033[1;32m%s\033[1;0m" % logging.getLevelName(logging.INFO))
+        logging.addLevelName(logging.DEBUG, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
+        logging.getLogger().addFilter(logging.Filter("Jaeger"))
+
+        logger = logging.getLogger('Jaeger')
+
+        file_base = os.path.splitext(os.path.basename(args.input))[0]
+        self.file_handler = logging.FileHandler(os.path.join(args.output,f"{file_base}_jaeger.log"))
+        logger.addHandler(self.file_handler)
+        logger.setLevel(logging.DEBUG)
+
+        self.stderr_handler = logging.StreamHandler()
+        self.stderr_handler.setLevel(log_levels[args.verbose])
+
+        self.formatter_stdout = logging.Formatter('[%(asctime)s | %(levelname)s] : %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_log =logging.Formatter('[%(asctime)s] : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_clean=logging.Formatter('')
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+        logger.addHandler(self.stderr_handler)
+        logger.addHandler(self.file_handler)
+        self.logger = logger
+    
+    def info(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.info(message)
+            self.reset_handler()
+        else:
+            self.logger.info(message)
+
+    def warn(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.warning(message)
+            self.reset_handler()
+        else:
+            self.logger.warning(message)  
+
+    def error(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.error(message)
+            self.reset_handler()
+        else:
+            self.logger.error(message)  
+
+    def debug(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.debug(message)
+            self.reset_handler()
+        else:
+            self.logger.debug(message)         
+
+    def reset_handler(self):
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+
+
 def configure_multi_gpu_inference(gpus):
     if gpus > 0:
             return tf.distribute.MirroredStrategy()

@@ -27,8 +27,7 @@ import logging
 import sys
 
 
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger("Jaeger")
 
 
 def find_runs(x):
@@ -200,7 +199,7 @@ def get_ood_probability(ood):
 
 def write_output(args, config, data, output_file_path):
     try:
-
+        logger.info("generating summary")
         class_map = config['labels'] #comes from config
         lab = {int(k):v for k,v in config[args.model]['all_labels'].items()}
         #consider adding other infomation such as GC content in the future
@@ -240,9 +239,9 @@ def write_output(args, config, data, output_file_path):
         df.to_csv(output_file_path, sep='\t', index=None, float_format='%.3f') 
 
     except Exception as e:
-        logger.exception(e)
-
-        sys.exit(1)
+        logger.error(e)
+        logger.debug(e)
+        exit(1)
 
 
 def consecutive(data, stepsize=1):
