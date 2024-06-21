@@ -77,6 +77,7 @@ def signal_fl(it):
         yield 0, ret_var
         ret_var = val
     yield 1, ret_var
+
 def signal_l(it):
     '''get a signal at the end of the iterator'''
     iterable = iter(it)
@@ -125,22 +126,24 @@ class LOGGER:
         self.input_file = os.path.basename(self.input_file_path)
         log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
 
-        logging.addLevelName(logging.WARNING, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
-        logging.addLevelName(logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
-        logging.addLevelName(logging.INFO, "\033[1;42m%s\033[1;0m" % logging.getLevelName(logging.INFO))
-        logging.addLevelName(logging.DEBUG, "\033[1;43m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
+        logging.addLevelName(logging.WARNING, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
+        logging.addLevelName(logging.ERROR, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
+        logging.addLevelName(logging.INFO, "\033[1;32m%s\033[1;0m" % logging.getLevelName(logging.INFO))
+        logging.addLevelName(logging.DEBUG, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
         logging.getLogger().addFilter(logging.Filter("Jaeger"))
 
         logger = logging.getLogger('Jaeger')
-        self.file_handler = logging.FileHandler(os.path.join(args.output,f"{self.input_file.rsplit('.',1)[0]}_jaeger.log"))
+
+        file_base = os.path.splitext(os.path.basename(args.input))[0]
+        self.file_handler = logging.FileHandler(os.path.join(args.output,f"{file_base}_jaeger.log"))
         logger.addHandler(self.file_handler)
-        logger.setLevel(log_levels[args.verbose])
+        logger.setLevel(logging.DEBUG)
 
         self.stderr_handler = logging.StreamHandler()
         self.stderr_handler.setLevel(log_levels[args.verbose])
 
-        self.formatter_stdout = logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-        self.formatter_log =logging.Formatter('%(asctime)s : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_stdout = logging.Formatter('[%(asctime)s | %(levelname)s] : %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_log =logging.Formatter('[%(asctime)s] : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S')
         self.formatter_clean=logging.Formatter('')
 
         self.stderr_handler.setFormatter(self.formatter_stdout)
@@ -164,10 +167,10 @@ class LOGGER:
 
             self.stderr_handler.setFormatter(self.formatter_clean)
             self.file_handler.setFormatter(self.formatter_clean)
-            self.logger.warn(message)
+            self.logger.warning(message)
             self.reset_handler()
         else:
-            self.logger.warn(message)  
+            self.logger.warning(message)  
 
     def error(self,message, cleanformat=False):
         if cleanformat == True:
@@ -218,7 +221,7 @@ def create_virtual_gpus(logger, num_gpus=2, memory_limit=2048):
         except RuntimeError as e:
             # Virtual devices must be set before GPUs have been initialized
             logger.error(e)
-            
+
 def format_seconds(seconds):
     minutes = seconds // 60
     remaining_seconds = seconds % 60

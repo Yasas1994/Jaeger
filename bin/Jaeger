@@ -133,23 +133,41 @@ def main(args):
 
     current_process = psutil.Process()
     args = args() 
+    config = json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
+    #prepare output filename and check if exists
+
+    input_file_path=args.input
+    input_file = os.path.basename(input_file_path)
+    if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
+        file_base = os.path.splitext(input_file)[0]
+        output_dir = os.path.join(args.output,file_base)
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+
+        output_file = f"{file_base}_{config[args.model]['suffix']}_jaeger.tsv"
+        output_file_path= os.path.join(output_dir, output_file)
+        if os.path.exists(output_file_path):
+            if not args.overwrite:
+                logger.error("output file exists. enable --overwrite option to overwrite the output file.")
+                exit(1)
+    else:
+        logger.error("input file is not a valid fastafile")
+        exit(1)
     # prepare output directory
-    output_dir = args.output
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
+
+
     #     logger.info(f"Output directory {output_dir} created.")
     # else:
     #     logger.info(f"Using existing directory {output_dir}")
-        
+    args.output = output_dir
     logger = LOGGER(args)
-    config = json.load(open(files('jaegeraa.data').joinpath('config.json'), 'r'))
     logger.info(description(version('jaeger-bio'))+ "\n{:-^80}".format('validating parameters'), cleanformat=True)
 
     weights_path = files('jaegeraa.data').joinpath(config[args.model]['weights'])
     num_class = config[args.model]['num_classes']
     ood_params = None
     if not os.path.exists(weights_path):
-        logger.error('Could not find model weights. Please check the data dir')
+        logger.error('could not find model weights. Please check the data dir')
     # else:
     #    logger.info(f'Using {weights_path} to build the model')
     
@@ -191,19 +209,7 @@ def main(args):
         config['labels'] = [v for k,v in config[args.model]['default_labels'].items()]
 
 
-    #prepare output filename and check if exists
-    input_file_path=args.input
-    input_file = os.path.basename(input_file_path)
-    if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
-        output_file = f"{input_file.rsplit('.',1)[0]}_{config[args.model]['suffix']}_jaeger.tsv"
-        output_file_path= os.path.join(output_dir,output_file)
-        if os.path.exists(output_file_path):
-            if not args.overwrite:
-                logger.error("Outputfile exists. enable --overwrite option to overwrite the output file.")
-                exit(1)
-    else:
-        logger.error("Input file is not a valid fastafile")
-        exit(1)
+
     if args.progressbar:
         # disables progressbar
         tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
@@ -227,7 +233,7 @@ def main(args):
         mode = 'GPU'
         tf.config.set_visible_devices([gpus[args.physicalid]], 'GPU')
         if args.virtualgpu:
-            logger.info(f'Trying to create {gpus[args.physicalid]} a virtual GPU with 4096MB of mem ')
+            logger.info(f'trying to create {gpus[args.physicalid]} a virtual GPU with 4096MB of mem ')
             # Create n virtual GPUs with user defined amount of memory each
             try:
                 tf.config.set_logical_device_configuration(
@@ -237,33 +243,36 @@ def main(args):
                 logical_gpus = tf.config.list_logical_devices('GPU')
                 logger.info(logical_gpus)
                 if len(logical_gpus) == 0:
-                    logger.info('Failed to create virtual GPUs, switching back to single GPU mode')
+                    logger.info('An error occured during virtual device initialization, switching back to single GPU mode')
             except Exception as e:
                 # Virtual devices must be set before GPUs have been initialized
-                logger.error(e)
+                logger.error("an error occured during virtual device initialization ")
+                logger.debug(e)
 
         
     else:
         mode = 'CPU'
-        logger.info("Could not find a GPU on the system.\nFor optimal performance run Jaeger on a GPU.")
+        logger.warn("could not find a GPU on the system.\nFor optimal performance run Jaeger on a GPU.")
         
     
     
     #psutil.virtual_memory().available * 100 / psutil.virtual_memory().total   
-
+    logger.debug(" ".join(sys.argv))
     logger.info(f'tensorflow : {version("tensorflow")}')
-    logger.info(f'Input file : {input_file}')
-    logger.info(f'Fragment size : {args.fsize}')
-    logger.info(f'Stride : {args.stride}')
-    logger.info(f'Batch size : {args.batch}')
-    logger.info(f'Mode : {mode}')
-    logger.info(f'Avail mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB')
-    logger.info(f'Avail cpus : {os.cpu_count()}\n'+"{:-^80}".format(""))
+    logger.info(f'input file : {input_file}')
+    logger.info(f'log file : {file_base}_jaeger.log')
+    logger.info(f'outpath : {os.path.abspath(output_dir)}')
+    logger.info(f'fragment size : {args.fsize}')
+    logger.info(f'stride : {args.stride}')
+    logger.info(f'batch size : {args.batch}')
+    logger.info(f'mode : {mode}')
+    logger.info(f'avail mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB')
+    logger.info(f'avail cpus : {os.cpu_count()}\n'+"{:-^80}".format(""))
 
     input_fh = get_compressed_file_handle(input_file_path)
     num = fasta_entries(input_fh)
     logger.info("scaning for terminal repeats")
-    term_repeats = scan_for_terminal_repeats(input_fh)
+    term_repeats = scan_for_terminal_repeats(input_fh,num)
     device = tf.config.list_logical_devices(mode)
     device_names = [get_device_name(i) for i in device]
     logger.debug(f'{device}, {device_names}')
@@ -303,7 +312,7 @@ def main(args):
        
         logger.info(f"loading model to memory")
         model.load_weights(filepath=weights_path)#.expect_partial() when loading weights from a chpt file
-        logger.info(f'Avail Mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB\n{"-"*80}')
+        logger.info(f'avail mem : {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB\n{"-"*80}')
 
         
         if mode == 'GPU':
@@ -316,7 +325,8 @@ def main(args):
             logger.info(f"starting model inference" )
             y_pred = model.predict(idataset, workers=args.workers, verbose=0)
         except Exception as e:
-            logger.error(f'Annother process is running on {"|".join(device_names)}! Terminate the process and try again or switch to CPU mode!!')
+            logger.error(f'annother process is running on {"|".join(device_names)}! Terminate the process and try again or switch to CPU mode!!')
+            logger.debug(e)
             sys.exit(1)
 
         # output preprocessing 
@@ -366,17 +376,17 @@ def main(args):
         logger.info(f"processed {headers.shape[0]}/{num} sequences" )
 
         if args.getalllogits:
-            output_logits = f"{input_file.rsplit('.',1)[0]}_jaeger.npy"
+            output_logits = f"{file_base}_jaeger.npy"
             output_logits_path= os.path.join(output_dir,output_logits)
             np.save(output_logits_path,dict(zip(headers, predictions)), allow_pickle=True)
     
         if args.prophage:
             # still experimental - needs more testing!!!!
             try:
-                logits_df = logits_to_df(args=args,config=config,logits=predictions, headers=headers, lengths=lengths, gc_skews=gc_skews, gcs=gcs,cutoff_length = args.lc)
+                logits_df = logits_to_df(args=args,config=config,logits=predictions, headers=headers, lengths=lengths, gc_skews=gc_skews, gcs=gcs, cutoff_length = args.lc)
                 if logits_df:
-                    logger.info(f"Identifying prophage regions\n")
-                    pro_dir = os.path.join(output_dir,f'{os.path.basename(input_file).split(".")[0]}_prophages')
+                    logger.info(f"identifying prophage regions\n")
+                    pro_dir = os.path.join(output_dir, f'{file_base}_prophages')
                     plots_dir = os.path.join(pro_dir,'plots')
                     for dir in [pro_dir,plots_dir]:
                         if not os.path.isdir(dir):
@@ -388,13 +398,14 @@ def main(args):
                     plot_scores(logits_df, phage_cordinates=phage_cord,args=args, config=config, outdir=plots_dir)
                     get_cordinates(args, input_fh, phage_cord, pro_dir)
                 else:
-                    logger.info(f"No prophage regions found")
+                    logger.info(f"no prophage regions found")
             except Exception as e:
-                logger.exception(e)
-                #remove_directory(pro_dir)
+                logger.error("an error occured during the prophage prediction step")
+                logger.debug(e)
+
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
-        logger.info(f"Wall time(s) : {time.time() - current_process.create_time():.2f}")
-        logger.info(f"Memory usage : {current_process.memory_full_info().rss/1024**3:.2f}Gb ({current_process.memory_percent():.2f}%)")
+        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
+        logger.info(f"memory usage : {current_process.memory_full_info().rss/1024**3:.2f}Gb ({current_process.memory_percent():.2f}%)")
 
 if __name__ == "__main__":
     main(cmdparser)

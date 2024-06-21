@@ -509,7 +509,8 @@ def plot_scores(logits_df, args, config, outdir, phage_cordinates):
         ]
         _ = circos.ax.legend(handles=handles, bbox_to_anchor=(0.51, 0.50), loc="center", fontsize=11)
 
-        plt.savefig(os.path.join(outdir, f'{contig_id.rsplit("_",1)[0].replace(" ", "_")}.pdf'), bbox_inches='tight',dpi=300)
+        plt.savefig(os.path.join(outdir, f'{os.path.splitext(os.path.basename(args.input))[0]}_{contig_id.split(" ")[0]}.pdf'), bbox_inches='tight',dpi=300)
+        logger.debug(f'prophage plot saved at ' + os.path.join(outdir, f'{os.path.splitext(os.path.basename(args.input))[0]}_{contig_id.split(" ")[0]}.pdf'))
         plt.close()
 
 def segment(logits_df, outdir, cutoff_length = 500_000, sensitivity=1.5):
@@ -798,13 +799,13 @@ def get_alignment_summary(result_object, seq_len,record_id, input_length, type_=
                 'front' : result_object.traceback.query,
                 'rear' : rear,  }
 
-def scan_for_terminal_repeats(infile):
+def scan_for_terminal_repeats(infile, num):
     infile.seek(0)
     #ideally DRs should be found in the intergenic region
     logger.info("scaning for terminal repeats")
     user_matrix = parasail.matrix_create("ACGT", 2, -100)
     summaries =[]
-    for record in SeqIO.FastaIO.SimpleFastaParser(infile):
+    for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(infile), total=num, ascii=' >=',bar_format='{l_bar}{bar:10}{r_bar}',dynamic_ncols=True,unit='seq' ,colour='green'):
         seq_len = len(record[1])
         headder = record[0].replace(',','__')
         scan_length = min(max(int(seq_len*0.04),400), 4000)
