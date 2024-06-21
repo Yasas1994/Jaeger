@@ -663,8 +663,8 @@ def get_prophage_summary(result_object, seq_len, record, cordinates, phage_score
     
 def reverse_complement(dna_sequence):
     complement_dict = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', '-':'-', 'N':'N', 'W':'W','S':'S','Y':'R','R':'Y', 'M':'K',
-                        'K':'M', 'B':'V', 'V':'B', 'H':'D', 'D':'H' }
-    reverse_sequence = ''.join(complement_dict[base] for base in reversed(dna_sequence))
+                        'K':'M', 'B':'V', 'V':'B', 'H':'D', 'D':'H', 'a' : 'T', 't' : 'A', 'g' : 'C', 'c' : 'G'}
+    reverse_sequence = ''.join(complement_dict.get(base,'N') for base in reversed(dna_sequence))
     return reverse_sequence
 
 def get_cordinates(args, filehandle, prophage_cordinates, outdir):
