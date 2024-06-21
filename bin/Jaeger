@@ -383,7 +383,7 @@ def main(args):
                 logits_df = logits_to_df(args=args,config=config,logits=predictions, headers=headers, lengths=lengths, gc_skews=gc_skews, gcs=gcs, cutoff_length = args.lc)
                 if logits_df:
                     logger.info(f"identifying prophage regions\n")
-                    pro_dir = os.path.join(output_dir, f'{file_base}_prophages')
+                    pro_dir = os.path.join(output_dir, f"{file_base}_{config[args.model]['suffix']}_prophages")
                     plots_dir = os.path.join(pro_dir,'plots')
                     for dir in [pro_dir,plots_dir]:
                         if not os.path.isdir(dir):

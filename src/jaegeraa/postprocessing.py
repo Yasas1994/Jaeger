@@ -686,6 +686,7 @@ def get_cordinates(args, filehandle, prophage_cordinates, outdir):
                         off_set = ((end - start)//4)
                     else:
                         off_set = 2000
+                        
                     logger.info('searching for direct repeats',start-scan_length,start + off_set, '|', end-off_set,end + scan_length, )
 
                     #TDR
