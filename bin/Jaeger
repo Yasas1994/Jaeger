@@ -327,6 +327,7 @@ def main(args):
         except Exception as e:
             logger.debug(e)
             logger.error(f'annother process is running on {"|".join(device_names)}! Terminate the process and try again or switch to CPU mode!!')
+        finally:
             sys.exit(1)
 
         # output preprocessing 
