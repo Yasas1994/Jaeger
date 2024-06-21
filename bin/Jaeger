@@ -140,20 +140,19 @@ def main(args):
     output_dir = os.path.join(args.output,file_base)
 
     args.output = output_dir
-    logger = JaegerLogger(args)
+    
 
     if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
 
         if not os.path.isdir(output_dir):
             os.makedirs(output_dir)
-
+        logger = JaegerLogger(args)
         output_file = f"{file_base}_{config[args.model]['suffix']}_jaeger.tsv"
         output_file_path= os.path.join(output_dir, output_file)
     else:
         logger.error("input file is not a valid fastafile")
         exit(1)
     # prepare output directory
-
 
     if os.path.exists(output_file_path):
         if not args.overwrite:
