@@ -23,7 +23,9 @@ setup(name='jaeger-bio',
       install_requires=[
           
         'h5py >=3.8',
-        'tensorflow[and-cuda] >=2.15, <2.16',
+        'tensorflow[and-cuda] >=2.15, <2.16; platform_system=="Linux"',
+        'tensorflow >=2.15, <2.16; platform_system=="Darwin"',
+        'tensorflow-metal; platform_system=="Darwin" and platform_machine=="arm64"',
         'tqdm >=4.64.0',
         'biopython >=1.78',
         'psutil >=5',

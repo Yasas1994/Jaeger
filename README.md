@@ -176,15 +176,14 @@ pip install jaeger-bio
 
 ````
   # create a conda environment
-  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9.2 pip tensorflow=2.6 tensorflow-deps=2.6.0 numpy=1.19.5 tqdm=4.64.0 biopython=1.78
+  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9 pip
 
-  # install tensorflow
-  conda activate jaeger
-  pip install tensorflow-macos
-  pip install tensorflow-metal
+  # clone the git repository
+  git clone https://github.com/Yasas1994/Jaeger.git
 
   # install jaeger
-  pip install jaeger-bio
+  cd Jaeger
+  pip install .
 ````
 
 ### <u>Singularity (coming soon)</u>
