@@ -21,6 +21,7 @@ from kneed import KneeLocator
 import scipy
 from pycirclize import Circos
 from jaegeraa.utils import safe_divide
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # logging_module.py
 import logging
@@ -91,7 +92,7 @@ def get_window_summary(x, phage_pos):
     a string with Vs and ns. Vs represent virus or phage windows. ns represent cellular windows
 
     '''
-    items, run_length = find_runs(x)
+    items, run_length = find_runs(x == phage_pos)
     run_length = np.array(run_length, dtype=np.unicode_)
     tmp = np.empty(items.shape,dtype=np.unicode_)
     #print(phage_pos, items, run_length)
@@ -197,7 +198,7 @@ def get_ood_probability(ood):
         # )
         
 
-def write_output(args, config, data, output_file_path):
+def write_output(args, config, data):
     try:
         logger.info("generating summary")
         class_map = config['labels'] #comes from config
@@ -212,11 +213,13 @@ def write_output(args, config, data, output_file_path):
                   'prophage_contam' : data['prophage_contam']
                   }
 
-        if args.model == "deafult":
+        if args.model == "default":
+            columns['G+C'] =  list(map(lambda x: np.mean(x) ,data['gc']))
+            columns['N%'] =  list(map(lambda x: np.mean(x) ,data['ns']))
             # finds and appends the second highest class to the dict-> prediction_2
-            ev = np.product(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([2,1]), axis=1)
-            av = np.product(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([3,1]), axis=1)*2
-            bv = np.product(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([0,1]), axis=1)*3
+            ev = np.prod(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([2,1]), axis=1)
+            av = np.prod(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([3,1]), axis=1)*2
+            bv = np.prod(np.argsort(data['pred_sum'],axis=1)[:,2:4]==np.array([0,1]), axis=1)*3
             class_map2 = {int(k):v for k,v in config[args.model]['second'].items()} #comes from config
             columns['prediction_2'] = list(map(lambda x: class_map2[x],ev+av+bv)) #only for deafult mode
             
@@ -234,9 +237,11 @@ def write_output(args, config, data, output_file_path):
         
         df=pd.DataFrame(columns).set_index('contig_id')
         
-        df = df.join(data['repeats'].set_index('contig_id')[['terminal_repeats','repeat_length']], how="outer").reset_index(names='contig_id')
+        df = df.join(data['repeats'].set_index('contig_id')[['terminal_repeats','repeat_length']], how="right").reset_index(names='contig_id')
         df['contig_id'] = df['contig_id'].apply(lambda x : x.replace('__', ','))
-        df.to_csv(output_file_path, sep='\t', index=None, float_format='%.3f') 
+        df.to_csv(args.output_file_path, sep='\t', index=None, float_format='%.3f') 
+        df.query('prediction == "phage" and phage_score > 3 and reliability_score > 0.2')\
+        .to_csv(args.output_phage_file_path, sep='\t', index=None, float_format='%.3f')\
 
     except Exception as e:
         logger.error(e)
@@ -799,13 +804,13 @@ def get_alignment_summary(result_object, seq_len,record_id, input_length, type_=
                 'front' : result_object.traceback.query,
                 'rear' : rear,  }
 
-def scan_for_terminal_repeats(infile, num):
+def scan_for_terminal_repeats(args,infile, num):
     infile.seek(0)
     #ideally DRs should be found in the intergenic region
     logger.info("scaning for terminal repeats")
     user_matrix = parasail.matrix_create("ACGT", 2, -100)
     summaries =[]
-    for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(infile), total=num, ascii=' >=',bar_format='{l_bar}{bar:10}{r_bar}',dynamic_ncols=True,unit='seq' ,colour='green'):
+    def helper(record):
         seq_len = len(record[1])
         headder = record[0].replace(',','__')
         scan_length = min(max(int(seq_len*0.04),400), 4000)
@@ -819,25 +824,36 @@ def scan_for_terminal_repeats(infile, num):
                                                 100, 5, user_matrix)
         if len(result_itr.traceback.query) > 12 or len(result_dtr.traceback.query) > 12:
             if result_itr.score > result_dtr.score:
-                summaries.append(get_alignment_summary(result_object=result_itr, seq_len=seq_len, record_id = headder,input_length=scan_length, type_='ITR')) 
+                return get_alignment_summary(result_object=result_itr, seq_len=seq_len, record_id = headder,input_length=scan_length, type_='ITR')
             else:
-                summaries.append(get_alignment_summary(result_object=result_dtr, seq_len=seq_len, record_id = headder,input_length=scan_length, type_='DTR')) 
+                return get_alignment_summary(result_object=result_dtr, seq_len=seq_len, record_id = headder,input_length=scan_length, type_='DTR')
         else:
-            summaries.append({'contig_id' : headder,
-                'repeat_length':None, 
-                'identities' : None,
-                'identity' :None,
-                'score' : None,
-                'terminal_repeats' : None,
-                'fgaps' : None,
-                'rgaps' : None,
-                'sstart' : None,
-                'send' : None,
-                'estart' : None,
-                'eend' : None, 
-                'seq_len' : seq_len,
-                'front' : None,
-                'rear' : None  }
-)
+            return {'contig_id' : headder,
+                            'repeat_length':None, 
+                            'identities' : None,
+                            'identity' :None,
+                            'score' : None,
+                            'terminal_repeats' : None,
+                            'fgaps' : None,
+                            'rgaps' : None,
+                            'sstart' : None,
+                            'send' : None,
+                            'estart' : None,
+                            'eend' : None, 
+                            'seq_len' : seq_len,
+                            'front' : None,
+                            'rear' : None  }
+            
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            # Submit tasks to the executor
+            futures = [executor.submit(helper, record) for record in tqdm(SeqIO.FastaIO.SimpleFastaParser(infile), total=num, ascii=' >=',bar_format='{l_bar}{bar:10}{r_bar}',dynamic_ncols=True,unit='seq' ,colour='green')]
+            
+            # Retrieve and print the results
+            for future in as_completed(futures):
+                result = future.result()
+                summaries.append(result)
+
+            
+
     infile.seek(0)
     return pd.DataFrame(summaries)

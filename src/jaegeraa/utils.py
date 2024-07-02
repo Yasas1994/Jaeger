@@ -307,11 +307,14 @@ def format_seconds(seconds):
     remaining_seconds = seconds % 60
     return f'{minutes} minutes and {remaining_seconds} seconds'            
 
-def fasta_entries(input_file_handle):
+def fasta_entries(input_file_handle, chunk_size=1024):
     num = 0
-    for i in input_file_handle: 
-        if i.startswith('>'):
-            num+=1
+    while True:
+        chunk = input_file_handle.read(chunk_size)
+        if not chunk:
+            break
+        num += chunk.count('>')
+
     input_file_handle.seek(0)
     return num
 
