@@ -104,9 +104,6 @@ def cmdparser():
     parser.add_argument('--getalllogits',
                        action="store_true",
                         help="returns window-wise scores in a .npy file" )
-    parser.add_argument('--usecutoffs',
-                       action="store_true",
-                        help="use cutoffs to obtain the class prediction" )
     group = parser.add_mutually_exclusive_group()
 
     group.add_argument("--cpu", 
@@ -209,11 +206,11 @@ def main(args):
                           'batch_mean' : batch_mean,
                           'batch_std' :batch_std }
 
-    if args.usecutoffs:
-        cutoffs = config[args.model]['cutoffs']
-        cutoffs = np.array([[cutoffs[str(i)] for i in range(len(cutoffs))]])
-    else:
-        cutoffs = None
+    # if args.usecutoffs:
+    #     cutoffs = config[args.model]['cutoffs']
+    #     cutoffs = np.array([[cutoffs[str(i)] for i in range(len(cutoffs))]])
+    # else:
+    #     cutoffs = None
     
     if args.getalllabels:
         config['labels'] = [v for k,v in config[args.model]['all_labels'].items()]

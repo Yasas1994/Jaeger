@@ -37,7 +37,8 @@ setup(name='jaeger-bio',
         'seaborn >= 0.12.2',
         'matplotlib >= 3.7',
         'scikit-learn == 1.3.2',
-        'parasail == 1.3.4 '
+        'parasail == 1.3.4 ',
+        'pycirclize'
       ],
 
       classifiers=[
