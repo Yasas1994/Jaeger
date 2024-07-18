@@ -97,7 +97,7 @@ class JaegerModel(tf.keras.Model):
         # Unpack the data
         x,y = data[0],data[1:]
 
-        y_logits = self(data[0], training=False) #set model to inference mode
+        y_logits = self(x, training=False) #set model to inference mode
         return {'y_hat':y_logits,'meta':y}
 
     @property

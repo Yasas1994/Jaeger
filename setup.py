@@ -4,6 +4,7 @@ from setuptools import find_namespace_packages
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+
 setup(name='jaeger-bio',
       version='1.1.26',
       description='A quick and precise pipeline for detecting phages in sequence assemblies.',
@@ -46,6 +47,6 @@ setup(name='jaeger-bio',
         "License :: OSI Approved :: MIT License",
         "Natural Language :: English",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
-        "Operating System :: OS Independent"
-        ]
+        "Operating System :: Unix-like",
+    ],
 )

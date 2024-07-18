@@ -693,4 +693,4 @@ def create_jaeger_model(input_shape,vocab_size=22,embedding_size=4,out_shape=6,b
                                 kernel_initializer=tf.keras.initializers.HeNormal(),
                                 use_bias=True, bias_initializer=bias_init)(x1) #validation loss jumps when bias is removed
 
-    return inputs,out
+    return inputs,{'output':out, 'embedding':x1}

@@ -1,6 +1,7 @@
 from typing import Iterable, Any, Tuple
 from enum import Enum, auto
 import tensorflow as tf
+from datetime import datetime
 import bz2
 import gzip
 import logging
@@ -9,6 +10,32 @@ import os
 import argparse
 import logging
 logger = logging.getLogger(__name__)
+
+def safe_divide(numerator, denominator):
+    try:
+        result = round(numerator / denominator, 2)
+    except ZeroDivisionError:
+        logger.debug("Error: Division by zero!")
+        result = 0
+    return result
+
+def description(version):
+    return f'''
+                  .                                                         
+               ,'/ \`.                                                               
+              |\/___\/|                                                     
+              \'\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗
+               `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗                   
+                  |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝ 
+                  |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗
+                 |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║
+            /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
+        ,'`.  \/ |=| \/  ,'`.                                                 
+      ,'    `.|\ `-' /|,'    `.                                              
+    ,'   .-._ \ `---' / _,-.   `.                                            
+       ,'    `-`-._,-'-'   `.       
+      '  
+    \n\n## Jaeger {version} (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery \nhttps://github.com/Yasas1994/Jaeger.git'''
 
 class Compression(Enum):
     gzip = auto()
@@ -50,6 +77,7 @@ def signal_fl(it):
         yield 0, ret_var
         ret_var = val
     yield 1, ret_var
+
 def signal_l(it):
     '''get a signal at the end of the iterator'''
     iterable = iter(it)
@@ -92,27 +120,163 @@ def remove_directory(directory):
         # Once all files are removed, remove the directory itself
         os.rmdir(directory)
 
-def create_logger(args):
-    # Logging config
-    log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
+class LOGGER:
+    def __init__(self,args):
+        self.input_file_path=args.input
+        self.input_file = os.path.basename(self.input_file_path)
+        log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
 
-    logging.addLevelName(logging.WARNING, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
-    logging.addLevelName(logging.ERROR, "\033[1;41m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
-    logging.addLevelName(logging.INFO, "\033[1;42m%s\033[1;0m" % logging.getLevelName(logging.INFO))
-    logging.addLevelName(logging.DEBUG, "\033[1;43m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
-    logging.getLogger().addFilter(logging.Filter("Jaeger"))
+        logging.addLevelName(logging.WARNING, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
+        logging.addLevelName(logging.ERROR, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
+        logging.addLevelName(logging.INFO, "\033[1;32m%s\033[1;0m" % logging.getLevelName(logging.INFO))
+        logging.addLevelName(logging.DEBUG, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
+        logging.getLogger().addFilter(logging.Filter("Jaeger"))
 
-    logger = logging.getLogger('Jaeger')
-    logger.setLevel(log_levels[args.verbose])
+        logger = logging.getLogger('Jaeger')
 
-    ch = logging.StreamHandler()
-    ch.setLevel(log_levels[args.verbose])
-    ch.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s:%(name)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-    logger.addHandler(ch)
+        file_base = os.path.splitext(os.path.basename(args.input))[0]
+        self.file_handler = logging.FileHandler(os.path.join(args.output,f"{file_base}_jaeger.log"))
+        logger.addHandler(self.file_handler)
+        logger.setLevel(logging.DEBUG)
 
-    return logger
+        self.stderr_handler = logging.StreamHandler()
+        self.stderr_handler.setLevel(log_levels[args.verbose])
 
-        
+        self.formatter_stdout = logging.Formatter('[%(asctime)s | %(levelname)s] : %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_log =logging.Formatter('[%(asctime)s] : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_clean=logging.Formatter('')
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+        logger.addHandler(self.stderr_handler)
+        logger.addHandler(self.file_handler)
+        self.logger = logger
+
+    def info(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.info(message)
+            self.reset_handler()
+        else:
+            self.logger.info(message)
+
+    def warn(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.warning(message)
+            self.reset_handler()
+        else:
+            self.logger.warning(message)  
+
+    def error(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.error(message)
+            self.reset_handler()
+        else:
+            self.logger.error(message)  
+
+    def debug(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.debug(message)
+            self.reset_handler()
+        else:
+            self.logger.debug(message)         
+
+    def reset_handler(self):
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+
+class JaegerLogger(logging.Logger):
+    def __init__(self, args):
+        super().__init__(args)
+
+        self.input_file_path=args.input
+        self.input_file = os.path.basename(self.input_file_path)
+        log_levels = [logging.WARNING, logging.INFO, logging.DEBUG]
+
+        logging.addLevelName(logging.WARNING, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.WARNING))
+        logging.addLevelName(logging.ERROR, "\033[1;31m%s\033[1;0m" % logging.getLevelName(logging.ERROR))
+        logging.addLevelName(logging.INFO, "\033[1;32m%s\033[1;0m" % logging.getLevelName(logging.INFO))
+        logging.addLevelName(logging.DEBUG, "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.DEBUG))
+        logging.getLogger().addFilter(logging.Filter("Jaeger"))
+
+        logger = logging.getLogger('Jaeger')
+
+        file_base = os.path.splitext(os.path.basename(args.input))[0]
+        self.file_handler = logging.FileHandler(os.path.join(args.output,f"{file_base}_jaeger.log"))
+        logger.addHandler(self.file_handler)
+        logger.setLevel(logging.DEBUG)
+
+        self.stderr_handler = logging.StreamHandler()
+        self.stderr_handler.setLevel(log_levels[args.verbose])
+
+        self.formatter_stdout = logging.Formatter('[%(asctime)s | %(levelname)s] : %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_log =logging.Formatter('[%(asctime)s] : %(message)s' , datefmt='%Y-%m-%d %H:%M:%S')
+        self.formatter_clean=logging.Formatter('')
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+        logger.addHandler(self.stderr_handler)
+        logger.addHandler(self.file_handler)
+        self.logger = logger
+    
+    def info(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.info(message)
+            self.reset_handler()
+        else:
+            self.logger.info(message)
+
+    def warn(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.warning(message)
+            self.reset_handler()
+        else:
+            self.logger.warning(message)  
+
+    def error(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.error(message)
+            self.reset_handler()
+        else:
+            self.logger.error(message)  
+
+    def debug(self,message, cleanformat=False):
+        if cleanformat == True:
+
+            self.stderr_handler.setFormatter(self.formatter_clean)
+            self.file_handler.setFormatter(self.formatter_clean)
+            self.logger.debug(message)
+            self.reset_handler()
+        else:
+            self.logger.debug(message)         
+
+    def reset_handler(self):
+
+        self.stderr_handler.setFormatter(self.formatter_stdout)
+        self.file_handler.setFormatter(self.formatter_log)
+
+
 def configure_multi_gpu_inference(gpus):
     if gpus > 0:
             return tf.distribute.MirroredStrategy()
@@ -137,13 +301,20 @@ def create_virtual_gpus(logger, num_gpus=2, memory_limit=2048):
         except RuntimeError as e:
             # Virtual devices must be set before GPUs have been initialized
             logger.error(e)
-            
 
-def fasta_entries(input_file_handle):
+def format_seconds(seconds):
+    minutes = seconds // 60
+    remaining_seconds = seconds % 60
+    return f'{minutes} minutes and {remaining_seconds} seconds'            
+
+def fasta_entries(input_file_handle, chunk_size=1024):
     num = 0
-    for i in input_file_handle: 
-        if i.startswith('>'):
-            num+=1
+    while True:
+        chunk = input_file_handle.read(chunk_size)
+        if not chunk:
+            break
+        num += chunk.count('>')
+
     input_file_handle.seek(0)
     return num
 

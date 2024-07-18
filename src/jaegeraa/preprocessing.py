@@ -1,9 +1,12 @@
 import tensorflow as tf
 from tqdm import tqdm
+import logging
 from Bio import SeqIO, Seq
-from jaegeraa.utils import signal_fl, signal_l
+from jaegeraa.utils import signal_fl, signal_l, safe_divide
 import io
 import types
+
+logger = logging.getLogger("Jaeger")
 
 def codon_mapper():
     '''hash table convert codons to corresponding aminoacid.
@@ -52,8 +55,16 @@ def c_mapper():
     
     return rc_table
 
+
+
 def fasta_gen(filehandle,fragsize=None,stride=None,num=None, disable=False): #fasta sequence generator
-    '''returns a nucleotide fragment generator '''
+    '''returns a nucleotide fragment generator 
+
+    Args
+    ----
+    filehandle : io.TextWrapper
+    
+    '''
     #filename here is a reference to a file handle
     #should also be able to handle small sequences
     #simply remove short sequnces, write to a separate file 
@@ -66,11 +77,20 @@ def fasta_gen(filehandle,fragsize=None,stride=None,num=None, disable=False): #fa
                 sequence = str(record[1]).upper()
                 if seqlen >= fragsize: #filters the sequence based on size
                     if fragsize is None: #if no fragsize, return the entire sequence 
-                        yield sequence +","+str(record[0].replace(',','_')) #sequence and sequence headder 
+                        yield sequence +","+str(record[0].replace(',','__')) #sequence and sequence headder 
                     elif fragsize is not None:
                         
                         for i,(l,index) in enumerate(signal_l(range(0,seqlen-(fragsize-1),fragsize if stride is None else stride))):
-                            yield sequence[index:index+fragsize]+","+str(record[0].split(',')[0])+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)
+                            g = sequence[index:index+fragsize].count("G")
+                            c = sequence[index:index+fragsize].count("C")
+                            a = sequence[index:index+fragsize].count("A")
+                            t = sequence[index:index+fragsize].count("T")
+                            #a = seq.count("A")
+                            #t = seq.count("T")
+                            #at_skew.append((a - t) / (a + t))
+                            gc_skew = safe_divide((g - c) , (g + c))
+                            #sequnce_fragment, contig_id, index, contig_end, i, g, c, gc_skew
+                            yield sequence[index:index+fragsize]+","+str(record[0].replace(',','__'))+","+str(index)+","+str(l)+","+str(i)+","+str(seqlen)+","+f"{g}"+","+f"{c}"+","+f"{a}"+","+f"{t}"+","+f"{gc_skew : .3f}"
     return c
 
 
@@ -153,7 +173,7 @@ def process_string(onehot=True, label_onehot=True, crop_size=2048):
         r3=t1.lookup(tri_reverse[2:-1+offset:3])
         
 
-        return {"forward_1": f1, "forward_2": f2, "forward_3": f3, "reverse_1": r1, "reverse_2" : r2, "reverse_3" : r3 }, x[1], x[2], x[3], x[4], x[5]
+        return {"forward_1": f1, "forward_2": f2, "forward_3": f3, "reverse_1": r1, "reverse_2" : r2, "reverse_3" : r3 }, x[1], x[2], x[3], x[4], x[5], x[6],x[7],x[8],x[9],x[10]
     return p
 
 def process_string_textline_protein(label_onehot=True,numclasses=4):
