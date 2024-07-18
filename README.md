@@ -174,15 +174,19 @@ pip install jaeger-bio
 
 
 ````
-  # create a conda environment and activate 
-  conda create -c conda-forge -c bioconda -c defaults -n jaeger python=3.9 pip
 
-  conda activate jaeger
-
+  # install build dependencies
+  brew install autoconf automake libtool
+  
   # clone the git repository
   git clone https://github.com/Yasas1994/Jaeger.git
 
-  # install Jaeger
+  # create a conda environment and activate
+  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9 pip
+  conda activate jaeger 
+
+  # install jaeger
+
   cd Jaeger
   pip install .
 ````
