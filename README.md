@@ -206,7 +206,7 @@ Jaeger -i input_file.fasta -o output_dir --batch 128
 ```
 #### multi-GPU mode
 
-We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of gpus at your disposal. **--maxworkers** flag can be used to set the number of GPUs that should be run in parallel per GPU. All other arguments remains similar to 'Jaeger' program.
+We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of GPUs at your disposal. **--maxworkers** flag can be used to set the number of samples that should be processed parallaly per GPU. All other arguments remains similar to 'Jaeger' program.
 
 
 ```
