@@ -1,4 +1,5 @@
 from enum import Enum, auto
+from typing import Union
 import argparse
 import bz2
 import gzip
@@ -38,7 +39,9 @@ def description(version):
        ,'    `-`-._,-'-'   `.
       '
     \n\n## Jaeger {version} (yet AnothEr phaGe idEntifier) Deep-learning based
-bacteriophage discovery https://github.com/Yasas1994/Jaeger.git"""
+bacteriophage discovery https://github.com/Yasas1994/Jaeger.git
+
+"""
 
 
 class Compression(Enum):
@@ -78,6 +81,21 @@ def get_compressed_file_handle(path):
         return lzma.open(path, "rt")
     else:
         return open(path, "r")
+
+
+def remove_directory_recursively(directory):
+    # Walk the directory tree in bottom-up order
+    for root, dirs, files in os.walk(directory, topdown=False):
+        # Remove all files
+        for name in files:
+            file_path = os.path.join(root, name)
+            os.remove(file_path)
+        # Remove all subdirectories
+        for name in dirs:
+            dir_path = os.path.join(root, name)
+            os.rmdir(dir_path)
+    # Remove the main directory
+    os.rmdir(directory)
 
 
 def signal_fl(it):
@@ -133,6 +151,32 @@ def remove_directory(directory):
         os.rmdir(directory)
 
 
+class LogFormatter(logging.Formatter):
+
+    COLOR_CODES = {
+        logging.CRITICAL: "\033[1;35m",  # bright/bold magenta
+        logging.ERROR:    "\033[1;31m",  # bright/bold red
+        logging.WARNING:  "\033[1;33m",  # bright/bold yellow
+        logging.INFO:     "\033[0;37m",  # white / light gray
+        logging.DEBUG:    "\033[1;30m"   # bright/bold black / dark gray
+    }
+
+    RESET_CODE = "\033[0m"
+
+    def __init__(self, color, *args, **kwargs):
+        super(LogFormatter, self).__init__(*args, **kwargs)
+        self.color = color
+
+    def format(self, record, *args, **kwargs):
+        if (self.color and record.levelno in self.COLOR_CODES):
+            record.color_on = self.COLOR_CODES[record.levelno]
+            record.color_off = self.RESET_CODE
+        else:
+            record.color_on = ""
+            record.color_off = ""
+        return super(LogFormatter, self).format(record, *args, **kwargs)
+
+
 class JaegerLogger(logging.Logger):
     def __init__(self, args, log_file):
         super().__init__(args)
@@ -141,19 +185,19 @@ class JaegerLogger(logging.Logger):
         df = "%Y-%m-%d %H:%M:%S"
         logging.addLevelName(
             logging.WARNING,
-            "\033[1;33m%s\033[1;0m" % logging.getLevelName(logging.WARNING),
+            logging.getLevelName(logging.WARNING),
         )
         logging.addLevelName(
-            logging.ERROR, "\033[1;31m%s\033[1;0m" % logging.getLevelName(
-                logging.ERROR)
+            logging.ERROR,
+            logging.getLevelName(logging.ERROR)
         )
         logging.addLevelName(
-            logging.INFO, "\033[1;32m%s\033[1;0m" % logging.getLevelName(
-                logging.INFO)
+            logging.INFO,
+            logging.getLevelName(logging.INFO)
         )
         logging.addLevelName(
-            logging.DEBUG, "\033[1;33m%s\033[1;0m" % logging.getLevelName(
-                logging.DEBUG)
+            logging.DEBUG,
+            logging.getLevelName(logging.DEBUG)
         )
         logging.getLogger().addFilter(logging.Filter("Jaeger"))
 
@@ -166,13 +210,17 @@ class JaegerLogger(logging.Logger):
         self.stderr_handler = logging.StreamHandler()
         self.stderr_handler.setLevel(log_levels[args.verbose])
 
-        self.formatter_stdout = logging.Formatter(
-            "[%(asctime)s | %(levelname)s] : %(message)s", datefmt=df
+        self.formatter_stdout = LogFormatter(
+            fmt="%(color_on)s[%(asctime)s | %(levelname)5s]: %(message)s%(color_off)s",
+            datefmt=df,
+            color=True
         )
-        self.formatter_log = logging.Formatter(
-            "[%(asctime)s] : %(message)s", datefmt=df
+        self.formatter_log = LogFormatter(
+            fmt="[%(asctime)s]: %(message)s",
+            datefmt=df,
+            color=False
         )
-        self.formatter_clean = logging.Formatter("")
+        self.formatter_clean = LogFormatter("")
 
         self.stderr_handler.setFormatter(self.formatter_stdout)
         self.file_handler.setFormatter(self.formatter_log)
@@ -265,27 +313,28 @@ def format_seconds(seconds):
     return f"{minutes} minutes and {remaining_seconds} seconds"
 
 
-def validate_fasta_entries(input_file_path, min_len=2048):
+def validate_fasta_entries(input_file_path: str,
+                           min_len: int = 2048) -> Union[int, Exception]:
     num = 0
     gt_min_len = 0
-    try:
-        logger.debug("validating fasta file")
-        fa = pyfastx.Fasta(input_file_path, build_index=False)
-        for seq in fa:
-            num += 1
-            gt_min_len += 1 if len(seq[1]) >= min_len else 0
-        logger.info(f"{gt_min_len}/{num} entries in {input_file_path}")
+    # try:
+    logger.debug("validating fasta file")
+    fa = pyfastx.Fasta(input_file_path, build_index=False)
+    for seq in fa:
+        num += 1
+        gt_min_len += 1 if len(seq[1]) >= min_len else 0
+    logger.info(f"{gt_min_len}/{num} entries in {input_file_path}")
 
-        assert gt_min_len != 0, Exception(
-            f"all records in {input_file_path} are < {min_len}bp"
-        )
+    if gt_min_len == 0:
+        raise Exception(f"all records in {input_file_path} are < {min_len}bp")
 
-        return num
+    return num
 
-    except Exception as e:
-        logger.error(e)
-        logger.debug(traceback.format_exc())
-        exit(1)
+    # except Exception as e:
+    #     logger.error(e)
+    #     logger.debug(traceback.format_exc())
+    #     # sys.exit(1)
+    #     return e
 
 
 class Precision_per_class(tf.keras.metrics.Metric):
