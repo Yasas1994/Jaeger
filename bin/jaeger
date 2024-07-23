@@ -1,0 +1,729 @@
+#!/usr/bin/env python
+
+"""
+Copyright 2024 R. Y. Wijesekara - University Medicine Greifswald, Germany
+
+Identifying phage genome sequences concealed in metagenomes is a
+long standing problem in viral metagenomics and ecology.
+The Jaeger approach uses homology-free machine learning to identify
+ both phages and prophages in metagenomic assemblies.
+"""
+
+import os
+import traceback
+import sys
+import psutil
+import time
+import argparse
+import glob
+import numpy as np
+from importlib.resources import files
+from importlib.metadata import version
+import progressbar
+import json
+import h5py
+import joblib
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+import tensorflow as tf  # type: ignore #
+
+
+from jaegeraa.nnlib.cmodel import JaegerModel
+from jaegeraa.preprocessing import fasta_gen, process_string, process_string_gen2
+from jaegeraa.nnlib.layers import WRes_model_embeddings, create_jaeger_model
+from jaegeraa.utils import (
+    JaegerLogger,
+    check_file_path,
+    validate_fasta_entries,
+    get_device_name,
+    description,
+    remove_directory_recursively
+)
+from jaegeraa.postprocessing import (
+    update_dict,
+    write_output,
+    logits_to_df,
+    plot_scores,
+    segment,
+    prophage_report,
+    ood_predict_default,
+    softmax_entropy,
+    scan_for_terminal_repeats,
+)
+
+progressbar.streams.flush()
+
+
+def cmdparser():
+    """cmdline argument parser"""
+    parser = argparse.ArgumentParser(
+        description=description(version("jaeger-bio")),
+        usage=argparse.SUPPRESS,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="%(prog)s {version}".format(version=version("jaeger-bio")),
+    )
+    subparsers = parser.add_subparsers(
+        dest="command",
+        help="",
+    )
+    run_test = subparsers.add_parser(
+        "test",
+        help="run tests & check installation",
+        usage=argparse.SUPPRESS,
+        description=f'{description(version("jaeger-bio"))}\n\n{"usage: jaeger test"}\n',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    run_test.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=-2,
+        help="Verbosity level : -vvv warning, -vv info, -v debug, (default info)",
+    )
+    run_jaeger = subparsers.add_parser(
+        "run",
+        help="run jaeger",
+        usage=argparse.SUPPRESS,
+        description=f'{description(version("jaeger-bio"))}\n\n{"usage: jaeger run  -i INPUT -o OUTPUT"}\n',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+
+    )
+    run_jaeger.add_argument(
+        "-i",
+        "--input",
+        type=check_file_path,
+        required=True,
+        help="path to input file"
+    )
+    run_jaeger.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        required=True,
+        help="path to output directory"
+    )
+    run_jaeger.add_argument(
+        "--fsize",
+        type=int,
+        nargs="?",
+        default=2048,
+        help="length of the sliding window (value must be 2^n). default:2048",
+    )
+    run_jaeger.add_argument(
+        "--stride",
+        type=int,
+        nargs="?",
+        default=2048,
+        help="stride of the sliding window. default:2048 (stride==fsize)",
+    )
+    run_jaeger.add_argument(
+        "-m",
+        "--model",
+        choices=["default", "experimental_1", "experimental_2"],
+        default="default",
+        help="select a deep-learning model to use. default:default",
+    )
+    run_jaeger.add_argument(
+        "-p",
+        "--prophage",
+        action="store_true",
+        default=False,
+        help="extract and report prophage-like regions. default:False",
+    )
+    run_jaeger.add_argument(
+        "-s",
+        "--sensitivity",
+        type=float,
+        nargs="?",
+        default=1.5,
+        help="sensitivity of the prophage extraction algorithm (between 0 - 4). default: 1.5 ",
+    )
+    run_jaeger.add_argument(
+        "--lc",
+        type=int,
+        nargs="?",
+        default=500000,
+        help="minimum contig length to run prophage extraction algorithm. default: 500000 bp",
+    )
+    run_jaeger.add_argument(
+        "--rc",
+        type=float,
+        nargs="?",
+        default=0.1,
+        help="minium reliability score required to accept predictions. default: 0.2",
+    )
+    run_jaeger.add_argument(
+        "--pc",
+        type=int,
+        nargs="?",
+        default=3,
+        help="minium phage score required to accept predictions. default: 3",
+    )
+    run_jaeger.add_argument(
+        "--batch",
+        type=int,
+        nargs="?",
+        default=96,
+        help="parallel batch size, set to a lower value if your gpu runs out of memory. default:96",
+    )
+    run_jaeger.add_argument(
+        "--workers",
+        type=int,
+        nargs="?",
+        default=4,
+        help="number of threads to use. default:4",
+    )
+    run_jaeger.add_argument(
+        "--getalllogits",
+        action="store_true",
+        help="returns window-wise scores in a .npy file",
+    )
+
+    group = run_jaeger.add_mutually_exclusive_group()
+
+    group.add_argument(
+        "--cpu",
+        action="store_true",
+        help="ignore available gpus and explicitly run jaeger on cpu. default: False",
+    )
+    run_jaeger.add_argument(
+        "--physicalid",
+        type=int,
+        nargs="?",
+        default=0,
+        help="sets the default gpu device id (for multi-gpu systems). default: 0",
+    )
+    run_jaeger.add_argument(
+        "--getalllabels",
+        action="store_true",
+        help="get predicted labels for Non-Viral contigs. default: False",
+    )
+
+    misc = run_jaeger.add_argument_group("Misc. Options")
+
+    run_jaeger.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=-2,
+        help="Verbosity level : -vvv warning, -vv info, -v debug, (default info)",
+    )
+
+    misc.add_argument(
+        "-f", "--overwrite", action="store_true", help="Overwrite existing files"
+    )
+
+    #misc.add_argument("--progressbar", action="store_false", help="show progress bar")
+
+    return parser.parse_args()
+
+
+def run(args):
+
+    current_process = psutil.Process()
+    config = json.load(open(files("jaegeraa.data").joinpath("config.json"), "r"))
+    input_file_path = args.input
+    input_file = os.path.basename(input_file_path)
+
+    file_base = os.path.splitext(input_file)[0]
+    output_dir = os.path.join(args.output, file_base)
+
+    args.output = output_dir
+    if not os.path.isdir(output_dir):
+        os.makedirs(output_dir)
+    log_file = os.path.join(output_dir, f"{file_base}_jaeger.log")
+    logger = JaegerLogger(args, log_file)
+    logger.info(
+        description(version("jaeger-bio"))
+        + "\n{:-^80}".format("validating parameters"),
+        cleanformat=True,
+    )
+    logger.debug(files("jaegeraa.data"))
+    try:
+        num = validate_fasta_entries(input_file_path, min_len=args.fsize)
+    except Exception as e:
+        logger.error(e)
+        logger.debug(traceback.format_exc())
+        sys.exit(1)
+    # if input_file.endswith('fna') or input_file.endswith('fasta') or input_file.endswith('txt') :
+
+    output_file = f"{file_base}_{config[args.model]['suffix']}_jaeger.tsv"
+    output_phage_file = f"{file_base}_{config[args.model]['suffix']}_phages_jaeger.tsv"
+    output_file_path = os.path.join(output_dir, output_file)
+    output_phage_file_path = os.path.join(output_dir, output_phage_file)
+    setattr(args, "output_file_path", output_file_path)
+    setattr(args, "output_phage_file_path", output_phage_file_path)
+    # else:
+    #     logger.error("input file is not a valid fastafile")
+    #     exit(1)
+    # prepare output directory
+
+    if os.path.exists(output_file_path):
+        if not args.overwrite:
+            logger.error(
+                "output file exists. enable --overwrite option to overwrite the output file."
+            )
+            sys.exit(1)
+
+    weights_path = files("jaegeraa.data").joinpath(config[args.model]["weights"])
+    num_class = config[args.model]["num_classes"]
+    ood_params = None
+    if not os.path.exists(weights_path):
+        logger.error("could not find model weights. please check the data dir")
+    # else:
+    #    logger.info(f'Using {weights_path} to build the model')
+
+    if config[args.model]["ood"]:
+        ood_weights_path = files("jaegeraa.data").joinpath(config[args.model]["ood"])
+        if ood_weights_path.suffix == ".h5":
+
+            hf = h5py.File(ood_weights_path, "r")
+            ood_params = {
+                "type": "params",
+                "coeff": np.array(hf["coeff"]),
+                "intercept": np.array(hf["intercept"]),
+                "batch_mean": np.array(hf["mean_batch"]),
+                # 'batch_std' : np.array(hf['std_batch'])
+            }
+
+            hf.close()
+
+        elif ood_weights_path.suffix == ".pkl":
+
+            mean_file = files("jaegeraa.data").joinpath("batch_means.npy")
+            std_file = files("jaegeraa.data").joinpath("batch_std.npy")
+            batch_mean = np.load(mean_file)
+            batch_std = np.load(std_file)
+            ood_params = {
+                "type": "sklearn",
+                "model": joblib.load(ood_weights_path),
+                "batch_mean": batch_mean,
+                "batch_std": batch_std,
+            }
+
+    # if args.usecutoffs:
+    #     cutoffs = config[args.model]['cutoffs']
+    #     cutoffs = np.array([[cutoffs[str(i)] for i in range(len(cutoffs))]])
+    # else:
+    #     cutoffs = None
+
+    if args.getalllabels:
+        config["labels"] = [v for k, v in config[args.model]["all_labels"].items()]
+    else:
+        config["labels"] = [v for k, v in config[args.model]["default_labels"].items()]
+
+    # if args.progressbar:
+    #     # disables progressbar
+    #     tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+
+    seed = 54920
+    tf.random.set_seed(seed)
+    # enables switching to a compatible GPU/CPU if the specified gpu is invalid
+    # tf.debugging.set_log_device_placement(True)
+    # if cpu mode, hide all gpus available on the system
+    gpus = tf.config.list_physical_devices("GPU")
+    mode = None
+    if args.cpu:
+        mode = "CPU"
+        # visible devices can not be changed after initialization
+        tf.config.set_visible_devices([], "GPU")
+        logger.info("CPU only mode selected")
+
+    elif len(gpus) > 0:
+
+        mode = "GPU"
+        tf.config.set_visible_devices([gpus[args.physicalid]], "GPU")
+
+        logger.info(
+            f"trying to create a virtual GPU with 4096MB of mem on {gpus[args.physicalid]}"
+        )
+        # Create n virtual GPUs with user defined amount of memory each
+        try:
+            tf.config.set_logical_device_configuration(
+                gpus[args.physicalid],
+                [
+                    tf.config.LogicalDeviceConfiguration(
+                        memory_limit=4096, experimental_device_ordinal=10
+                    )
+                    for _ in range(1)
+                ],
+            )
+            logical_gpus = tf.config.list_logical_devices("GPU")
+            logger.info(logical_gpus)
+            if len(logical_gpus) == 0:
+                logger.info(
+                    "an error occured during virtual device initialization, switching back to single GPU mode"
+                )
+        except Exception as e:
+            # Virtual devices must be set before GPUs have been initialized
+            logger.error(f"an error {e} occured during virtual device initialization ")
+            logger.debug(traceback.format_exc())
+
+    else:
+        mode = "CPU"
+        logger.warn(
+            "could not find a GPU on the system.\nFor optimal performance run Jaeger on a GPU."
+        )
+
+    # psutil.virtual_memory().available * 100 / psutil.virtual_memory().total
+    logger.debug(" ".join(sys.argv))
+    logger.info(f'tensorflow: {version("tensorflow")}')
+    logger.info(f"input file: {input_file}")
+    logger.info(f"log file: {file_base}_jaeger.log")
+    logger.info(f"outpath: {os.path.abspath(output_dir)}")
+    logger.info(f"fragment size: {args.fsize}")
+    logger.info(f"stride: {args.stride}")
+    logger.info(f"batch size: {args.batch}")
+    logger.info(f"mode: {mode}")
+    logger.info(
+        f"avail mem: {psutil.virtual_memory().available/(1024.0 ** 3) : .2f}GB"
+    )
+    logger.info(f"avail cpus: {os.cpu_count()}\n" + "{:-^80}".format(""))
+
+    # input_fh = get_compressed_file_handle(input_file_path)
+
+    term_repeats = scan_for_terminal_repeats(args, input_file_path, num)
+
+    device = tf.config.list_logical_devices(mode)
+    device_names = [get_device_name(i) for i in device]
+    logger.debug(f"{device}, {device_names}")
+    if len(device) > 1:
+        logger.info(f"Using MirroredStrategy {device_names}")
+        strategy = tf.distribute.MirroredStrategy(device_names)
+    else:
+        logger.info(f"Using OneDeviceStrategy {device_names}")
+        strategy = tf.distribute.OneDeviceStrategy(device_names[0])
+
+    tf.config.set_soft_device_placement(True)
+    with strategy.scope():
+
+        input_dataset = tf.data.Dataset.from_generator(
+            fasta_gen(
+                input_file_path,
+                fragsize=args.fsize,
+                stride=args.stride,
+                num=num,
+            ),
+            output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
+        )
+        if args.model == "default":
+            idataset = (
+                input_dataset.map(
+                    process_string(crop_size=args.fsize),
+                    num_parallel_calls=tf.data.AUTOTUNE,
+                )
+                .batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE)
+                .prefetch(25)
+            )
+            inputs, outputs = WRes_model_embeddings(
+                input_shape=(None,), dropout_active=False
+            )
+        else:
+            insize = (int(args.fsize) // 3) - 1
+            idataset = (
+                input_dataset.map(
+                    process_string_gen2(crop_size=args.fsize),
+                    num_parallel_calls=tf.data.AUTOTUNE,
+                )
+                .padded_batch(
+                    args.batch,
+                    padded_shapes=(
+                        (
+                            {
+                                # 'nucleotide': [2,int(args.fsize),4],
+                                "translated": [6, insize, 11],
+                            },
+                            (),
+                            (),
+                            (),
+                            (),
+                            (),
+                        )
+                    ),
+                )
+                .prefetch(50)
+            )
+
+            inputs, outputs = create_jaeger_model(
+                input_shape=(6, insize, 11), out_shape=num_class
+            )
+        model = JaegerModel(inputs=inputs, outputs=outputs)
+
+        # scan for terminal repeats
+
+        logger.info("loading model to memory")
+        model.load_weights(
+            filepath=weights_path
+        )  # .expect_partial() when loading weights from a chpt file
+        logger.info(
+            f'avail mem : {psutil.virtual_memory().available/(1024.0 ** 3): .2f}GB\n{"-"*80}'
+        )
+
+        if mode == "GPU":
+            for device_number, d in enumerate(device_names):
+                gpu_mem = tf.config.experimental.get_memory_info(d)
+                logger.info(
+                    f'GPU {device_number} current : {gpu_mem["current"]/(1024 ** 2): .2f}GB  peak : {gpu_mem["peak"]/(1024 ** 2) : .2f}GB'
+                )
+
+        try:
+            logger.info("starting model inference")
+            y_pred = model.predict(idataset, workers=args.workers, verbose=0)
+        except Exception as e:
+            logger.debug(traceback.format_exc())
+            logger.error(
+                f'an error {e} occured during inference on {"|".join(device_names)}! check {log_file} for traceback.'
+            )
+            sys.exit(1)
+
+        # output preprocessing
+        split_indices = (
+            np.where(np.array(y_pred["meta"][2], dtype=np.int32) == 1)[0] + 1
+        )
+
+        if y_pred["y_hat"]["output"].shape[0] == split_indices[-1]:
+            split_indices = split_indices[:-1]
+        predictions = np.split(y_pred["y_hat"]["output"], split_indices, axis=0)
+
+        ood = np.split(
+            y_pred["y_hat"]["embedding"], split_indices, axis=0
+        )  # get params
+        ood = list(map(lambda x: ood_predict_default(x, ood_params)[0], ood))
+
+        headers = np.split(
+            np.array(y_pred["meta"][0], dtype=np.unicode_), split_indices, axis=0
+        )
+        lengths = np.split(
+            np.array(y_pred["meta"][4], dtype=np.int32), split_indices, axis=0
+        )
+        gc_skews = np.split(y_pred["meta"][-1].astype(float), split_indices, axis=0)
+        g = y_pred["meta"][-4].astype(float)
+        c = y_pred["meta"][-5].astype(float)
+        a = y_pred["meta"][-3].astype(float)
+        t = y_pred["meta"][-2].astype(float)
+        ns = (args.fsize - (a + t + g + c)) / args.fsize
+        ns = np.split(ns, split_indices, axis=0)
+        gcs = (g + c) / args.fsize
+        gcs = np.split(gcs, split_indices, axis=0)
+
+        lengths = np.array(list(map(lambda x: x[0], lengths)))
+        headers = np.array(list(map(lambda x: x[0], headers)))
+
+        pred_sum = np.array(
+            list(map(lambda x: np.mean(x, axis=0), predictions)), np.float16
+        )
+        pred_var = np.array(
+            list(map(lambda x: np.var(x, axis=0), predictions)), np.float16
+        )
+        consensus = np.argmax(pred_sum, axis=1)
+        frag_pred = list(map(lambda x: np.argmax(x, axis=-1), predictions))
+        per_class_counts = list(
+            map(lambda x: np.unique(x, return_counts=True), frag_pred)
+        )
+        per_class_counts = list(
+            map(
+                lambda x, n=config[args.model]["num_classes"]: update_dict(x, n),
+                per_class_counts,
+            )
+        )
+        entropy_pred = list(map(lambda x: softmax_entropy(x), predictions))
+        entropy_mean = np.array(
+            list(map(lambda x: np.mean(x, axis=0), entropy_pred)), np.float16
+        )
+        prophage_contam = (pred_sum[:, 1] < pred_var[:, 1]) * (consensus == 0)
+        host_contam = (pred_sum[:, 1] < pred_var[:, 1]) * (consensus == 1)
+
+        data = {
+            "headers": headers,
+            "length": lengths,
+            "consensus": consensus,
+            "per_class_counts": per_class_counts,
+            "pred_sum": pred_sum,
+            "pred_var": pred_var,
+            "frag_pred": frag_pred,
+            "ood": ood,
+            "entropy": entropy_mean,
+            "host_contam": host_contam,
+            "prophage_contam": prophage_contam,
+            "repeats": term_repeats,
+            "gc": gcs,
+            "ns": ns,
+        }
+
+        # logger.debug(data)
+        write_output(args, config, data)
+
+        logger.info(f"processed {headers.shape[0]}/{num} sequences")
+
+        if args.getalllogits:
+            output_logits = f"{file_base}_{config[args.model]['suffix']}_jaeger.npy"
+            output_logits_path = os.path.join(output_dir, output_logits)
+            logger.info(f"writing window-wise scores to {output_logits}")
+            np.save(
+                output_logits_path, dict(zip(headers, predictions)), allow_pickle=True
+            )
+
+        if args.prophage:
+            # still experimental - needs more testing!!!!
+            try:
+                if logits_df := logits_to_df(
+                    args=args,
+                    config=config,
+                    logits=predictions,
+                    headers=headers,
+                    lengths=lengths,
+                    gc_skews=gc_skews,
+                    gcs=gcs,
+                    cutoff_length=args.lc,
+                ):
+                    logger.info("identifying prophages")
+                    pro_dir = os.path.join(
+                        output_dir,
+                        f"{file_base}_{config[args.model]['suffix']}_prophages"
+                    )
+                    plots_dir = os.path.join(pro_dir, "plots")
+                    for dir in [pro_dir, plots_dir]:
+                        if not os.path.isdir(dir):
+                            os.mkdir(dir)
+
+                    phage_cord = segment(
+                        logits_df,
+                        outdir=plots_dir,
+                        cutoff_length=args.lc,
+                        sensitivity=args.sensitivity,
+                    )
+                    plot_scores(
+                        logits_df,
+                        phage_cordinates=phage_cord,
+                        args=args,
+                        config=config,
+                        outdir=plots_dir,
+                    )
+                    prophage_report(args, input_file_path, phage_cord, pro_dir)
+                else:
+                    logger.info("no prophage regions found")
+            except Exception as e:
+                logger.error(f"an error {e} occured during the prophage prediction step")
+                logger.debug(traceback.format_exc())
+
+        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
+        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
+        logger.info(
+            f"memory usage : {current_process.memory_full_info().rss/1024**3:.2f}Gb ({current_process.memory_percent():.2f}%)"
+        )
+
+
+def test_tf():
+    try:
+        # Set the matrix size
+        matrix_size = 100
+
+        # Create two random matrices
+        matrix_a = np.random.rand(matrix_size, matrix_size)
+        matrix_b = np.random.rand(matrix_size, matrix_size)
+
+        with tf.device('CPU:0'):
+            result = tf.matmul(matrix_a, matrix_b)
+
+    except Exception as e:
+        return e
+    else:
+        return result
+
+
+def test(args):
+
+    passed = 0
+
+    args.output = os.path.join(os.getcwd(), ".tmp")
+    args.fsize = 2048
+    args.stride = 2048
+    args.batch = 64
+    if not os.path.isdir(args.output):
+        os.makedirs(args.output)
+
+    fnames = ['test_short.fasta', 'test_empty.fasta', 'test_contigs.fasta']
+    log_file = os.path.join(args.output, "test_jaeger.log")
+    logger = JaegerLogger(args, log_file)
+    # test 1-3
+    for i, f in enumerate(fnames):
+        args.input = str(files("jaegeraa.data").joinpath(f))
+        logger.info(args.input)
+        try:
+            num = validate_fasta_entries(args.input)
+            passed += 1
+            logger.info(f"{i} test passed {f}!")
+
+        except Exception as e:
+            if i > 1:
+                logger.error(f"{i} test failed {f}!")
+            else:
+                passed += 1
+                logger.info(f"{i} test passed {f}!")
+
+            logger.debug(e)
+    # test 4
+    result = test_tf()
+    if isinstance(result, Exception):
+        logger.error("4 tensorflow test failed!")
+        logger.debug(result)
+    else:
+        passed += 1
+        logger.info("4 tensorflow test passed!")
+
+    # test 5
+    try:
+        tf.config.set_soft_device_placement(True)
+        config = json.load(open(files("jaegeraa.data")
+                                .joinpath("config.json"), "r"))
+        weights_path = files("jaegeraa.data").joinpath(config["default"]["weights"])
+        input_dataset = tf.data.Dataset.from_generator(
+            fasta_gen(
+                args.input,
+                fragsize=args.fsize,
+                stride=args.stride,
+                num=num,
+            ),
+            output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
+        )
+        logger.info("loading the dataset")
+        idataset = (
+                input_dataset.map(
+                    process_string(crop_size=args.fsize),
+                    num_parallel_calls=tf.data.AUTOTUNE,
+                )
+                .batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE)
+                .prefetch(25)
+            )
+        inputs, outputs = WRes_model_embeddings(
+                input_shape=(None,), dropout_active=False
+            )
+        logger.info("creating the model")
+        model = JaegerModel(inputs=inputs, outputs=outputs)
+        model.load_weights(filepath=weights_path)
+        logger.info("starting model inference")
+        _ = model.predict(idataset, verbose=0)
+
+        logger.info("5 test model passed!")
+        passed += 1
+    except Exception as e:
+        logger.error("5 test model failed!")
+        logger.debug(e)
+    finally:
+        logger.info(f"{passed}/5 tests passed!")
+        remove_directory_recursively(args.output)
+
+
+if __name__ == "__main__":
+
+    args = cmdparser()
+
+    if args.command == "test":
+        test(args)
+
+    elif args.command == "run":
+        run(args)

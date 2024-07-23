@@ -206,15 +206,20 @@ Jaeger -i input_file.fasta -o output_dir --batch 128
 ```
 #### multi-GPU mode
 
-We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a csv file with paths to all input .fasta files. Column with the file paths should be named as 'paths'. All other arguments remains similar to 'Jaeger' program.
+We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of GPUs at your disposal. **--maxworkers** flag can be used to set the number of samples that should be processed parallaly per GPU. All other arguments remains similar to 'Jaeger' program.
 
-``` 
-Jaeger_parallel -i input_file.csv -o output_dir --batch 128 
+
+```
+# to generate a list of fasta files in a dir
+ls ./files/*.fna | xargs realpath > input_file_list
+
+# to process eight samples in parallel on two GPUs 
+Jaeger_parallel -i input_file_list -o output_dir --batch 128 --maxworkers 4 --ngpu 2
 ```
 
 #### Selecting the batch parameter 
 
-You can control the number of parallel computations using this parameter. By default it is set to 512. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 128 is good enough for a graphics card with 6 Gb of memory.
+You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 96 is good enough for a graphics card with 4 Gb of memory.
 
 ## What is in the output?
 
