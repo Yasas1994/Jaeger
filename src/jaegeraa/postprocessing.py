@@ -4,6 +4,7 @@ Copyright (c) 2024 Yasas Wijesekara
 
 """
 import os
+import sys
 import logging
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,7 +12,7 @@ import pyfastx
 import parasail
 import numpy as np
 import ruptures as rpt
-from tqdm import tqdm
+import progressbar
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
@@ -20,7 +21,7 @@ from kneed import KneeLocator
 from pycirclize import Circos
 from jaegeraa.utils import safe_divide
 
-
+progressbar.streams.wrap_stderr()
 logger = logging.getLogger("Jaeger")
 
 
@@ -371,7 +372,7 @@ def write_output(args, config, data):
     except Exception as e:
         logger.error(e)
         logger.debug(traceback.format_exc())
-        exit(1)
+        sys.exit(1)
 
 
 def generate_summary(config, args, data):
@@ -1404,25 +1405,29 @@ def scan_for_terminal_repeats(args, file_path, num):
             # Submit tasks to the executor
             futures = [
                 executor.submit(helper, record)
-                for record in tqdm(
-                    pyfastx.Fasta(file_path, build_index=False),
-                    total=num,
-                    ascii=" >=",
-                    bar_format="{l_bar}{bar:40}{r_bar}",
-                    dynamic_ncols=True,
-                    unit="seq",
-                    colour="green",
-                    position=0
-                )
-            ]
+                for record in pyfastx.Fasta(file_path, build_index=False)
+                ]
 
             # Retrieve and print the results
-            for future in as_completed(futures):
-                result = future.result()
-                summaries.append(result)
+            # pbar = tqdm(total=num,
+            #             ascii=" >=",
+            #             bar_format="{l_bar}{bar:40}{r_bar}",
+            #             dynamic_ncols=True,
+            #             unit="seq",
+            #             colour="green",
+            #             position=0,
+            #             leave=True,
+            #             redirect_stdout=True
+            #             )
+            with progressbar.ProgressBar(max_value=num) as pbar:
+                for i, future in enumerate(as_completed(futures)):
+                    result = future.result()
+                    summaries.append(result)
+                    pbar.update(i)
+
     except RuntimeError as e:
         logger.error(e)
         logger.debug(traceback.format_exc())
-        exit(1)
+        sys.exit(1)
 
     return pd.DataFrame(summaries)

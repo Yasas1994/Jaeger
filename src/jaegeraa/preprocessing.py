@@ -1,11 +1,11 @@
 import logging
 import pyfastx
 import tensorflow as tf
-from tqdm import tqdm
+import progressbar
 from jaegeraa.utils import signal_l, safe_divide
 
 logger = logging.getLogger("Jaeger")
-
+progressbar.streams.wrap_stderr()
 
 def codon_mapper():
     """
@@ -235,7 +235,11 @@ def c_mapper():
     return tf.lookup.StaticHashTable(rc_init, default_value="N")
 
 
-def fasta_gen(file_path, fragsize=None, stride=None, num=None, disable=False):
+def fasta_gen(file_path,
+              fragsize=None,
+              stride=None,
+              num=None,
+              ):
     """
     Generates fragments of DNA sequences from a FASTA file.
 
@@ -260,51 +264,41 @@ def fasta_gen(file_path, fragsize=None, stride=None, num=None, disable=False):
     def c():
         # accepts a reference to a file handle
         fa = pyfastx.Fasta(file_path, build_index=False)
-        # logger.debug(fa)
-        for record in tqdm(
-            fa,
-            total=num,
-            ascii=" >=",
-            bar_format="{l_bar}{bar:40}{r_bar}",
-            dynamic_ncols=True,
-            unit="seq",
-            colour="green",
-            disable=disable,
-            position=0
-        ):
-            # for record in SeqIO.FastaIO.SimpleFastaParser(filehandle):
-            seqlen = len(
-                record[1]
-            )  # move size filtering to a separate preprocessing step
-            sequence = record[1].strip()
-            header = record[0].strip().replace(",", "__")
-            # logger.debug(sequence)
-            # sequence = str(record[1]).upper()
-            # filters the sequence based on size
-            if seqlen >= fragsize:
-                # if no fragsize, return the entire sequence
-                if fragsize is None:
-                    # sequence and sequence headder
-                    yield f"{sequence},{header}"
-                elif fragsize is not None:
+        with progressbar.ProgressBar(max_value=num) as pbar:
+            for j, record in enumerate(fa):
+                pbar.update(j)
+                seqlen = len(
+                    record[1]
+                )  # move size filtering to a separate preprocessing step
+                sequence = record[1].strip()
+                header = record[0].strip().replace(",", "__")
+                # logger.debug(sequence)
+                # sequence = str(record[1]).upper()
+                # filters the sequence based on size
+                if seqlen >= fragsize:
+                    # if no fragsize, return the entire sequence
+                    if fragsize is None:
+                        # sequence and sequence headder
+                        yield f"{sequence},{header}"
+                    elif fragsize is not None:
 
-                    for i, (l, index) in enumerate(
-                        signal_l(
-                            range(
-                                0,
-                                seqlen - (fragsize - 1),
-                                fragsize if stride is None else stride,
+                        for i, (l, index) in enumerate(
+                            signal_l(
+                                range(
+                                    0,
+                                    seqlen - (fragsize - 1),
+                                    fragsize if stride is None else stride,
+                                )
                             )
-                        )
-                    ):
-                        g = sequence[index: index + fragsize].count("G")
-                        c = sequence[index: index + fragsize].count("C")
-                        a = sequence[index: index + fragsize].count("A")
-                        t = sequence[index: index + fragsize].count("T")
-                        gc_skew = safe_divide((g - c), (g + c))
-                        # sequnce_fragment, contig_id, index, contig_end, i,
-                        # g, c, gc_skew
-                        yield f"{sequence[index : index + fragsize]},{header},{index},{l},{i},{seqlen},{g},{c},{a},{t},{gc_skew : .3f}"
+                        ):
+                            g = sequence[index: index + fragsize].count("G")
+                            c = sequence[index: index + fragsize].count("C")
+                            a = sequence[index: index + fragsize].count("A")
+                            t = sequence[index: index + fragsize].count("T")
+                            gc_skew = safe_divide((g - c), (g + c))
+                            # sequnce_fragment, contig_id, index, contig_end, i,
+                            # g, c, gc_skew
+                            yield f"{sequence[index : index + fragsize]},{header},{index},{l},{i},{seqlen},{g},{c},{a},{t},{gc_skew : .3f}"
 
     return c
 
