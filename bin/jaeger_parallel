@@ -289,7 +289,7 @@ if __name__ == "__main__":
     #     template += " --overwrite "
 
     for k, v in vars(args).items():
-        if k not in ['maxworkers', 'ngpu', 'gpulist']:
+        if k not in ['maxworkers', 'ngpu', 'gpulist', 'input', 'outpath']:
             template += f"--{k} {v} "
 
     ALL_COMMANDS = [f"jaeger run -i {i} -o {args.outpath} {template}"
