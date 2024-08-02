@@ -497,6 +497,29 @@ def generate_summary_default(data, columns, config, args):
     )  # only for deafult mode
 
 
+def write_fasta(args):
+    """
+    Generates a .fasta file with the identified phage sequences configuration,
+    arguments, and data.
+
+    Args:
+    ----
+        config (dict): The configuration settings.
+        args: The arguments for generating the summary.
+
+    Returns:
+    -------
+        None
+    """
+
+    logger.info("generating .fasta file")
+    phages = set(pd.read_table(args.output_phage_file_path)['contig_id'].to_list())
+    phage_fasta = open(args.output_fasta_file_path, "w")
+    for record in pyfastx.Fasta(args.input, build_index=False):
+        if record[0] in phages:
+            phage_fasta.write(f">{record[0]}\n{record[1]}\n")
+
+
 def consecutive(data, stepsize=1):
     """
     Splits an array into subarrays where elements are consecutive.
@@ -1343,6 +1366,7 @@ def scan_for_terminal_repeats(args, file_path, num):
     summaries = []
 
     def helper(record):
+
         seq_len = len(record[1])
         headder = record[0].replace(",", "__")
         logger.debug(f"{headder}, {seq_len}")
@@ -1406,6 +1430,7 @@ def scan_for_terminal_repeats(args, file_path, num):
             futures = [
                 executor.submit(helper, record)
                 for record in pyfastx.Fasta(file_path, build_index=False)
+                if len(record[1]) >= args.fsize
                 ]
 
             # Retrieve and print the results
