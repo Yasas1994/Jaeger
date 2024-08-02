@@ -58,20 +58,12 @@ def cmdparser():
         required=True, help="path to output directory"
     )
     parser.add_argument(
-        "-of",
-        "--ofasta",
-        type=str,
-        required=False,
-        help="path to output fasta file"
-    )
-    parser.add_argument(
         "--fsize",
         type=int,
         nargs="?",
         default=2048,
         help="length of the sliding window (value must be 2^n). default: 2048",
     )
-
     parser.add_argument(
         "--stride",
         type=int,
@@ -80,32 +72,73 @@ def cmdparser():
         help="stride of the sliding window. default: 2048 (stride==fsize)",
     )
     parser.add_argument(
+        "-m",
+        "--model",
+        choices=["default", "experimental_1", "experimental_2"],
+        default="default",
+        help="select a deep-learning model to use. default:default",
+    )
+    parser.add_argument(
+        "-p",
+        "--prophage",
+        action="store_true",
+        default=False,
+        help="extract and report prophage-like regions. default:False",
+    )
+    parser.add_argument(
+        "-s",
+        "--sensitivity",
+        type=float,
+        nargs="?",
+        default=1.5,
+        help="sensitivity of the prophage extraction algorithm (between 0 - 4). default: 1.5 ",
+    )
+    parser.add_argument(
+        "--lc",
+        type=int,
+        nargs="?",
+        default=500000,
+        help="minimum contig length to run prophage extraction algorithm. default: 500000 bp",
+    )
+    parser.add_argument(
+        "--rc",
+        type=float,
+        nargs="?",
+        default=0.1,
+        help="minium reliability score required to accept predictions. default: 0.2",
+    )
+    parser.add_argument(
+        "--pc",
+        type=int,
+        nargs="?",
+        default=3,
+        help="minium phage score required to accept predictions. default: 3",
+    )
+    parser.add_argument(
         "--batch",
         type=int,
         nargs="?",
-        default=128,
-        help="parallel batch size, set to a lower value if your gpu runs out of memory. default: 128",
+        default=96,
+        help="parallel batch size, set to a lower value if your gpu runs out of memory. default:96",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        nargs="?",
+        default=4,
+        help="number of threads to use. default: 4",
     )
     parser.add_argument(
         "--getalllogits",
         action="store_true",
-        help="return position-wise logits for each prediction window as a .npy file",
+        help="writes window-wise scores to a .npy file",
     )
     parser.add_argument(
-        "--getalllabels",
+        "--getsequences",
         action="store_true",
-        help="get predicted labels for Non-Viral contigs. default: False",
+        help="writes the putative phage sequences to a .fasta file",
     )
-    parser.add_argument(
-        "--meanscore",
-        action="store_true",
-        help="output mean predictive score per contig. deafault: True",
-    )
-    parser.add_argument(
-        "--fragscore",
-        action="store_true",
-        help="output percentage of perclass predictions per contig. deafault: True",
-    )
+
     misc = parser.add_argument_group("Misc. Options")
 
     misc.add_argument(
@@ -115,28 +148,32 @@ def cmdparser():
         default=2,
         help="Verbosity level : 1 warning, 2 info, 3 debug, (default info)",
     )
-
     misc.add_argument(
         "-f",
         "--overwrite",
         action="store_true", help="Overwrite existing files"
     )
-
     parser.add_argument(
         "-mw",
         "--maxworkers",
         type=int,
         required=False,
-        default=2,
+        default=1,
         help="set the maxium number of workers for a single GPU",
     )
-
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
         "--ngpu",
         type=int,
         required=False,
-        default=1,
         help="set the number of GPUs to use",
+    )
+    group.add_argument(
+        "--gpulist",
+        type=int,
+        nargs='+',
+        required=False,
+        help="list the physicalids of GPUs to use",
     )
     return parser.parse_args()
 
@@ -145,6 +182,7 @@ class SubprocessPool:
     def __init__(self,
                  max_workers_per_gpu,
                  num_gpus,
+                 gpu_ids,
                  total_commands,
                  commands):
         self.max_workers_per_gpu = max_workers_per_gpu
@@ -152,17 +190,14 @@ class SubprocessPool:
         self.executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=max_workers_per_gpu * num_gpus
         )
-        self.futures = {i: [] for i in range(num_gpus)}
-        self.counter = {i: 0 for i in range(num_gpus)}
+        if gpu_ids:
+            self.futures = {i: [] for i in gpu_ids}
+            self.counter = {i: 0 for i in gpu_ids}
+        else:
+            self.futures = {i: [] for i in range(num_gpus)}
+            self.counter = {i: 0 for i in range(num_gpus)}
+
         self.pending_commands = []
-        # self.pbar = tqdm(
-        #     total=total_commands,
-        #     ascii=" >=",
-        #     bar_format="{l_bar}{bar:10}{r_bar}",
-        #     dynamic_ncols=True,
-        #     unit="seq",
-        #     colour="green",
-        # )
         self.done = 0
         self.total = total_commands
         self.pending_commands = commands
@@ -224,34 +259,48 @@ class SubprocessPool:
 if __name__ == "__main__":
     args = cmdparser()
     input_paths = [line.rstrip("\n") for line in open(args.input).readlines()]
-    NUMBER_OF_GPUS = args.ngpu
+    if args.ngpu:
+        NUMBER_OF_GPUS = args.ngpu
+        GPU_IDS = [i for i in range(args.ngpu)]
+    elif args.gpulist:
+        NUMBER_OF_GPUS = list(args.gpulist)
+        GPU_IDS = args.gpulist
     MAX_WORKERS_PER_GPU = args.maxworkers
     NUMBER_OF_TASKS = len(input_paths)
 
     template = ""
-    if args.ofasta:
-        template += f" -of {args.ofasta}"
+    # if args.ofasta:
+    #     template += f" --getsequences {args.getsequences}"
     # if args.cutoff:
-    #     template+= f' --cutoff {args.cutoff}'
-    if args.fsize:
-        template += f" --fsize {args.fsize}"
-    if args.stride:
-        template += f" --stride {args.stride}"
-    if args.batch:
-        template += f" --batch {args.batch}"
-    if args.getalllogits:
-        template += " --getalllogits "
-    if args.getalllabels:
-        template += " --getalllabels "
-    # if args.verbose:
-    #      template += f' --verbose {args.verbose} '
-    if args.overwrite:
-        template += " --overwrite "
+    #     template += f' --cutoff {args.cutoff}'
+    # if args.fsize:
+    #     template += f" --fsize {args.fsize}"
+    # if args.stride:
+    #     template += f" --stride {args.stride}"
+    # if args.batch:
+    #     template += f" --batch {args.batch}"
+    # if args.getalllogits:
+    #     template += " --getalllogits "
+    # if args.getalllabels:
+    #     template += " --getalllabels "
+    # # if args.verbose:
+    # #      template += f' --verbose {args.verbose} '
+    # if args.overwrite:
+    #     template += " --overwrite "
+
+    for k, v in vars(args).items():
+        if k not in ['maxworkers', 'ngpu', 'gpulist']:
+            template += f"--{k} {v} "
 
     ALL_COMMANDS = [f"jaeger run -i {i} -o {args.outpath} {template}"
                     for i in input_paths]
+    
     pool = SubprocessPool(
-        MAX_WORKERS_PER_GPU, NUMBER_OF_GPUS, NUMBER_OF_TASKS, ALL_COMMANDS
+        max_workers_per_gpu=MAX_WORKERS_PER_GPU,
+        num_gpus=NUMBER_OF_GPUS,
+        gpu_ids=GPU_IDS,
+        total_commands=NUMBER_OF_TASKS,
+        commands=ALL_COMMANDS
     )
 
     try:

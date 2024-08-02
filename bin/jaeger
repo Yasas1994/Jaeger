@@ -42,6 +42,7 @@ from jaegeraa.utils import (
 from jaegeraa.postprocessing import (
     update_dict,
     write_output,
+    write_fasta,
     logits_to_df,
     plot_scores,
     segment,
@@ -72,7 +73,7 @@ def cmdparser():
     )
     run_test = subparsers.add_parser(
         "test",
-        help="run tests & check installation",
+        help="run tests to check installation",
         usage=argparse.SUPPRESS,
         description=f'{description(version("jaeger-bio"))}\n\n{"usage: jaeger test"}\n',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -180,7 +181,12 @@ def cmdparser():
     run_jaeger.add_argument(
         "--getalllogits",
         action="store_true",
-        help="returns window-wise scores in a .npy file",
+        help="writes window-wise scores to a .npy file",
+    )
+    run_jaeger.add_argument(
+        "--getsequences",
+        action="store_true",
+        help="writes the putative phage sequences to a .fasta file",
     )
 
     group = run_jaeger.add_mutually_exclusive_group()
@@ -257,6 +263,9 @@ def run(args):
     output_phage_file_path = os.path.join(output_dir, output_phage_file)
     setattr(args, "output_file_path", output_file_path)
     setattr(args, "output_phage_file_path", output_phage_file_path)
+
+
+    
     # else:
     #     logger.error("input file is not a valid fastafile")
     #     exit(1)
@@ -556,7 +565,13 @@ def run(args):
 
         # logger.debug(data)
         write_output(args, config, data)
-
+        if args.getsequences:
+            output_fasta_file = f"{file_base}_{config[args.model]['suffix']}_phages_jaeger.fasta"
+            output_fasta_file_path = os.path.join(output_dir,
+                                                  output_fasta_file)
+            setattr(args, "output_fasta_file_path", output_fasta_file_path)
+            write_fasta(args)
+ 
         logger.info(f"processed {headers.shape[0]}/{num} sequences")
 
         if args.getalllogits:
