@@ -223,10 +223,8 @@ class SubprocessPool:
                            shell=True,
                            check=True,
                            capture_output=True)
-        except subprocess.CalledProcessError as e:
-            print(f"error executing '{command}': {e}")
         except Exception as e:
-            print(f"an error occurred: {e}")
+            print(f"{e}")
 
     def monitor_pool(self):
 
@@ -294,7 +292,7 @@ if __name__ == "__main__":
 
     ALL_COMMANDS = [f"jaeger run -i {i} -o {args.outpath} {template}"
                     for i in input_paths]
-    
+
     pool = SubprocessPool(
         max_workers_per_gpu=MAX_WORKERS_PER_GPU,
         num_gpus=NUMBER_OF_GPUS,
