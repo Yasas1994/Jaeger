@@ -267,28 +267,13 @@ if __name__ == "__main__":
     NUMBER_OF_TASKS = len(input_paths)
 
     template = ""
-    # if args.ofasta:
-    #     template += f" --getsequences {args.getsequences}"
-    # if args.cutoff:
-    #     template += f' --cutoff {args.cutoff}'
-    # if args.fsize:
-    #     template += f" --fsize {args.fsize}"
-    # if args.stride:
-    #     template += f" --stride {args.stride}"
-    # if args.batch:
-    #     template += f" --batch {args.batch}"
-    # if args.getalllogits:
-    #     template += " --getalllogits "
-    # if args.getalllabels:
-    #     template += " --getalllabels "
-    # # if args.verbose:
-    # #      template += f' --verbose {args.verbose} '
-    # if args.overwrite:
-    #     template += " --overwrite "
 
     for k, v in vars(args).items():
-        if k not in ['maxworkers', 'ngpu', 'gpulist', 'input', 'outpath']:
-            template += f"--{k} {v} "
+        if k not in ['maxworkers', 'ngpu', 'gpulist', 'input', 'outpath', 'verbose']:
+            if type(v) is not bool:
+                template += f"--{k} {v} "
+            elif type(v) is bool:
+                template += f"--{k} "
 
     ALL_COMMANDS = [f"jaeger run -i {i} -o {args.outpath} {template}"
                     for i in input_paths]
