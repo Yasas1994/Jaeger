@@ -17,9 +17,9 @@
 
 
 
-Jaeger : A quick and precise pipeline for detecting phages in sequence assemblies
+Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequences
 ===============
-![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio) 
+![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio) [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
 
 
 
@@ -27,8 +27,10 @@ Jaeger is a tool that utilizes homology-free machine learning to identify phage 
 
 ---
 #### Citing Jaeger
-If you use Jaeger in your work, please consider citing its manuscript:
-<b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> 
+
+If you use Jaeger in your work, please consider citing its repository: 
+
+<b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
 
 ---
 
