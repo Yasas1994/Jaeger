@@ -438,22 +438,23 @@ def run(args):
                     process_string_gen2(crop_size=args.fsize),
                     num_parallel_calls=tf.data.AUTOTUNE,
                 )
-                .padded_batch(
-                    args.batch,
-                    padded_shapes=(
-                        (
-                            {
-                                # 'nucleotide': [2,int(args.fsize),4],
-                                "translated": [6, insize, 11],
-                            },
-                            (),
-                            (),
-                            (),
-                            (),
-                            (),
-                        )
-                    ),
-                )
+                .batch(args.batch, num_parallel_calls=tf.data.AUTOTUNE)
+                # .padded_batch(
+                #     args.batch,
+                #     padded_shapes=(
+                #         (
+                #             {
+                #                 # 'nucleotide': [2,int(args.fsize),4],
+                #                 "translated": [6, insize, 11],
+                #             },
+                #             (),
+                #             (),
+                #             (),
+                #             (),
+                #             (),
+                #         )
+                #     ),
+                # )
                 .prefetch(50)
             )
 

@@ -1308,6 +1308,11 @@ def process_string_gen2(
             x[3],
             x[4],
             x[5],
+            x[6],
+            x[7],
+            x[8],
+            x[9],
+            x[10],
         )
         # 'nucleotide': tf.one_hot(nuc, depth=4, dtype=tf.float32, on_value=1,\
         # off_value=0)},
