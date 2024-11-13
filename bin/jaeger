@@ -13,9 +13,9 @@ import os
 import traceback
 import sys
 import psutil
+import shutil
 import time
 import argparse
-import glob
 import numpy as np
 from importlib.resources import files
 from importlib.metadata import version
@@ -24,7 +24,14 @@ import json
 import h5py
 import joblib
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
+
+if sys.platform == "darwin":
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+elif sys.platform.startswith("linux"):
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    os.environ["XLA_FLAGS"] ="--xla_gpu_cuda_data_dir=/usr/lib/cuda"
+
 import tensorflow as tf  # type: ignore #
 
 
@@ -36,8 +43,7 @@ from jaegeraa.utils import (
     check_file_path,
     validate_fasta_entries,
     get_device_name,
-    description,
-    remove_directory_recursively
+    description
 )
 from jaegeraa.postprocessing import (
     update_dict,
@@ -224,9 +230,31 @@ def cmdparser():
     )
 
     #misc.add_argument("--progressbar", action="store_false", help="show progress bar")
+    tune_jaeger = subparsers.add_parser(
+        "tune",
+        help="fine-tune existing models on custom databases",
+        usage=argparse.SUPPRESS,
+        description=f'{description(version("jaeger-bio"))}\n\n{"usage: jaeger tune  -i INPUT"}\n',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+
+    )
+
+    tune_jaeger.add_argument(
+        "-i",
+        "--input",
+        type=check_file_path,
+        required=True,
+        help="path to a csv file with following fields; seq(str), class_id(int), class_name(str), subset(str: train, validation) "
+    )
+    
+    tune_jaeger.add_argument(
+        "-n",
+        type=str,
+        required=True,
+        help="model name"
+    )
 
     return parser.parse_args()
-
 
 def run(args):
 
@@ -655,7 +683,7 @@ def test(args):
 
     passed = 0
 
-    args.output = os.path.join(os.getcwd(), ".tmp")
+    args.output = os.path.join(os.getcwd(), "test_log")
     args.fsize = 2048
     args.stride = 2048
     args.batch = 64
@@ -731,7 +759,10 @@ def test(args):
         logger.debug(e)
     finally:
         logger.info(f"{passed}/5 tests passed!")
-        remove_directory_recursively(args.output)
+        # remove_directory_recursively(args.output)
+        # fix-needed !!!
+        # shutil.rmtree(args.output)
+
 
 
 if __name__ == "__main__":

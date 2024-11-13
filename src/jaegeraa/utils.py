@@ -97,6 +97,22 @@ def remove_directory_recursively(directory):
     # Remove the main directory
     os.rmdir(directory)
 
+def delete_all_in_directory(root_path):
+    # Check if the root directory exists
+    if os.path.exists(root_path):
+        # Iterate over all files and directories in the root directory
+        for filename in os.listdir(root_path):
+            file_path = os.path.join(root_path, filename)
+            # If it's a directory, recursively delete its contents
+            if os.path.isdir(file_path):
+                delete_all_in_directory(file_path)
+                os.rmdir(file_path)  # Remove the empty directory
+            # If it's a file, delete it
+            else:
+                os.remove(file_path)
+        # Finally, remove the root directory itself
+        os.rmdir(root_path)
+
 
 def signal_fl(it):
     """get a signal at the begining and the end of a iterator"""

@@ -7,7 +7,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="jaeger-bio",
-    version="1.1.30.alpha",
+    version="1.1.30",
     description="A quick and precise pipeline for detecting phages in sequence assemblies.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -20,33 +20,38 @@ setup(
     ],
     packages=find_namespace_packages(where="src"),
     package_dir={"": "src"},
-    package_data={"jaegeraa.data": ["*.h5", "*.json", "*.npy", "*.pkl", "*.fasta"],
+    package_data={"jaegeraa.data": ["*.h5", "*.json", "*.npy", "*.pkl", "*.fasta", ".env"],
                   },
     scripts=["bin/jaeger", "bin/jaeger_parallel"],
     python_requires='>=3.9, <3.12',
     install_requires=[
         "h5py >=3.8",
-        'tensorflow[and-cuda] >=2.15, <2.16; platform_system=="Linux"',
-        'tensorflow >=2.15, <2.16; platform_system=="Darwin"',
-        'tensorflow-metal; platform_system=="Darwin" and platform_machine=="arm64"',
         "progressbar2 >=4.4.2",
         "psutil >=5",
         "pandas >= 1.5",
         "kneed >= 0.8.5",
         "numpy >= 1.24",
         "ruptures >= 1.1.9",
-        "keras >= 2.10",
+        "keras >= 2.15, <2.16",
         "matplotlib >= 3.7",
         "scikit-learn == 1.3.2",
         "parasail == 1.3.4 ",
         "pycirclize",
         "pyfastx >= 2"
     ],
+    extras_require={
+        "darwin-arm": ["tensorflow >=2.15, <2.16", "tensorflow-metal"],    # macOS only
+        "gpu": ["tensorflow[and-cuda] >=2.15, <2.16"],     # Linux only
+        "cpu": ["tensorflow >=2.15, <2.16"],   
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Natural Language :: English",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
-        "Operating System :: Unix-like",
+        "Operating System :: Unix",
     ],
+
 )
+
+# python3 -m twine upload --repository testpypi dist/* --verbose

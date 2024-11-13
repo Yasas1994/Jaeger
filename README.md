@@ -27,31 +27,35 @@ Jaeger is a tool that utilizes homology-free machine learning to identify phage 
 
 ---
 #### Citing Jaeger
+---
 
-If you use Jaeger in your work, please consider citing its repository: 
+If you use Jaeger in your work, please consider citing its preprint: 
 
-<b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
+* <b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b>
+Yasas Wijesekara, Ling-Yi Wu, Rick Beeloo, Piotr Rozwalak, Ernestina Hauptfeld, Swapnil P. Doijad, Bas E. Dutilh, Lars Kaderali bioRxiv 2024.09.24.612722
+
+To cite the code itself:
+
+* <b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
 
 ---
 
 
 
-- [Installation](#installation)
-  - [Linux and Mac (x64_86)](#linux-and-mac-x64_86)
-    - [Bioconda](#option-1--bioconda-new)
-      - [Troubleshooting](#troubleshooting)
-    - [PyPi](#option-2--installing-from-pypi)
-  - [Mac (arm)](#mac-arm)
+- [Installing Jaeger](#installation)
+  - [Bioconda](#option-1--bioconda)
+  - [PyPi](#option-2--installing-from-pypi)
+  - [git (dev-version)](#option-3--installing-from-git)
+- [Troubleshooting](#troubleshooting)
 - [Running Jaeger](#running-jaeger)
 - [What is in the output](#what-is-in-the-output)
 - [Predicting prophages](#predicting-prophages-with-jaeger)
 
 --- 
-## Installation 
+#### Installing Jaeger
+---
 
-### <u> Linux and Mac (x64_86)</u>
-
-#####  option 1 : bioconda (NEW!)
+##### option 1 : bioconda
 
 The performance of the Jaeger workflow can be significantly increased by utilizing GPUs. To enable GPU support, the CUDA Toolkit and cuDNN library must be accessible to conda.
 
@@ -63,23 +67,75 @@ conda config --add channels conda-forge
 conda config --set channel_priority strict
 
 # create conda environment and install jaeger
-conda create -n jaeger python=3.9 pip jaeger-bio
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.9,<3.12" pip jaeger-bio
+
 
 # activate environment
 conda activate jaeger
 ````
 Test the installation with test data
 ```
-# download test data
-wget https://raw.githubusercontent.com/Yasas1994/Jaeger/main/test/bin.460.fna
-
-# run jaeger on test data
-Jaeger -i bin.460.fna -o outpath --progressbar
+jaeger test
 ```
 
 
+##### option 2 : Installing from pypi
 
-##### troubleshooting
+
+
+```
+# create a conda environment and activate  
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.9,<3.12" pip
+conda activate jaeger
+
+# OR create a virtual environment using venv
+python3 -m venv jaeger
+source jaeger/bin/activate    
+
+# to install jaeger with GPU support
+pip install jaeger-bio[gpu]
+
+# to install without GPU support
+pip install jaeger-bio[cpu]
+
+# to install on a Mac(arm)
+pip install jaeger-bio[darwin-arm]
+
+
+```
+
+##### option 3 : Installing from git
+
+```
+# clone the jaeger repository
+git clone https://github.com/MGXlab/Jaeger.git
+cd Jaeger
+
+# create a conda environment and activate  
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.9,<3.12" pip
+conda activate jaeger
+
+# OR create a virtual environment using venv
+python3 -m venv jaeger
+source jaeger/bin/activate    
+
+# install jaeger
+
+# to install with GPU support
+pip install ".[gpu]"
+
+# to install without GPU support
+pip install ".[cpu]"
+
+# to install on a Mac(arm)
+pip install ".[darwin-arm]"
+
+```
+
+
+---
+##### Troubleshooting
+---
 
 If you have a NVIDIA GPU on the system, and jaeger fails to detect it, try these steps.
 
@@ -145,7 +201,7 @@ Following example shows the installation process for cuda=11.3.0. Simply change 
 libcudnn_cnn_infer.so.8
 
 # create a conda environment
-conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip
+conda create -n jaeger -c conda-forge -c bioconda -c defaults "python>=3.9,<3.12" pip
 
 # cudatoolkit and cudnn
 conda install -n jaeger -c "nvidia/label/cuda-11.3.0" cudatoolkit=11
@@ -159,54 +215,16 @@ conda activate jaeger
 ````
 More information on properly setting setting up tensorflow can be found [here](https://www.tensorflow.org/install/pip)
 
-##### option 2 : Installing from pypi
-
-
-
-```
-# create a conda environment and activate  
-conda create -n jaeger -c conda-forge -c bioconda -c defaults python=3.9 pip
-conda activate jaeger
-
-#install jaeger
-pip install jaeger-bio
-```
-
-### <u> Mac (ARM)</u>
-
-
-````
-
-  # install build dependencies
-  brew install autoconf automake libtool
-  
-  # clone the git repository
-  git clone https://github.com/Yasas1994/Jaeger.git
-
-  # create a conda environment and activate
-  conda create -c conda-forge -c apple -c bioconda -c defaults -n jaeger python=3.9 pip
-  conda activate jaeger 
-
-  # install jaeger
-
-  cd Jaeger
-  pip install .
-````
-
-### <u>Singularity (coming soon)</u>
-
-
-
 ---
-## Running Jaeger
-
-#### CPU/GPU mode
+#### Running Jaeger
+---
+##### CPU/GPU mode
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed .fasta files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. 
 
 ```
-Jaeger -i input_file.fasta -o output_dir --batch 128
+jaeger run -i input_file.fasta -o output_dir --batch 128
 ```
-#### multi-GPU mode
+##### multi-GPU mode
 
 We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of GPUs at your disposal. **--maxworkers** flag can be used to set the number of samples that should be processed parallaly per GPU. All other arguments remains similar to 'Jaeger' program.
 
@@ -216,15 +234,16 @@ We provide a new program that allows users to automatically run multiple instanc
 ls ./files/*.fna | xargs realpath > input_file_list
 
 # to process eight samples in parallel on two GPUs 
-Jaeger_parallel -i input_file_list -o output_dir --batch 128 --maxworkers 4 --ngpu 2
+jaeger_parallel -i input_file_list -o output_dir --batch 128 --maxworkers 4 --ngpu 2
 ```
 
-#### Selecting the batch parameter 
+##### Selecting the batch parameter 
 
 You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 96 is good enough for a graphics card with 4 Gb of memory.
 
-## What is in the output?
-
+---
+#### What is in the output?
+---
 All predictions are summarized in a table located at ```output_dir/<input_file>_default.jaeger.tsv```
 
 ```
@@ -244,17 +263,19 @@ This table provides information about various contigs in a metagenomic assembly.
 
 ---
 
-#### options
+#### Options
+---
 
 ````
-Jaeger --help
+jaeger run --help
 ````
 ````
 
 ## Jaeger 1.1.30 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
 https://github.com/Yasas1994/Jaeger.git
+usage: jaeger run  -i INPUT -o OUTPUT
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -i INPUT, --input INPUT
                         path to input file
@@ -268,26 +289,26 @@ optional arguments:
   -s [SENSITIVITY], --sensitivity [SENSITIVITY]
                         sensitivity of the prophage extraction algorithm (between 0 - 4). default: 1.5
   --lc [LC]             minimum contig length to run prophage extraction algorithm. default: 500000 bp
+  --rc [RC]             minium reliability score required to accept predictions. default: 0.2
+  --pc [PC]             minium phage score required to accept predictions. default: 3
   --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:96
   --workers [WORKERS]   number of threads to use. default:4
-  --getalllogits        return position-wise logits for each prediction window as a .npy file
-  --usecutoffs          use cutoffs to obtain the class prediction
+  --getalllogits        writes window-wise scores to a .npy file
+  --getsequences        writes the putative phage sequences to a .fasta file
   --cpu                 ignore available gpus and explicitly run jaeger on cpu. default: False
-  --virtualgpu          create and run jaeger on a virtualgpu. default: False
   --physicalid [PHYSICALID]
-                        sets the default gpu device id (for multi-gpu systems). default:0
-  --getalllabels        get predicted labels for Non-Viral contigs. default:False
+                        sets the default gpu device id (for multi-gpu systems). default: 0
+  --getalllabels        get predicted labels for Non-Viral contigs. default: False
+  -v, --verbose         Verbosity level : -vvv warning, -vv info, -v debug, (default info)
 
 Misc. Options:
-  -v, --verbose         Verbosity level : -v warning, -vv info, -vvv debug, (default info)
   -f, --overwrite       Overwrite existing files
-  --progressbar         show progress bar
 
-  
 
 ````
-
+---
 #### Python Library
+---
 Jaeger can be integrated into python scripts using the jaegeraa python library as follows.
 currently the predict function accepts 4 different input types.
 1) Nucleotide sequence -> str
@@ -327,8 +348,9 @@ This dictionary can be easily converted to a pandas dataframe using DataFrame.fr
 import pandas as pd
 df = DataFrame.from_dict(predictions)
 ```
-
+---
 #### Notes
+---
 * The program expects the input file to be in .fasta format.
 * The program uses a sliding window approach to scan the input sequences, so the stride argument determines how far the window will move after each scan.
 * The batch argument determines how many sequences will be processed in parallel.
@@ -339,11 +361,11 @@ It's recommended to use the output of this program in conjunction with other met
 
 ---
 
-## Predicting prophages with Jaeger
-
+#### Predicting prophages with Jaeger
+---
 
 ```
-Jaeger -p -i NC_002695.fna -o outdir 
+jaeger run -p -i NC_002695.fna -o outdir 
 ```
 The outdir will contain the following files
 ```
@@ -393,14 +415,15 @@ list of prophage coordinates can be found in ```prophages_jaeger.tsv```
 └─────────────┴────────────┴──────────┴──────────┴───┴──────────┴────────┴────────────┴────────────┘
 
 ```
+---
 #### Visualizing predictions 
-
+---
 
 You can use [phage_contig_annotator](https://github.com/Yasas1994/phage_contig_annotator) to annotate and visualize Jaeger predictions.
 
 ---
-## Acknowlegements
-
+#### Acknowlegements
+---
 
 This work was supported by the European Union’s Horizon 2020 research and innovation program, under the Marie Skłodowska-Curie Actions Innovative Training Networks grant agreement no. 955974 ([VIROINF](https://viroinf.eu/)), the European Research Council (ERC) Consolidator grant 865694 
 
