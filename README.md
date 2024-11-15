@@ -46,6 +46,7 @@ To cite the code itself:
   - [Bioconda](#option-1--bioconda)
   - [PyPi](#option-2--installing-from-pypi)
   - [git (dev-version)](#option-3--installing-from-git)
+  - [containers](#option-4-building-a-singularity-container)
 - [Troubleshooting](#troubleshooting)
 - [Running Jaeger](#running-jaeger)
 - [What is in the output](#what-is-in-the-output)
@@ -79,7 +80,7 @@ jaeger test
 ```
 
 
-##### option 2 : Installing from pypi
+##### option 2 : Installing from pypi (recomended)
 
 
 
@@ -132,6 +133,23 @@ pip install ".[darwin-arm]"
 
 ```
 
+##### option 4: building a singularity container
+
+```
+# clone the git repo
+git clone https://github.com/MGXlab/Jaeger.git
+cd Jaeger/singularity
+
+# build the container using the provided recipe
+singularity build --fakeroot jaeger_1.1.30.sif jaeger_singularity.def
+
+# OR directly download the pre-built image from the container library
+singularity pull library://yasas1994/jaeger/jaeger:1.1.30
+
+# if you have a GPU, check whether the nvidia GPU driver is properly configured
+singularity run --nv jaeger_1.1.30.sif nvidia-smi
+
+```
 
 ---
 ##### Troubleshooting
@@ -167,17 +185,29 @@ nvidia-smi
 
 Above command returns the following output if everything is properly set-up. You can also determine the cuda version from it. For example here it is 11.7 (for step 3)
 ````
-Mon Apr  8 14:26:43 2024       
+Fri Nov 15 07:46:02 2024       
 +---------------------------------------------------------------------------------------+
-| NVIDIA-SMI 535.171.04             Driver Version: 535.171.04   CUDA Version: 12.2     |
+| NVIDIA-SMI 535.216.01             Driver Version: 535.216.01   CUDA Version: 12.2     |
 |-----------------------------------------+----------------------+----------------------+
 | GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
 | Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
 |                                         |                      |               MIG M. |
 |=========================================+======================+======================|
-|   0  NVIDIA GeForce GTX 1660 Ti     Off | 00000000:01:00.0 Off |                  N/A |
-| N/A   47C    P8               2W /  80W |      6MiB /  6144MiB |      0%      Default |
-|                                         |                      |                  N/A |
+|   0  NVIDIA A100-SXM4-80GB          On  | 00000000:01:00.0 Off |                    0 |
+| N/A   41C    P0              74W / 500W |   3616MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+|   1  NVIDIA A100-SXM4-80GB          On  | 00000000:41:00.0 Off |                    0 |
+| N/A   40C    P0              65W / 500W |      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+|   2  NVIDIA A100-SXM4-80GB          On  | 00000000:81:00.0 Off |                    0 |
+| N/A   39C    P0              65W / 500W |      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+|   3  NVIDIA A100-SXM4-80GB          On  | 00000000:C1:00.0 Off |                    0 |
+| N/A   40C    P0              65W / 500W |      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
 +-----------------------------------------+----------------------+----------------------+
                                                                                          
 +---------------------------------------------------------------------------------------+
@@ -185,8 +215,9 @@ Mon Apr  8 14:26:43 2024
 |  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
 |        ID   ID                                                             Usage      |
 |=======================================================================================|
-|    0   N/A  N/A      2196      G   /usr/lib/xorg/Xorg                            4MiB |
+|    0   N/A  N/A   3583343      C   /opt/conda/bin/python                      3606MiB |
 +---------------------------------------------------------------------------------------+
+
 ````
 
 Check whether Jaeger detects the GPU now.
@@ -223,6 +254,11 @@ Once the environment is properly set up, using Jaeger is straightforward. The pr
 
 ```
 jaeger run -i input_file.fasta -o output_dir --batch 128
+```
+
+To run jaeger with singularity
+```
+singularity run --bind /path/to/wd --nv jaeger_1.1.30.sif jaeger run -i path/to/wd/xxx.fna -o path/to/wd/out
 ```
 ##### multi-GPU mode
 
