@@ -133,22 +133,17 @@ pip install ".[darwin-arm]"
 
 ```
 
-##### option 4: building a singularity container
-
+##### option 4 : Apptainer (singularity)
 ```
-# clone the git repo
+# clone the jaeger repository
 git clone https://github.com/MGXlab/Jaeger.git
-cd Jaeger/singularity
+cd Jaeger
 
-# build the container using the provided recipe
-singularity build --fakeroot jaeger_1.1.30.sif jaeger_singularity.def
+# to build the container
+apptainer build jaeger.sif singularity/jaeger_singularity.def
 
-# OR directly download the pre-built image from the container library
-singularity pull library://yasas1994/jaeger/jaeger:1.1.30
-
-# if you have a GPU, check whether the nvidia GPU driver is properly configured
-singularity run --nv jaeger_1.1.30.sif nvidia-smi
-
+# to run jaeger
+apptainer run --nv jaeger.sif jaeger run -i input_file.fasta -o output_dir --batch 128
 ```
 
 ---
