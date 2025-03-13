@@ -1,0 +1,48 @@
+[jaeger] 2025-03-18 15:02:13 |    INFO |   cli.py:271| 
+                  .
+               ,'/ \`.
+              |\/___\/|
+              '\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗
+               `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗
+                  |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝
+                  |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗
+                 |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║
+            /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
+        ,'`.  \/ |=| \/  ,'`. 
+      ,'    `.|\ `-' /|,'    `. 
+    ,'   .-._ \ `---' / _,-.   `.
+       ,'    `-`-._,-'-'   `.
+      '
+    
+
+## Jaeger 1.1.4 (yet AnothEr phaGe idEntifier) Deep-learning based
+bacteriophage discovery https://github.com/Yasas1994/Jaeger.git
+
+
+-----------------------------validating parameters------------------------------
+[jaeger] 2025-03-18 15:02:13 |   DEBUG |   cli.py:275| /Users/javis/Documents/Programming/Jaeger/src/data
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:374| trying to create a virtual GPU with 4096MB of mem on PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:389| [LogicalDevice(name='/device:GPU:0', device_type='GPU')]
+[jaeger] 2025-03-18 15:02:14 |   DEBUG |   cli.py:406| /Users/javis/miniconda3/envs/jaeger/bin/jaeger run -i /Users/javis/Downloads/ERZ773086_FASTA.fasta.gz -o . --overwrite --getsequences
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:407| tensorflow: 2.15.1
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:408| input file: ERZ773086_FASTA.fasta.gz
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:409| log file: ERZ773086_FASTA.fasta_jaeger.log
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:410| outpath: /Users/javis/Documents/Programming/Jaeger/ERZ773086_FASTA.fasta
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:411| fragment size: 2048
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:412| stride: 2048
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:413| batch size: 96
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:414| mode: GPU
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:415| avail mem:  6.97GB
+[jaeger] 2025-03-18 15:02:14 |    INFO |   cli.py:418| avail cpus: 8
+--------------------------------------------------------------------------------
+[jaeger] 2025-03-18 15:02:18 |   DEBUG |   cli.py:426| [LogicalDevice(name='/device:GPU:0', device_type='GPU')], ['GPU:0']
+[jaeger] 2025-03-18 15:02:18 |    INFO |   cli.py:431| Using OneDeviceStrategy ['GPU:0']
+[jaeger] 2025-03-18 15:02:19 |    INFO |   cli.py:492| loading model to memory
+[jaeger] 2025-03-18 15:02:20 |    INFO |   cli.py:496| avail mem :  6.53GB
+--------------------------------------------------------------------------------
+[jaeger] 2025-03-18 15:02:20 |    INFO |   cli.py:503| GPU 0 current :  0.00GB  peak :  0.00GB
+[jaeger] 2025-03-18 15:02:20 |    INFO |   cli.py:508| starting model inference
+[jaeger] 2025-03-18 15:10:03 |    INFO |   cli.py:600| processed 18180/79780 sequences
+[jaeger] 2025-03-18 15:10:03 |    INFO |   cli.py:653| CPU time(s) : 424.69
+[jaeger] 2025-03-18 15:10:03 |    INFO |   cli.py:654| wall time(s) : 473.86
+[jaeger] 2025-03-18 15:10:03 |    INFO |   cli.py:655| memory usage : 0.62Gb (3.86%)

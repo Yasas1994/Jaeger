@@ -1,0 +1,14 @@
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 34| /Users/javis/Documents/Programming/Jaeger/src/data/test_short.fasta
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 44| 0 test passed test_short.fasta!
+[jaeger] 2025-04-01 19:05:32 |   DEBUG |  test.py: 45| all records in /Users/javis/Documents/Programming/Jaeger/src/data/test_short.fasta are < 2048bp
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 34| /Users/javis/Documents/Programming/Jaeger/src/data/test_empty.fasta
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 44| 1 test passed test_empty.fasta!
+[jaeger] 2025-04-01 19:05:32 |   DEBUG |  test.py: 45| /Users/javis/Documents/Programming/Jaeger/src/data/test_empty.fasta is not plain or gzip compressed fasta formatted file
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 34| /Users/javis/Documents/Programming/Jaeger/src/data/test_contigs.fasta
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 38| 2 test passed test_contigs.fasta!
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 54| 4 tensorflow test passed!
+[jaeger] 2025-04-01 19:05:32 |    INFO |  test.py: 73| loading the dataset
+[jaeger] 2025-04-01 19:05:33 |    INFO |  test.py: 84| creating the model
+[jaeger] 2025-04-01 19:05:33 |    INFO |  test.py: 88| starting model inference
+[jaeger] 2025-04-01 19:05:41 |    INFO |  test.py: 91| 5 test model passed!
+[jaeger] 2025-04-01 19:05:41 |    INFO |  test.py: 97| 5/5 tests passed!

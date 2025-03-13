@@ -1,0 +1,11 @@
+classes:
+- class: phage
+  label: 1
+- class: bacteria
+  label: 0
+- class: archaea
+  label: 2
+- class: virus
+  label: 3
+- class: eukarya
+  label: 4

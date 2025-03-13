@@ -1,0 +1,12 @@
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 35| /Users/javis/Documents/Programming/Jaeger/src/data/test_short.fasta
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 45| 0 test passed test_short.fasta!
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 35| /Users/javis/Documents/Programming/Jaeger/src/data/test_empty.fasta
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 45| 1 test passed test_empty.fasta!
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 35| /Users/javis/Documents/Programming/Jaeger/src/data/test_contigs.fasta
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 39| 2 test passed test_contigs.fasta!
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 55| 4 tensorflow test passed!
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 74| loading the dataset
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 85| creating the model
+[jaeger] 2025-04-01 19:00:30 |    INFO |  test.py: 89| starting model inference
+[jaeger] 2025-04-01 19:00:38 |    INFO |  test.py: 92| 5 test model passed!
+[jaeger] 2025-04-01 19:00:38 |    INFO |  test.py: 98| 5/5 tests passed!
