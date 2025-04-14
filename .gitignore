@@ -14,3 +14,4 @@ src/*egg*
 bioconda
 dist
 *fasta
+test_log/*
