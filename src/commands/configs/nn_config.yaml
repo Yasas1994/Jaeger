@@ -1,0 +1,233 @@
+# Author: yasas.wijesekara@uni-greofswald.de
+# Jaeger model and training configuration for training new models and fine-tuning 
+# existing models.
+# model(input) -> [logits, reliability score] 
+
+model:
+  name: "jaeger_1.5M" # the trained model will be saved under this name 
+  class_labels_map:
+    - class: "phage"
+      label: 1
+    - class: "bacteria"
+      label: 0
+    - class: "archaea"
+      label: 2
+    - class: "virus"
+      label: 3
+    - class: "eukarya"
+      label: 4
+  activation: "gelu"
+  mode: "training" # or "tunning" -> freeze the representation learner and train the classifier
+  embedding:
+    type: "translated"             # or "nucleotide"
+    input_shape: [6, null, 64]     #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
+    embedding_size: 4
+
+  representation_learner:
+    masked_conv1d_1_filters: 64
+    masked_conv1d_1_kernel_size: 7
+    masked_conv1d_1_strides: 1
+    masked_conv1d_1_dilation_rate: 1
+    masked_conv1d_1_regularizer: l2
+    masked_conv1d_1_regularizer_w: 1e-4
+
+    block_sizes: [1, 1, 1]
+    block_filters: [64, 128, 256]
+    block_kernel_size: [5, 5, 5]
+    block_kernel_dilation: [1, 1, 1]
+    block_kernel_strides: [2, 2, 2]
+    block_regularizer: ["l2", "l2", "l2"]
+    block_regularizer_w: [1e-4, 1e-4, 1e-4]
+
+    masked_conv1d_final_kernel_size: 5
+    masked_conv1d_final_strides: 1
+    masked_conv1d_final_dilation_rate: 1
+    masked_conv1d_final_regularizer: "l2"
+    masked_conv1d_final_regularizer_w: 1e-4
+
+    pooling: "max"
+
+  classifier:
+    dense_1_units: 128
+    kernel_regularizer_1: "l2" # l2, l1
+    kernel_regularizer_1_w: 1e-4
+    classes: 5
+
+  reliability_model:
+    dense_1_units: 128
+    kernel_regularizer_1: "l2" # l2, l1
+    kernel_regularizer_1_w: 1e-4
+
+  projector: # for supervised contrastive learning
+    dense_1_units: 128
+    kernel_regularizer_1: "l2" # l2, l1
+    kernel_regularizer_1_w: 1e-4
+    dropout_rate: 0.2
+    dense_2_units: 128
+    kernel_regularizer_2: "l2" # l2, l1
+    kernel_regularizer_2_w: 1e-4
+
+training:
+  classifier_epochs: 10
+  reliability_epochs: 10
+  optimizer: "adam" # adam, rmsprop
+  optimizer_params:
+    learning_rate: 0.00005
+
+  loss_classifier: "categorical_crossentropy"
+  loss_params_classifier:
+    from_logits: true
+
+  loss_reliability: "binary_crossentropy"
+  loss_params_reliability:
+    from_logits: true
+
+  # training callbacks
+  callbacks:
+    - name: "EarlyStopping"
+      params:
+        monitor: "val_loss"
+        patience: 5
+        restore_best_weights: true
+    - name: "ModelCheckpoint"
+      params:
+        filepath: "path_to_checkpoints"
+        save_weights_only: True
+        verbose: 1
+
+  model_saving:
+    path : "/Users/javis/Documents/Programming/Jaeger/data/test_model"
+    save_weights : True #saves layer-wise weights
+    save_exec_graph: True #saves the model in tf saved_model format
+
+  fragment_classifier_data:
+    train:
+      - class: bacteria
+        path: "path/to/bac"
+        label: 0
+        fragment_length: 1024
+      - class: phage
+        path: "path/to/phage"
+        label: 1
+        fragment_length: 1024
+      - class: archaea
+        path:
+        label: 2
+        fragment_length: 1024
+      - class: virus
+        path:
+        label: 3
+        fragment_length: 1024
+      - class: eukarya
+        path:
+        label: 4
+        fragment_length: 1024
+
+    validation:
+      - class: bacteria
+        path: "path/to/bac"
+        label: 0
+        fragment_length: 1024
+      - class: phage
+        path: "path/to/phage"
+        label: 1
+        fragment_length: 1024
+      - class: archaea
+        path:
+        label: 2
+        fragment_length: 1024
+      - class: virus
+        path:
+        label: 3
+        fragment_length: 1024
+      - class: eukarya
+        path:
+        label: 4
+        fragment_length: 1024
+
+  contig_classifier_data:
+    train:
+      - class: bacteria
+        path: "path/to/bac"
+        label: 0
+        fragment_length: 1024
+      - class: phage
+        path: "path/to/phage"
+        label: 1
+        fragment_length: 1024
+      - class: archaea
+        path:
+        label: 2
+        fragment_length: 1024
+      - class: virus
+        path:
+        label: 3
+        fragment_length: 1024
+      - class: eukarya
+        path:
+        label: 4
+        fragment_length: 1024
+
+    validation:
+      - class: bacteria
+        path: "path/to/bac"
+        label: 0
+        fragment_length: 1024
+      - class: phage
+        path: "path/to/phage"
+        label: 1
+        fragment_length: 1024
+      - class: archaea
+        path:
+        label: 2
+        fragment_length: 1024
+      - class: virus
+        path:
+        label: 3
+        fragment_length: 1024
+      - class: eukarya
+        path:
+        label: 4
+        fragment_length: 1024
+
+  fragment_reliability_data:
+    train:
+      - class: indist
+        path: "path/to/bac"
+        label: 1
+        fragment_length: 1024
+      - class: ood
+        path: "path/to/phage"
+        label: 0
+        fragment_length: 1024
+
+    validation:
+      - class: indist
+        path: "path/to/bac"
+        label: 1
+        fragment_length: 1024
+      - class: ood
+        path: "path/to/phage"
+        label: 0
+        fragment_length: 1024
+
+  contig_reliability_data:
+    train:
+      - class: indist
+        path: "path/to/bac"
+        label: 1
+        fragment_length: 1024
+      - class: ood
+        path: "path/to/phage"
+        label: 0
+        fragment_length: 1024
+
+    validation:
+      - class: indist
+        path: "path/to/bac"
+        label: 1
+        fragment_length: 1024
+      - class: ood
+        path: "path/to/phage"
+        label: 0
+        fragment_length: 1024
