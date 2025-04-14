@@ -1,3 +1,61 @@
 [build-system]
-requires = ["setuptools > 69", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+package-dir = "src"
+
+[project.scripts]
+jaeger = "cli:main"
+
+[tool.setuptools.package-data]
+data = ["*.h5", "*.json", "*.npy", "*.pkl", "*.fasta", ".env"]
+
+[project]
+name = "jaeger-bio"
+version = "1.1.4"
+description = "A quick and precise pipeline for detecting phages in sequence assemblies."
+readme = "README.md"
+authors = [
+    {name = "Yasas Wijesekara", email = "yasas.wijesekara@uni-greifswald.de"},
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: Unix",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+requires-python = ">=3.10, <3.13"
+dependencies = [
+    "keras >= 3.7.0, <3.9.0",
+    "kneed >= 0.8.5",
+    "matplotlib >= 3.7",
+    "pandas >= 2.2.3",
+    "polars >= 1.2.6",
+    "parasail == 1.3.4 ",
+    "progressbar2 >=4.4.2",
+    "psutil >=7.0.0",
+    "click >=8.1 ",
+    "pycirclize",
+    "pyfastx >= 2",
+    "ruptures >= 1.1.9",
+    "scikit-learn >= 1.6.0",
+    "pyyaml >= 6.0.2"
+]
+license = {text = "MIT"}
+
+[project.urls]
+Homepage = "https://github.com/Yasas1994/Jaeger"
+
+[project.optional-dependencies]
+darwin-arm = [
+    "tensorflow >=2.17, <2.18",
+    "tensorflow-metal",
+]
+gpu = [
+    "tensorflow[and-cuda] >=2.17, <2.18",
+]
+cpu = [
+    "tensorflow >=2.17, <2.18",
+]

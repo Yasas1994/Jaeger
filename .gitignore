@@ -13,3 +13,4 @@ test_config.py
 src/*egg*
 bioconda
 dist
+*fasta
