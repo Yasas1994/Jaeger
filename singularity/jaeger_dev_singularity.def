@@ -1,0 +1,27 @@
+Bootstrap: docker
+From: tensorflow/tensorflow:2.17.0-gpu  # Build upon the latest TensorFlow GPU-enabled base image
+
+%post
+    # Update and install system dependencies
+    apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        wget \
+        python3-pip \
+        && rm -rf /var/lib/apt/lists/*
+    # update pip3
+    python3 -m pip install --upgrade pip
+
+    # Install Jaeger and other dependencies
+    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[cpu] @ git+https://github.com/MGXlab/Jaeger@dev" # install jaeger without tensorflow support
+
+%environment
+    # Set environment variables for TensorFlow GPU usage
+    export TF_FORCE_GPU_ALLOW_GROWTH=true
+    export NVIDIA_VISIBLE_DEVICES=all  # Makes all GPUs visible to the container
+    export NVIDIA_DRIVER_CAPABILITIES=compute,utility  # Required for GPU support in TensorFlow
+
+
+%labels
+    Author: "Yasas Wijesekara"
+    Version: "1.0"
+    Description: "Apptainer container with Jaeger[dev] and TensorFlow GPU support"
