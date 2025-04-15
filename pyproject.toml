@@ -26,7 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.11, <3.13"
 dependencies = [
     "keras >= 3.7.0, <3.9.0",
     "kneed >= 0.8.5",
@@ -41,7 +41,8 @@ dependencies = [
     "pyfastx >= 2",
     "ruptures >= 1.1.9",
     "scikit-learn >= 1.6.0",
-    "pyyaml >= 6.0.2"
+    "pyyaml >= 6.0.2",
+    "jinja2 >= 3.1"
 ]
 license = {text = "MIT"}
 
