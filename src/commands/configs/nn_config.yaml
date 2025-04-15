@@ -4,8 +4,10 @@
 # model(input) -> [logits, reliability score] 
 
 model:
-  name: "jaeger_1.5M" # the trained model will be saved under this name 
-  class_labels_map:
+  name: "jaeger_1.5M" # the trained model will be saved under this name
+  experiment: "1" 
+  seed: 3244534
+  class_label_map:
     - class: "phage"
       label: 1
     - class: "bacteria"
@@ -20,8 +22,16 @@ model:
   mode: "training" # or "tunning" -> freeze the representation learner and train the classifier
   embedding:
     type: "translated"             # or "nucleotide"
+    strands: 2
+    frames: 6
+    length: null
     input_shape: [6, null, 64]     #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
     embedding_size: 4
+
+  string_processor: # only applicable when type:nucleotide
+    codon: "CODON"
+    codon_id: "CODON_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
+    crop_size: 1024
 
   representation_learner:
     masked_conv1d_1_filters: 64
@@ -82,152 +92,224 @@ training:
   loss_params_reliability:
     from_logits: true
 
-  # training callbacks
+  # training callbacks [classifier and reliability model]
   callbacks:
-    - name: "EarlyStopping"
-      params:
-        monitor: "val_loss"
-        patience: 5
-        restore_best_weights: true
-    - name: "ModelCheckpoint"
-      params:
-        filepath: "path_to_checkpoints"
-        save_weights_only: True
-        verbose: 1
+    clean_old: true
+    directories:
+      -  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier"
+      -  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability"
+    classifier:
+      - name: "EarlyStopping"
+        params:
+          monitor: "val_classifier_loss"
+          patience: 5
+          mode: "min"
+          restore_best_weights: true
+      - name: "ModelCheckpoint"
+        params:
+          filepath:  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{classifier_loss:.2f}.weights.h5"
+          monitor: "classifier_loss"
+          mode: "min"
+          save_weights_only: true
+          verbose: 1
+          save_best_only: false
+      - name: "TerminateOnNaN"
+      - name: "CSVLogger"
+        params:
+          filename: "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/training.log"
+          separator: ","
+          append: false
+        callbacks:
+    reliability:
+      - name: "EarlyStopping"
+        params:
+          monitor: "reliability_loss"
+          patience: 5
+          mode: "min"
+          restore_best_weights: true
+      - name: "ModelCheckpoint"
+        params:
+          filepath:  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/epoch:{epoch:02d}-loss:{reliability_loss:.2f}.weights.h5"
+          monitor: "reliability_loss"
+          mode: "min"
+          save_weights_only: true
+          verbose: 1
+          save_best_only: false
+      - name: "TerminateOnNaN"
+      - name: "CSVLogger"
+        params:
+          filename: "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/training.log"
+          separator: ","
+          append: false
 
   model_saving:
-    path : "/Users/javis/Documents/Programming/Jaeger/data/test_model"
-    save_weights : True #saves layer-wise weights
-    save_exec_graph: True #saves the model in tf saved_model format
+    path : "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/model"
+    save_weights : true #saves layer-wise weights
+    save_exec_graph: true #saves the model in tf saved_model format
 
+# separate files per-class or a file with all classes
+# path, label and class should be defined per file
+# if all data is in a single file prove a list of class
   fragment_classifier_data:
     train:
-      - class: bacteria
-        path: "path/to/bac"
-        label: 0
-        fragment_length: 1024
-      - class: phage
-        path: "path/to/phage"
-        label: 1
-        fragment_length: 1024
-      - class: archaea
+      - class: [bacteria, phage, archaea, virus, eukarya]
         path:
-        label: 2
-        fragment_length: 1024
-      - class: virus
-        path:
-        label: 3
-        fragment_length: 1024
-      - class: eukarya
-        path:
-        label: 4
-        fragment_length: 1024
+          - "path_to_combined_file"
+        label: [0, 1, 2, 3, 4]
+      # - class: bacteria
+      #   path: "path/to/bac"
+      #   label: 0
+      #   fragment_length: 1024
+      # - class: phage
+      #   path: "path/to/phage"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: archaea
+      #   path:
+      #   label: 2
+      #   fragment_length: 1024
+      # - class: virus
+      #   path:
+      #   label: 3
+      #   fragment_length: 1024
+      # - class: eukarya
+      #   path:
+      #   label: 4
+      #   fragment_length: 1024
 
     validation:
-      - class: bacteria
-        path: "path/to/bac"
-        label: 0
-        fragment_length: 1024
-      - class: phage
-        path: "path/to/phage"
-        label: 1
-        fragment_length: 1024
-      - class: archaea
+      - class: [bacteria, phage, archaea, virus, eukarya]
         path:
-        label: 2
-        fragment_length: 1024
-      - class: virus
-        path:
-        label: 3
-        fragment_length: 1024
-      - class: eukarya
-        path:
-        label: 4
-        fragment_length: 1024
+          - "path_to_combined_file"
+        label: [0, 1, 2, 3, 4]
+      # - class: bacteria
+      #   path: "path/to/bac"
+      #   label: 0
+      #   fragment_length: 1024
+      # - class: phage
+      #   path: "path/to/phage"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: archaea
+      #   path:
+      #   label: 2
+      #   fragment_length: 1024
+      # - class: virus
+      #   path:
+      #   label: 3
+      #   fragment_length: 1024
+      # - class: eukarya
+      #   path:
+      #   label: 4
+      #   fragment_length: 1024
 
   contig_classifier_data:
     train:
-      - class: bacteria
-        path: "path/to/bac"
-        label: 0
-        fragment_length: 1024
-      - class: phage
-        path: "path/to/phage"
-        label: 1
-        fragment_length: 1024
-      - class: archaea
+      - class: [bacteria, phage, archaea, virus, eukarya]
         path:
-        label: 2
-        fragment_length: 1024
-      - class: virus
-        path:
-        label: 3
-        fragment_length: 1024
-      - class: eukarya
-        path:
-        label: 4
-        fragment_length: 1024
+          - "path_to_combined_file"
+        label: [0, 1, 2, 3, 4]
+      # - class: bacteria
+      #   path: "path/to/bac"
+      #   label: 0
+      #   fragment_length: 1024
+      # - class: phage
+      #   path: "path/to/phage"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: archaea
+      #   path:
+      #   label: 2
+      #   fragment_length: 1024
+      # - class: virus
+      #   path:
+      #   label: 3
+      #   fragment_length: 1024
+      # - class: eukarya
+      #   path:
+      #   label: 4
+      #   fragment_length: 1024
 
     validation:
-      - class: bacteria
-        path: "path/to/bac"
-        label: 0
-        fragment_length: 1024
-      - class: phage
-        path: "path/to/phage"
-        label: 1
-        fragment_length: 1024
-      - class: archaea
+      - class: [bacteria, phage, archaea, virus, eukarya]
         path:
-        label: 2
-        fragment_length: 1024
-      - class: virus
-        path:
-        label: 3
-        fragment_length: 1024
-      - class: eukarya
-        path:
-        label: 4
-        fragment_length: 1024
+          - "path_to_combined_file"
+        label: [0, 1, 2, 3, 4]
+      # - class: bacteria
+      #   path: "path/to/bac"
+      #   label: 0
+      #   fragment_length: 1024
+      # - class: phage
+      #   path: "path/to/phage"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: archaea
+      #   path:
+      #   label: 2
+      #   fragment_length: 1024
+      # - class: virus
+      #   path:
+      #   label: 3
+      #   fragment_length: 1024
+      # - class: eukarya
+      #   path:
+      #   label: 4
+      #   fragment_length: 1024
 
   fragment_reliability_data:
     train:
-      - class: indist
-        path: "path/to/bac"
-        label: 1
-        fragment_length: 1024
-      - class: ood
-        path: "path/to/phage"
-        label: 0
-        fragment_length: 1024
+      - class: [indist, ood]
+        path:
+          - "path_to_combined_file"
+        label: [1, 0]
+      # - class: indist
+      #   path: "path/to/bac"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: ood
+      #   path: "path/to/phage"
+      #   label: 0
+      #   fragment_length: 1024
 
     validation:
-      - class: indist
-        path: "path/to/bac"
-        label: 1
-        fragment_length: 1024
-      - class: ood
-        path: "path/to/phage"
-        label: 0
-        fragment_length: 1024
+      - class: [indist, ood]
+        path:
+          - "path_to_combined_file"
+        label: [1, 0]
+      # - class: indist
+      #   path: "path/to/bac"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: ood
+      #   path: "path/to/phage"
+      #   label: 0
+      #   fragment_length: 1024
 
   contig_reliability_data:
     train:
-      - class: indist
-        path: "path/to/bac"
-        label: 1
-        fragment_length: 1024
-      - class: ood
-        path: "path/to/phage"
-        label: 0
-        fragment_length: 1024
+      - class: [indist, ood]
+        path:
+          - "path_to_combined_file"
+        label: [1, 0]
+      # - class: indist
+      #   path: "path/to/bac"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: ood
+      #   path: "path/to/phage"
+      #   label: 0
+      #   fragment_length: 1024
 
     validation:
-      - class: indist
-        path: "path/to/bac"
-        label: 1
-        fragment_length: 1024
-      - class: ood
-        path: "path/to/phage"
-        label: 0
-        fragment_length: 1024
+      - class: [indist, ood]
+        path:
+          - "path_to_combined_file"
+        label: [1, 0]
+      # - class: indist
+      #   path: "path/to/bac"
+      #   label: 1
+      #   fragment_length: 1024
+      # - class: ood
+      #   path: "path/to/phage"
+      #   label: 0
+      #   fragment_length: 1024

@@ -74,9 +74,7 @@ def tune(**kwargs):
 
 
 @click.command()
-@click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=None, help="Path to training configuration file (YAML)")
-@click.option('-o', '--output', type=str, required=True, help="Path to output directory")
-@click.option('-n', required=True, help="Model name")
+@click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=True, help="Path to training configuration file (YAML)")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def train(**kwargs):
     """Train new models on custom databases from scratch."""
