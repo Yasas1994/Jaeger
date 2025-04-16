@@ -1,6 +1,6 @@
 import logging
 import tensorflow as tf
-from preprocess.v1.maps import (TRIMERS, TRIMER_INT, AMINO_ACIDS, AMINO_ACIDS_INT)
+from jaeger.preprocess.v1.maps import (TRIMERS, TRIMER_INT, AMINO_ACIDS, AMINO_ACIDS_INT)
 logger = logging.getLogger("Jaeger")
 
 

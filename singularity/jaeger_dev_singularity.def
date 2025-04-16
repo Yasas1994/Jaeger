@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: tensorflow/tensorflow:2.17.0-gpu  # Build upon the latest TensorFlow GPU-enabled base image
+From: python:3.12.7-bookworm 
 
 %post
     # Update and install system dependencies
@@ -12,7 +12,7 @@ From: tensorflow/tensorflow:2.17.0-gpu  # Build upon the latest TensorFlow GPU-e
     python3 -m pip install --upgrade pip --root-user-action=ignore
 
     # Install Jaeger and other dependencies
-    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[cpu] @ git+https://github.com/MGXlab/Jaeger@dev" # install jaeger without tensorflow support
+    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/MGXlab/Jaeger@dev" # install jaeger without tensorflow support
 
 %environment
     # Set environment variables for TensorFlow GPU usage

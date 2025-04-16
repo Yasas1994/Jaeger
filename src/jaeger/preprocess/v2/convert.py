@@ -1,6 +1,6 @@
 from typing import Any
 import tensorflow as tf
-from preprocess.v2.maps import (CODONS, MURPHY10_INT)
+from jaeger.preprocess.v2.maps import (CODONS, MURPHY10_INT)
 
 
 def codon_mapper(mapto: list) -> Any:

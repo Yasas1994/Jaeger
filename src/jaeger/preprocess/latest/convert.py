@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from preprocess.latest.maps import *
+from jaeger.preprocess.latest.maps import *
 
 #map codons to amino acids
 def _map_codon(codons, codon_num):
@@ -153,6 +153,8 @@ def process_string_train(
         if class_label_onehot:
             label = tf.one_hot(label, depth=num_classes, dtype=tf.float32)
 
-        return outputs, {'classifier': label, 'reliability': reliability}
+        return outputs, {'classifier': label,
+                         'reliability': reliability
+                         }
 
     return p
