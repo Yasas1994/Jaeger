@@ -56,8 +56,8 @@ class DynamicModelBuilder:
         self.optimizer = None
         self.loss_classifier = None
         self.loss_reliability = None
-        self.training_epochs = config["training"].get("classifier_epochs")
-        self.reliability_epochs = config["training"].get("reliability_epochs")
+        self.training_epochs = self.train_cfg.get("classifier_epochs")
+        self.reliability_epochs = self.train_cfg.get("reliability_epochs")
         self._load_training_params()
 
         cb_list = config["training"].get("callbacks", dict())
@@ -470,7 +470,7 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"),
                                                         input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.config.get("classifier").get("classes"),
+                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
                     .shuffle(buffer_size=300)\
@@ -498,7 +498,7 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"), 
                                                         input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.config.get("classifier").get("classes"),
+                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
                                                         label_type='reliability',
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
