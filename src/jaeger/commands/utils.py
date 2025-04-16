@@ -1,4 +1,4 @@
-from preprocess.shuffle_dna import dinuc_shuffle
+from jaeger.preprocess.shuffle_dna import dinuc_shuffle
 import polars as pl
 import pyfastx 
 
