@@ -1,15 +1,15 @@
 import os
 # temporary fix
 os.environ['WRAPT_DISABLE_EXTENSIONS'] = "true" 
-from preprocess.latest.convert import process_string_train
-from preprocess.latest.maps import *
+from jaeger.preprocess.latest.convert import process_string_train
+from jaeger.preprocess.latest.maps import *
 import yaml
 import jinja2
 import shutil
 import tensorflow as tf
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from nnlib.v2.layers import GeLU, ReLU, MaskedAdd, MaskedBatchNorm, MaskedConv1D, ResidualBlock
+from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedAdd, MaskedBatchNorm, MaskedConv1D, ResidualBlock
 import logging
 
 # dev
@@ -39,8 +39,11 @@ class DynamicModelBuilder:
     to do: implement feature correlation based out-of-distribution detection
     """
     def __init__(self, config: Dict[str, Any]):
-        self.config = config["model"]
-        self.train_cfg = config["training"]
+        self.cfg = config
+        self.model_cfg = config.get("model")
+        self.train_cfg = config.get("training")
+        tf.random.set_seed(self.model_cfg.get("seed"))
+        np.random.seed(self.model_cfg.get("seed"))
         self.inputs = None
         self.outputs = []
         self._fragment_paths = self._get_fragment_paths()
@@ -48,7 +51,7 @@ class DynamicModelBuilder:
         self._reliability_fragment_paths = self._get_reliability_fragment_paths()
         self._reliability_contig_paths = self._get_reliability_contig_paths()
         ic(self._fragment_paths)
-        ic(self._reliability_fragment_paths)
+        # ic(self._reliability_fragment_paths)
         self._saving_config = self._get_model_saving_configuration()
         self.optimizer = None
         self.loss_classifier = None
@@ -72,25 +75,27 @@ class DynamicModelBuilder:
 
     def build_fragment_classifier(self):
         # === 1. EMBEDDING ===
-        if "embedding" in self.config:
-            inputs, x = self._build_embedding(self.config["embedding"])
+        if "embedding" in self.model_cfg:
+            inputs, x = self._build_embedding(self.model_cfg["embedding"])
             self.inputs = inputs
         else:
             raise ValueError("Missing 'embedding' section in config")
 
         # === 2. REPRESENTATION LEARNER ===
-        if "representation_learner" in self.config:
-            r, r_lbn = self._build_representation_learner(x, self.config["representation_learner"])
+        if "representation_learner" in self.model_cfg:
+            r, r_lbn = self._build_representation_learner(x, self.model_cfg["representation_learner"])
 
         # === 3. CLASSIFIER ===
-        if "classifier" in self.config:
-            x_classifier = self._build_classifier(r, self.config["classifier"])
+        if "classifier" in self.model_cfg:
+            x_classifier = self._build_classifier(r, self.model_cfg["classifier"])
 
         # === 4. RELIABILITY ===
-        if "reliability_model" in self.config:
-            x_reliability = self._build_reliability_model(r_lbn, self.config["reliability_model"])
+        if "reliability_model" in self.model_cfg:
+            x_reliability = self._build_reliability_model(r_lbn, self.model_cfg["reliability_model"])
 
-        self.outputs = {'classifier': x_classifier, 'reliability': x_reliability}
+        self.outputs = {'classifier': x_classifier, 
+                        'reliability': x_reliability
+                        }
 
         return tf.keras.Model(inputs=self.inputs, outputs=self.outputs, name="JaegerModel")
     
@@ -136,7 +141,7 @@ class DynamicModelBuilder:
                          use_bias=False,
                          name="masked_conv1d_1",
                          activation = None,
-                         kernel_regularizer=tf.keras.regularizers.L2(1e-4),
+                         kernel_regularizer=tf.keras.regularizers.L2(1e-6),
                          kernel_initializer=tf.keras.initializers.HeUniform())(x)
             # using batchnorm here gives a big advantage. You get a model that can work well with different input size.
             # infact the accuracy increase with the increasing input size.
@@ -157,7 +162,7 @@ class DynamicModelBuilder:
                             dilation_rate=kdilation,
                             use_bias=False,
                             name=f"ds_masked_conv1d_{block}",
-                            kernel_regularizer=tf.keras.regularizers.L2(1e-4),
+                            kernel_regularizer=tf.keras.regularizers.L2(1e-6),
                             activation = None,
                             kernel_initializer=tf.keras.initializers.HeUniform())(x)
             x = MaskedBatchNorm(name=f"ds_masked_batchnorm_{block}")(x)
@@ -176,7 +181,7 @@ class DynamicModelBuilder:
                             dilation_rate=cfg.get("masked_conv1d_final_dilation_rate"),
                             use_bias=False,
                             name="masked_conv1d_final",
-                            kernel_regularizer=tf.keras.regularizers.L2(1e-4),
+                            kernel_regularizer=tf.keras.regularizers.L2(1e-6),
                             activation = None,
                             kernel_initializer=tf.keras.initializers.HeUniform())(x)
         # this layers mean vector is used as u[train] to calculate nmd u[example] - u[train]
@@ -259,7 +264,7 @@ class DynamicModelBuilder:
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
-
+        ic(opt_params)
         loss_classifier_name = self.train_cfg.get("loss_classifier", "categorical_crossentropy").lower()
         loss_classifier_params = self.train_cfg.get("loss_params_classifier", {})
         self.loss_classifier = self._get_loss(loss_classifier_name, loss_classifier_params)
@@ -315,7 +320,7 @@ class DynamicModelBuilder:
         '''
         path = Path(self._saving_config.get("path"))
         path.mkdir(parents=True, exist_ok=True)
-        model_name = self.config.get("name")
+        model_name = self.model_cfg.get("name")
         if suffix:
             model_name += f"_{suffix}"
 
@@ -328,9 +333,19 @@ class DynamicModelBuilder:
             tf.saved_model.save(model, path / f"{model_name}_graph" )
             ic(f"model computational graph is written to {path / f"{model_name}_graph"}")
         # save output indices -> class mapping in the same directory
-        with open(path / f'{model_name}.yaml', 'w') as yaml_file:
+        with open(path / f'{model_name}_classes.yaml', 'w') as yaml_file:
             ic("writing class_labels_map")
-            yaml.dump(dict(classes=self.config.get("class_labels_map")), yaml_file, default_flow_style=False)
+            yaml.dump(dict(classes=self.model_cfg.get("class_labels_map")), yaml_file, default_flow_style=False)
+    
+    def save_config(self):
+        '''
+        saves project config to the model output directory
+        '''
+        path = Path(self._saving_config.get("path"))
+        model_name = self.model_cfg.get("name")
+        with open(path / f'{model_name}_project.yaml', 'w+') as yaml_file:
+            ic("saving project config")
+            yaml.dump(self.cfg, yaml_file, default_flow_style=False)
 
     def get_callbacks(self, branch="classifier") -> List:
         cb_list = self.train_cfg.get("callbacks", dict())
@@ -352,8 +367,8 @@ class DynamicModelBuilder:
             "AA_ID": AA_ID,
             "MURPHY10_ID": MURPHY10
         }
-        emb_config = self.config.get("embedding")
-        sp_config = self.config.get("string_processor")
+        emb_config = self.model_cfg.get("embedding")
+        sp_config = self.model_cfg.get("string_processor")
 
         _config = {"input_type": emb_config.get("type"),
                      "codon" : _map.get(sp_config.get("codon")),
@@ -426,9 +441,8 @@ def train_fragment_core(**kwargs):
     '''
     trains fragment classification model and reliability prediction model.
     '''
-    
-    config = yaml.safe_load(Path(kwargs.get("config")))
-
+    ic(kwargs.get("config"))
+    config = load_model_config(Path(kwargs.get("config")))
     # Initialize the model
     builder = DynamicModelBuilder(config)
     model = builder.build_fragment_classifier()
@@ -441,10 +455,11 @@ def train_fragment_core(**kwargs):
 
     # =================load train data ======================
     string_processor_config = builder._get_string_processor_config()
-    _train_data = builder._get_contig_paths()
+    _train_data = builder._get_fragment_paths()
     train_data = {"train":None, "validation": None}
 
     for k,v in _train_data.items():
+        ic(k, v)
         _data = tf.data.TextLineDataset(v.get("paths"),
                                         num_parallel_reads=len(v.get("paths")),
                                         buffer_size=200)
@@ -455,13 +470,15 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"),
                                                         input_type=string_processor_config.get("input_type"),
+                                                        num_classes=builder.config.get("classifier").get("classes"),
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
-                    .batch(16,drop_remainder=True)\
+                    .shuffle(buffer_size=300)\
+                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
                     .prefetch(tf.data.AUTOTUNE)
 
-    model.fit(train_data.get("train"),
-              validation_data=train_data.get("validation"),
+    model.fit(train_data.get("train").take(10_000),
+              validation_data=train_data.get("validation").take(1_000),
               epochs=builder.training_epochs,
               callbacks=builder.get_callbacks(branch="classifier"))
 
@@ -469,7 +486,7 @@ def train_fragment_core(**kwargs):
     # ============== reliability model ========================
     builder.switch_branch(model, train_branch="reliability")
 
-    _rel_train_data = builder._get_reliability_contig_paths()
+    _rel_train_data = builder._get_reliability_fragment_paths()
     rel_train_data = {"train":None, "validation": None}
     for k,v in _rel_train_data.items():
         _data = tf.data.TextLineDataset(v.get("paths"), 
@@ -481,19 +498,21 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"), 
                                                         input_type=string_processor_config.get("input_type"),
+                                                        num_classes=builder.config.get("classifier").get("classes"),
                                                         label_type='reliability',
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
-                    .batch(16,drop_remainder=True)\
+                    .batch(builder.train_cfg.get("batch_size"),drop_remainder=True)\
                     .prefetch(tf.data.AUTOTUNE)
 
 
-    model.fit(rel_train_data.get("train"),
-              validation_data=rel_train_data.get("validation"),
+    model.fit(rel_train_data.get("train").take(10_000),
+              validation_data=rel_train_data.get("validation").take(1_0000),
               epochs=builder.reliability_epochs,
               callbacks=builder.get_callbacks(branch="reliability"))
     # ============= saving ===================================
     builder.save_model(model=model, suffix="fragment")
+    builder.save_config()
 
 
 def train_contig_core(**kwargs):
@@ -506,101 +525,101 @@ def train_contig_core(**kwargs):
     with open(kwargs.get("config"), "r") as f:
         config = yaml.safe_load(f)
 
-if '__main__' == __name__:
+#if '__main__' == __name__:
     """
     for testing only
     """
 
-    config = load_model_config(Path('/Users/javis/Documents/Programming/Jaeger/src/commands/configs/nn_config.yaml'))
-    ic(config.get("training"))
-    def get_random_example(batch=10, size=100, channels=64):
-        x = np.eye(channels)
-        seqs = []
-        for i in range(batch):
-            seq = np.stack([x[np.random.choice(x.shape[0], size=size)] for _ in range(6)])
-            seqs.append(seq)
-        return np.stack(seqs)
+    # config = load_model_config(Path('/Users/javis/Documents/Programming/Jaeger/src/commands/configs/nn_config.yaml'))
+    # #ic(config.get("training"))
+    # def get_random_example(batch=10, size=100, channels=64):
+    #     x = np.eye(channels)
+    #     seqs = []
+    #     for i in range(batch):
+    #         seq = np.stack([x[np.random.choice(x.shape[0], size=size)] for _ in range(6)])
+    #         seqs.append(seq)
+    #     return np.stack(seqs)
     
-    # Initialize the model
-    builder = DynamicModelBuilder(config)
-    model = builder.build_fragment_classifier()
+    # # Initialize the model
+    # builder = DynamicModelBuilder(config)
+    # model = builder.build_fragment_classifier()
     
-    model.summary()
-    # =================train classifier ======================
-    builder.switch_branch(model, train_branch="classifier")
+    # model.summary()
+    # # =================train classifier ======================
+    # builder.switch_branch(model, train_branch="classifier")
 
-    for i in model.layers:
-        ic(i.name, i.trainable)
-    debug_data = '/Users/javis/Documents/Programming/Jaeger/data/val_data_1000.txt'
-    traning_data = tf.data.TextLineDataset([debug_data], num_parallel_reads=1, buffer_size=200)
-    string_processor_config = builder._get_string_processor_config()
-    from preprocess.latest.convert import process_string_train
-    from preprocess.latest.maps import CODONS, CODON_ID, AA_ID
-    traning_data=traning_data.map(process_string_train(
-                                                       codons=string_processor_config.get("codon"),
-                                                       codon_num=string_processor_config.get("codon_id"),
-                                                       codon_depth=string_processor_config.get("codon_depth"),
-                                                       crop_size=string_processor_config.get("crop_size"),
-                                                       input_type=string_processor_config.get("input_type"),
-                                                       class_label_onehot=True),
-                       num_parallel_calls=tf.data.AUTOTUNE)\
-                  .batch(16,drop_remainder=True)\
-                  .prefetch(tf.data.AUTOTUNE).repeat()
-    # for i in traning_data.take(1):
-    #     ic(i)
-    ic(model.evaluate(traning_data.take(1)))
-    model.fit(traning_data.take(64),
-              epochs=builder.training_epochs,
-              callbacks=builder.get_callbacks(branch="classifier"))
-    #ic(model(get_random_example(batch=10, size=213)))
-    ic("testing post training (classification model): classifier")
-    ic(model.evaluate(traning_data.take(64)))
+    # for i in model.layers:
+    #     ic(i.name, i.trainable)
+    # debug_data = '/Users/javis/Documents/Programming/Jaeger/data/val_data_1000.txt'
+    # traning_data = tf.data.TextLineDataset([debug_data], num_parallel_reads=1, buffer_size=200)
+    # string_processor_config = builder._get_string_processor_config()
+    # from jaeger.preprocess.latest.convert import process_string_train
+    # from jaeger.preprocess.latest.maps import CODONS, CODON_ID, AA_ID
+    # traning_data=traning_data.map(process_string_train(
+    #                                                    codons=string_processor_config.get("codon"),
+    #                                                    codon_num=string_processor_config.get("codon_id"),
+    #                                                    codon_depth=string_processor_config.get("codon_depth"),
+    #                                                    crop_size=string_processor_config.get("crop_size"),
+    #                                                    input_type=string_processor_config.get("input_type"),
+    #                                                    class_label_onehot=True),
+    #                    num_parallel_calls=tf.data.AUTOTUNE)\
+    #               .batch(16,drop_remainder=True)\
+    #               .prefetch(tf.data.AUTOTUNE).repeat()
+    # # for i in traning_data.take(1):
+    # #     ic(i)
+    # ic(model.evaluate(traning_data.take(1)))
+    # model.fit(traning_data.take(64),
+    #           epochs=builder.training_epochs,
+    #           callbacks=builder.get_callbacks(branch="classifier"))
+    # #ic(model(get_random_example(batch=10, size=213)))
+    # ic("testing post training (classification model): classifier")
+    # ic(model.evaluate(traning_data.take(64)))
 
-    for xitr,yitr in traning_data.take(1):
-        ic("debug classifier train data")
-        #ic(xitr['translated'].shape)
-        ic(yitr['reliability'].shape)
-        ic(yitr['classifier'].shape)
+    # for xitr,yitr in traning_data.take(1):
+    #     ic("debug classifier train data")
+    #     #ic(xitr['translated'].shape)
+    #     ic(yitr['reliability'].shape)
+    #     ic(yitr['classifier'].shape)
 
-    # ============== reliability model ========================
-    builder.switch_branch(model, train_branch="reliability")
+    # # ============== reliability model ========================
+    # builder.switch_branch(model, train_branch="reliability")
 
-    for i in model.layers:
-        ic(i.name, i.trainable)
+    # for i in model.layers:
+    #     ic(i.name, i.trainable)
 
-    debug_rel_data = '/Users/javis/Documents/Programming/Jaeger/data/val_data_shuf_1000.txt'
-    rel_traning_data = tf.data.TextLineDataset([debug_rel_data], num_parallel_reads=1, buffer_size=200)
-    from preprocess.latest.convert import process_string_train
+    # debug_rel_data = '/Users/javis/Documents/Programming/Jaeger/data/val_data_shuf_1000.txt'
+    # rel_traning_data = tf.data.TextLineDataset([debug_rel_data], num_parallel_reads=1, buffer_size=200)
+    # from jaeger.preprocess.latest.convert import process_string_train
    
-    rel_traning_data=rel_traning_data.map(process_string_train(
-                                                       codons=string_processor_config.get("codon"),
-                                                       codon_num=string_processor_config.get("codon_id"),
-                                                       codon_depth=string_processor_config.get("codon_depth"),
-                                                       crop_size=string_processor_config.get("crop_size"), 
-                                                       input_type=string_processor_config.get("input_type"),
-                                                       label_type='reliability',
-                                                       class_label_onehot=True),
-                       num_parallel_calls=tf.data.AUTOTUNE)\
-                  .batch(16,drop_remainder=True)\
-                  .prefetch(tf.data.AUTOTUNE).repeat()
+    # rel_traning_data=rel_traning_data.map(process_string_train(
+    #                                                    codons=string_processor_config.get("codon"),
+    #                                                    codon_num=string_processor_config.get("codon_id"),
+    #                                                    codon_depth=string_processor_config.get("codon_depth"),
+    #                                                    crop_size=string_processor_config.get("crop_size"), 
+    #                                                    input_type=string_processor_config.get("input_type"),
+    #                                                    label_type='reliability',
+    #                                                    class_label_onehot=True),
+    #                    num_parallel_calls=tf.data.AUTOTUNE)\
+    #               .batch(16,drop_remainder=True)\
+    #               .prefetch(tf.data.AUTOTUNE).repeat()
 
-    for xitr, yitr in rel_traning_data.take(1):
-        ic("debug reliability model train data")
-        #ic(xitr['translated'].shape)
-        ic(yitr['reliability'].shape)
-        ic(yitr['classifier'].shape)
+    # for xitr, yitr in rel_traning_data.take(1):
+    #     ic("debug reliability model train data")
+    #     #ic(xitr['translated'].shape)
+    #     ic(yitr['reliability'].shape)
+    #     ic(yitr['classifier'].shape)
 
-    model.fit(rel_traning_data.take(64),
-              epochs=builder.reliability_epochs,
-              callbacks=builder.get_callbacks(branch="reliability"))
+    # model.fit(rel_traning_data.take(64),
+    #           epochs=builder.reliability_epochs,
+    #           callbacks=builder.get_callbacks(branch="reliability"))
     
-    ic("testing post training (reliability model): classifier")
-    ic(model.evaluate(traning_data.take(64)))
-    ic("testing post training: reliability model")
-    ic(model.evaluate(rel_traning_data.take(64)))
-    #ic(model(get_random_example(batch=10, size=213, channels=21)))
+    # ic("testing post training (reliability model): classifier")
+    # ic(model.evaluate(traning_data.take(64)))
+    # ic("testing post training: reliability model")
+    # ic(model.evaluate(rel_traning_data.take(64)))
+    # #ic(model(get_random_example(batch=10, size=213, channels=21)))
 
-    builder.save_model(model=model)
+    # builder.save_model(model=model)
 
     # load and text the saved model (2x faster than the one below)
     # ic("benchmarking the saved_model")

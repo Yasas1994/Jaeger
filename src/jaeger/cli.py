@@ -32,7 +32,7 @@ def main():
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info", default=1)
 def test(**kwargs):
    """Runs tests to check health of the installation. """
-   from commands.test import test_core
+   from jaeger.commands.test import test_core
    test_core(**kwargs)
 
 
@@ -59,7 +59,7 @@ def test(**kwargs):
 @click.option('-f', '--overwrite', is_flag=True, help="Overwrite existing files")
 def predict(**kwargs):
     """Run jaeger inference pipeline."""
-    from commands.predict import run_core
+    from jaeger.commands.predict import run_core
     run_core(**kwargs)
    
 @click.command()
@@ -69,7 +69,7 @@ def predict(**kwargs):
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def tune(**kwargs):
     """Fine-tune existing models on custom databases."""
-    from commands.tune import tune_core
+    from jaeger.commands.tune import tune_core
     tune_core(**kwargs)
 
 
@@ -78,8 +78,8 @@ def tune(**kwargs):
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def train(**kwargs):
     """Train new models on custom databases from scratch."""
-    from commands.train import train_core
-    train_core(**kwargs)
+    from jaeger.commands.train import train_contig_core, train_fragment_core
+    train_fragment_core(**kwargs)
 
 @click.command()
 @click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=None, help="Path to training configuration file (YAML)")
@@ -88,8 +88,7 @@ def train(**kwargs):
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def register_model(**kwargs):
     """Adds newly trained and fine-tuned models to the model database."""
-    from commands.train import train_core
-    train_core(**kwargs)
+    pass
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
@@ -118,7 +117,7 @@ def utils(obj):
 @click.option('--otype', type=click.Choice(['FASTA', 'CSV'], case_sensitive=False), required=True, help="out file type")
 def dinuc_shuffle(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
-    from commands.utils import shuffle_core
+    from jaeger.commands.utils import shuffle_core
     shuffle_core(**kwargs)
     pass
 
