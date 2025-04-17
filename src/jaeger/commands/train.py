@@ -16,6 +16,11 @@ import logging
 import numpy as np
 from icecream import ic
 
+# todo
+# prevent over writing existing experiments
+# train from last checkpoint 
+# 
+
 logger = logging.getLogger("Jaeger")
 ic.configureOutput(prefix="Jaeger |")
 
@@ -56,8 +61,6 @@ class DynamicModelBuilder:
         self.optimizer = None
         self.loss_classifier = None
         self.loss_reliability = None
-        self.training_epochs = self.train_cfg.get("classifier_epochs")
-        self.reliability_epochs = self.train_cfg.get("reliability_epochs")
         self._load_training_params()
 
         cb_list = config["training"].get("callbacks", dict())
@@ -374,7 +377,9 @@ class DynamicModelBuilder:
                      "codon" : _map.get(sp_config.get("codon")),
                      "codon_id": _map.get(sp_config.get("codon_id")),
                      "codon_depth": max(_map.get(sp_config.get("codon_id")))+1,
-                     "crop_size": sp_config.get("crop_size")
+                     "crop_size": sp_config.get("crop_size"),
+                     "buffer_size": sp_config.get("buffer_size"),
+                     "reshuffle_each_iteration": sp_config.get("reshuffle_each_iteration"),
                      }
         
         return _config
@@ -417,6 +422,12 @@ class DynamicModelBuilder:
                 tmp_paths.extend(i.get("path"))
             paths[fcd_k] = {"paths": tmp_paths, "class": tmp_class, "label": tmp_label}
         return paths  
+    
+    def _get_last_checkpoint(self):
+        """
+        initilize the model with last checkpoint's model weights
+        """
+        pass
          
     def _get_model_saving_configuration(self):
         return self.train_cfg.get("model_saving", {})
@@ -457,13 +468,16 @@ def train_fragment_core(**kwargs):
     string_processor_config = builder._get_string_processor_config()
     _train_data = builder._get_fragment_paths()
     train_data = {"train":None, "validation": None}
+    # classifier_epochs: 50
+    # reliability_epochs: 50
+    # reliability_train_steps: -1 # -1 to run till the generator exhausts
 
     for k,v in _train_data.items():
         ic(k, v)
         _data = tf.data.TextLineDataset(v.get("paths"),
                                         num_parallel_reads=len(v.get("paths")),
                                         buffer_size=200)
-        
+        _buffer_size = string_processor_config.get("buffer_size")
         train_data[k]=_data.map(process_string_train(
                                                         codons=string_processor_config.get("codon"),
                                                         codon_num=string_processor_config.get("codon_id"),
@@ -473,13 +487,17 @@ def train_fragment_core(**kwargs):
                                                         num_classes=builder.model_cfg.get("classifier").get("classes"),
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
-                    .shuffle(buffer_size=300)\
+                    .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
+                             reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                             )\
                     .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
                     .prefetch(tf.data.AUTOTUNE)
+    ic(builder.train_cfg.get("classifier_train_steps"))
+    ic(builder.train_cfg.get("classifier_epochs"))
 
-    model.fit(train_data.get("train").take(10_000),
-              validation_data=train_data.get("validation").take(1_000),
-              epochs=builder.training_epochs,
+    model.fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
+              validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
+              epochs=builder.train_cfg.get("classifier_epochs"),
               callbacks=builder.get_callbacks(branch="classifier"))
 
 
@@ -502,13 +520,16 @@ def train_fragment_core(**kwargs):
                                                         label_type='reliability',
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
-                    .batch(builder.train_cfg.get("batch_size"),drop_remainder=True)\
+                    .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
+                             reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                             )\
+                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
                     .prefetch(tf.data.AUTOTUNE)
 
 
-    model.fit(rel_train_data.get("train").take(10_000),
-              validation_data=rel_train_data.get("validation").take(1_0000),
-              epochs=builder.reliability_epochs,
+    model.fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
+              validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
+              epochs=builder.train_cfg.get("reliability_epochs"),
               callbacks=builder.get_callbacks(branch="reliability"))
     # ============= saving ===================================
     builder.save_model(model=model, suffix="fragment")
