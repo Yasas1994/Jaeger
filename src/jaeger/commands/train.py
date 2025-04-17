@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedAdd, MaskedBatchNorm, MaskedConv1D, ResidualBlock
 import logging
-
+from jaeger.utils.misc import numerize
 # dev
 import numpy as np
 from icecream import ic
@@ -452,88 +452,95 @@ def train_fragment_core(**kwargs):
     '''
     trains fragment classification model and reliability prediction model.
     '''
-    ic(kwargs.get("config"))
-    config = load_model_config(Path(kwargs.get("config")))
-    # Initialize the model
-    builder = DynamicModelBuilder(config)
-    model = builder.build_fragment_classifier()
-    model.summary()
-    # =================train classifier ======================
-    builder.switch_branch(model, train_branch="classifier")
+    strategy = tf.distribute.MirroredStrategy()
+    ic(f"Number of devices: {strategy.num_replicas_in_sync}")
 
-    for i in model.layers:
-        ic(i.name, i.trainable)
+    with strategy.scope():
 
-    # =================load train data ======================
-    string_processor_config = builder._get_string_processor_config()
-    _train_data = builder._get_fragment_paths()
-    train_data = {"train":None, "validation": None}
-    # classifier_epochs: 50
-    # reliability_epochs: 50
-    # reliability_train_steps: -1 # -1 to run till the generator exhausts
+        ic(kwargs.get("config"))
+        config = load_model_config(Path(kwargs.get("config")))
+        # Initialize the model
+        builder = DynamicModelBuilder(config)
+        model = builder.build_fragment_classifier()
+        model.summary()
+        model_num_params = numerize(model.count_params(), decimal=1)
+        ic(model_num_params)
+        # =================train classifier ======================
+        builder.switch_branch(model, train_branch="classifier")
 
-    for k,v in _train_data.items():
-        ic(k, v)
-        _data = tf.data.TextLineDataset(v.get("paths"),
-                                        num_parallel_reads=len(v.get("paths")),
-                                        buffer_size=200)
-        _buffer_size = string_processor_config.get("buffer_size")
-        train_data[k]=_data.map(process_string_train(
-                                                        codons=string_processor_config.get("codon"),
-                                                        codon_num=string_processor_config.get("codon_id"),
-                                                        codon_depth=string_processor_config.get("codon_depth"),
-                                                        crop_size=string_processor_config.get("crop_size"),
-                                                        input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
-                                                        class_label_onehot=True),
-                        num_parallel_calls=tf.data.AUTOTUNE)\
-                    .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
-                             reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
-                             )\
-                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
-                    .prefetch(tf.data.AUTOTUNE)
-    ic(builder.train_cfg.get("classifier_train_steps"))
-    ic(builder.train_cfg.get("classifier_epochs"))
+        for i in model.layers:
+            ic(i.name, i.trainable)
 
-    model.fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
-              validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
-              epochs=builder.train_cfg.get("classifier_epochs"),
-              callbacks=builder.get_callbacks(branch="classifier"))
+        # =================load train data ======================
+        string_processor_config = builder._get_string_processor_config()
+        _train_data = builder._get_fragment_paths()
+        train_data = {"train":None, "validation": None}
+        # classifier_epochs: 50
+        # reliability_epochs: 50
+        # reliability_train_steps: -1 # -1 to run till the generator exhausts
 
+        for k,v in _train_data.items():
+            ic(k, v)
+            _data = tf.data.TextLineDataset(v.get("paths"),
+                                            num_parallel_reads=len(v.get("paths")),
+                                            buffer_size=200)
+            _buffer_size = string_processor_config.get("buffer_size")
+            train_data[k]=_data.map(process_string_train(
+                                                            codons=string_processor_config.get("codon"),
+                                                            codon_num=string_processor_config.get("codon_id"),
+                                                            codon_depth=string_processor_config.get("codon_depth"),
+                                                            crop_size=string_processor_config.get("crop_size"),
+                                                            input_type=string_processor_config.get("input_type"),
+                                                            num_classes=builder.model_cfg.get("classifier").get("classes"),
+                                                            class_label_onehot=True),
+                            num_parallel_calls=tf.data.AUTOTUNE)\
+                        .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
+                                reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                                )\
+                        .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
+                        .prefetch(tf.data.AUTOTUNE)
+        ic(builder.train_cfg.get("classifier_train_steps"))
+        ic(builder.train_cfg.get("classifier_epochs"))
 
-    # ============== reliability model ========================
-    builder.switch_branch(model, train_branch="reliability")
-
-    _rel_train_data = builder._get_reliability_fragment_paths()
-    rel_train_data = {"train":None, "validation": None}
-    for k,v in _rel_train_data.items():
-        _data = tf.data.TextLineDataset(v.get("paths"), 
-                                        num_parallel_reads=len(v.get("paths")),
-                                        buffer_size=200)   
-        rel_train_data[k] = _data.map(process_string_train(
-                                                        codons=string_processor_config.get("codon"),
-                                                        codon_num=string_processor_config.get("codon_id"),
-                                                        codon_depth=string_processor_config.get("codon_depth"),
-                                                        crop_size=string_processor_config.get("crop_size"), 
-                                                        input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
-                                                        label_type='reliability',
-                                                        class_label_onehot=True),
-                        num_parallel_calls=tf.data.AUTOTUNE)\
-                    .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
-                             reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
-                             )\
-                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
-                    .prefetch(tf.data.AUTOTUNE)
+        model.fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
+                validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
+                epochs=builder.train_cfg.get("classifier_epochs"),
+                callbacks=builder.get_callbacks(branch="classifier"))
 
 
-    model.fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
-              validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
-              epochs=builder.train_cfg.get("reliability_epochs"),
-              callbacks=builder.get_callbacks(branch="reliability"))
-    # ============= saving ===================================
-    builder.save_model(model=model, suffix="fragment")
-    builder.save_config()
+        # ============== reliability model ========================
+        builder.switch_branch(model, train_branch="reliability")
+
+        _rel_train_data = builder._get_reliability_fragment_paths()
+        rel_train_data = {"train":None, "validation": None}
+        for k,v in _rel_train_data.items():
+            _data = tf.data.TextLineDataset(v.get("paths"), 
+                                            num_parallel_reads=len(v.get("paths")),
+                                            buffer_size=200)   
+            rel_train_data[k] = _data.map(process_string_train(
+                                                            codons=string_processor_config.get("codon"),
+                                                            codon_num=string_processor_config.get("codon_id"),
+                                                            codon_depth=string_processor_config.get("codon_depth"),
+                                                            crop_size=string_processor_config.get("crop_size"), 
+                                                            input_type=string_processor_config.get("input_type"),
+                                                            num_classes=builder.model_cfg.get("classifier").get("classes"),
+                                                            label_type='reliability',
+                                                            class_label_onehot=True),
+                            num_parallel_calls=tf.data.AUTOTUNE)\
+                        .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
+                                reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                                )\
+                        .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
+                        .prefetch(tf.data.AUTOTUNE)
+
+
+        model.fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
+                validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
+                epochs=builder.train_cfg.get("reliability_epochs"),
+                callbacks=builder.get_callbacks(branch="reliability"))
+        # ============= saving ===================================
+        builder.save_model(model=model, suffix=f"{model_num_params}_fragment")
+        builder.save_config()
 
 
 def train_contig_core(**kwargs):
@@ -545,112 +552,3 @@ def train_contig_core(**kwargs):
     '''
     with open(kwargs.get("config"), "r") as f:
         config = yaml.safe_load(f)
-
-#if '__main__' == __name__:
-    """
-    for testing only
-    """
-
-    # config = load_model_config(Path('/Users/javis/Documents/Programming/Jaeger/src/commands/configs/nn_config.yaml'))
-    # #ic(config.get("training"))
-    # def get_random_example(batch=10, size=100, channels=64):
-    #     x = np.eye(channels)
-    #     seqs = []
-    #     for i in range(batch):
-    #         seq = np.stack([x[np.random.choice(x.shape[0], size=size)] for _ in range(6)])
-    #         seqs.append(seq)
-    #     return np.stack(seqs)
-    
-    # # Initialize the model
-    # builder = DynamicModelBuilder(config)
-    # model = builder.build_fragment_classifier()
-    
-    # model.summary()
-    # # =================train classifier ======================
-    # builder.switch_branch(model, train_branch="classifier")
-
-    # for i in model.layers:
-    #     ic(i.name, i.trainable)
-    # debug_data = '/Users/javis/Documents/Programming/Jaeger/data/val_data_1000.txt'
-    # traning_data = tf.data.TextLineDataset([debug_data], num_parallel_reads=1, buffer_size=200)
-    # string_processor_config = builder._get_string_processor_config()
-    # from jaeger.preprocess.latest.convert import process_string_train
-    # from jaeger.preprocess.latest.maps import CODONS, CODON_ID, AA_ID
-    # traning_data=traning_data.map(process_string_train(
-    #                                                    codons=string_processor_config.get("codon"),
-    #                                                    codon_num=string_processor_config.get("codon_id"),
-    #                                                    codon_depth=string_processor_config.get("codon_depth"),
-    #                                                    crop_size=string_processor_config.get("crop_size"),
-    #                                                    input_type=string_processor_config.get("input_type"),
-    #                                                    class_label_onehot=True),
-    #                    num_parallel_calls=tf.data.AUTOTUNE)\
-    #               .batch(16,drop_remainder=True)\
-    #               .prefetch(tf.data.AUTOTUNE).repeat()
-    # # for i in traning_data.take(1):
-    # #     ic(i)
-    # ic(model.evaluate(traning_data.take(1)))
-    # model.fit(traning_data.take(64),
-    #           epochs=builder.training_epochs,
-    #           callbacks=builder.get_callbacks(branch="classifier"))
-    # #ic(model(get_random_example(batch=10, size=213)))
-    # ic("testing post training (classification model): classifier")
-    # ic(model.evaluate(traning_data.take(64)))
-
-    # for xitr,yitr in traning_data.take(1):
-    #     ic("debug classifier train data")
-    #     #ic(xitr['translated'].shape)
-    #     ic(yitr['reliability'].shape)
-    #     ic(yitr['classifier'].shape)
-
-    # # ============== reliability model ========================
-    # builder.switch_branch(model, train_branch="reliability")
-
-    # for i in model.layers:
-    #     ic(i.name, i.trainable)
-
-    # debug_rel_data = '/Users/javis/Documents/Programming/Jaeger/data/val_data_shuf_1000.txt'
-    # rel_traning_data = tf.data.TextLineDataset([debug_rel_data], num_parallel_reads=1, buffer_size=200)
-    # from jaeger.preprocess.latest.convert import process_string_train
-   
-    # rel_traning_data=rel_traning_data.map(process_string_train(
-    #                                                    codons=string_processor_config.get("codon"),
-    #                                                    codon_num=string_processor_config.get("codon_id"),
-    #                                                    codon_depth=string_processor_config.get("codon_depth"),
-    #                                                    crop_size=string_processor_config.get("crop_size"), 
-    #                                                    input_type=string_processor_config.get("input_type"),
-    #                                                    label_type='reliability',
-    #                                                    class_label_onehot=True),
-    #                    num_parallel_calls=tf.data.AUTOTUNE)\
-    #               .batch(16,drop_remainder=True)\
-    #               .prefetch(tf.data.AUTOTUNE).repeat()
-
-    # for xitr, yitr in rel_traning_data.take(1):
-    #     ic("debug reliability model train data")
-    #     #ic(xitr['translated'].shape)
-    #     ic(yitr['reliability'].shape)
-    #     ic(yitr['classifier'].shape)
-
-    # model.fit(rel_traning_data.take(64),
-    #           epochs=builder.reliability_epochs,
-    #           callbacks=builder.get_callbacks(branch="reliability"))
-    
-    # ic("testing post training (reliability model): classifier")
-    # ic(model.evaluate(traning_data.take(64)))
-    # ic("testing post training: reliability model")
-    # ic(model.evaluate(rel_traning_data.take(64)))
-    # #ic(model(get_random_example(batch=10, size=213, channels=21)))
-
-    # builder.save_model(model=model)
-
-    # load and text the saved model (2x faster than the one below)
-    # ic("benchmarking the saved_model")
-    # x = get_random_example(batch=16)
-    # loaded_model = tf.saved_model.load('/Users/javis/Documents/Programming/Jaeger/data/test_model/jaeger_1.5M_graph')
-    # inference_fn = loaded_model.signatures["serving_default"]
-    # ic(timeit.timeit(lambda : inference_fn(tf.constant(x, dtype=tf.float32)), number=100)/100)
-
-    # # test the default model
-    # ic("benchmarking the default model")
-    # ic(timeit.timeit(lambda : model(x), number=100)/100)
-
-    
