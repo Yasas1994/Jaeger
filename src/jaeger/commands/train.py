@@ -452,95 +452,95 @@ def train_fragment_core(**kwargs):
     '''
     trains fragment classification model and reliability prediction model.
     '''
-    strategy = tf.distribute.MirroredStrategy()
-    ic(f"Number of devices: {strategy.num_replicas_in_sync}")
+    # strategy = tf.distribute.MirroredStrategy()
+    # ic(f"Number of devices: {strategy.num_replicas_in_sync}")
 
-    with strategy.scope():
+    # with strategy.scope():
 
-        ic(kwargs.get("config"))
-        config = load_model_config(Path(kwargs.get("config")))
-        # Initialize the model
-        builder = DynamicModelBuilder(config)
-        model = builder.build_fragment_classifier()
-        model.summary()
-        model_num_params = numerize(model.count_params(), decimal=1)
-        ic(model_num_params)
-        # =================train classifier ======================
-        builder.switch_branch(model, train_branch="classifier")
+    ic(kwargs.get("config"))
+    config = load_model_config(Path(kwargs.get("config")))
+    # Initialize the model
+    builder = DynamicModelBuilder(config)
+    model = builder.build_fragment_classifier()
+    model.summary()
+    model_num_params = numerize(model.count_params(), decimal=1)
+    ic(model_num_params)
+    # =================train classifier ======================
+    builder.switch_branch(model, train_branch="classifier")
 
-        for i in model.layers:
-            ic(i.name, i.trainable)
+    for i in model.layers:
+        ic(i.name, i.trainable)
 
-        # =================load train data ======================
-        string_processor_config = builder._get_string_processor_config()
-        _train_data = builder._get_fragment_paths()
-        train_data = {"train":None, "validation": None}
-        # classifier_epochs: 50
-        # reliability_epochs: 50
-        # reliability_train_steps: -1 # -1 to run till the generator exhausts
+    # =================load train data ======================
+    string_processor_config = builder._get_string_processor_config()
+    _train_data = builder._get_fragment_paths()
+    train_data = {"train":None, "validation": None}
+    # classifier_epochs: 50
+    # reliability_epochs: 50
+    # reliability_train_steps: -1 # -1 to run till the generator exhausts
 
-        for k,v in _train_data.items():
-            ic(k, v)
-            _data = tf.data.TextLineDataset(v.get("paths"),
-                                            num_parallel_reads=len(v.get("paths")),
-                                            buffer_size=200)
-            _buffer_size = string_processor_config.get("buffer_size")
-            train_data[k]=_data.map(process_string_train(
-                                                            codons=string_processor_config.get("codon"),
-                                                            codon_num=string_processor_config.get("codon_id"),
-                                                            codon_depth=string_processor_config.get("codon_depth"),
-                                                            crop_size=string_processor_config.get("crop_size"),
-                                                            input_type=string_processor_config.get("input_type"),
-                                                            num_classes=builder.model_cfg.get("classifier").get("classes"),
-                                                            class_label_onehot=True),
-                            num_parallel_calls=tf.data.AUTOTUNE)\
-                        .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
-                                reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
-                                )\
-                        .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
-                        .prefetch(tf.data.AUTOTUNE)
-        ic(builder.train_cfg.get("classifier_train_steps"))
-        ic(builder.train_cfg.get("classifier_epochs"))
+    for k,v in _train_data.items():
+        ic(k, v)
+        _data = tf.data.TextLineDataset(v.get("paths"),
+                                        num_parallel_reads=len(v.get("paths")),
+                                        buffer_size=200)
+        _buffer_size = string_processor_config.get("buffer_size")
+        train_data[k]=_data.map(process_string_train(
+                                                        codons=string_processor_config.get("codon"),
+                                                        codon_num=string_processor_config.get("codon_id"),
+                                                        codon_depth=string_processor_config.get("codon_depth"),
+                                                        crop_size=string_processor_config.get("crop_size"),
+                                                        input_type=string_processor_config.get("input_type"),
+                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
+                                                        class_label_onehot=True),
+                        num_parallel_calls=tf.data.AUTOTUNE)\
+                    .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
+                            reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                            )\
+                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
+                    .prefetch(tf.data.AUTOTUNE)
+    ic(builder.train_cfg.get("classifier_train_steps"))
+    ic(builder.train_cfg.get("classifier_epochs"))
 
-        model.fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
-                validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
-                epochs=builder.train_cfg.get("classifier_epochs"),
-                callbacks=builder.get_callbacks(branch="classifier"))
-
-
-        # ============== reliability model ========================
-        builder.switch_branch(model, train_branch="reliability")
-
-        _rel_train_data = builder._get_reliability_fragment_paths()
-        rel_train_data = {"train":None, "validation": None}
-        for k,v in _rel_train_data.items():
-            _data = tf.data.TextLineDataset(v.get("paths"), 
-                                            num_parallel_reads=len(v.get("paths")),
-                                            buffer_size=200)   
-            rel_train_data[k] = _data.map(process_string_train(
-                                                            codons=string_processor_config.get("codon"),
-                                                            codon_num=string_processor_config.get("codon_id"),
-                                                            codon_depth=string_processor_config.get("codon_depth"),
-                                                            crop_size=string_processor_config.get("crop_size"), 
-                                                            input_type=string_processor_config.get("input_type"),
-                                                            num_classes=builder.model_cfg.get("classifier").get("classes"),
-                                                            label_type='reliability',
-                                                            class_label_onehot=True),
-                            num_parallel_calls=tf.data.AUTOTUNE)\
-                        .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
-                                reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
-                                )\
-                        .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
-                        .prefetch(tf.data.AUTOTUNE)
+    model.fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
+            validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
+            epochs=builder.train_cfg.get("classifier_epochs"),
+            callbacks=builder.get_callbacks(branch="classifier"))
 
 
-        model.fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
-                validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
-                epochs=builder.train_cfg.get("reliability_epochs"),
-                callbacks=builder.get_callbacks(branch="reliability"))
-        # ============= saving ===================================
-        builder.save_model(model=model, suffix=f"{model_num_params}_fragment")
-        builder.save_config()
+    # ============== reliability model ========================
+    builder.switch_branch(model, train_branch="reliability")
+
+    _rel_train_data = builder._get_reliability_fragment_paths()
+    rel_train_data = {"train":None, "validation": None}
+    for k,v in _rel_train_data.items():
+        _data = tf.data.TextLineDataset(v.get("paths"), 
+                                        num_parallel_reads=len(v.get("paths")),
+                                        buffer_size=200)   
+        rel_train_data[k] = _data.map(process_string_train(
+                                                        codons=string_processor_config.get("codon"),
+                                                        codon_num=string_processor_config.get("codon_id"),
+                                                        codon_depth=string_processor_config.get("codon_depth"),
+                                                        crop_size=string_processor_config.get("crop_size"), 
+                                                        input_type=string_processor_config.get("input_type"),
+                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
+                                                        label_type='reliability',
+                                                        class_label_onehot=True),
+                        num_parallel_calls=tf.data.AUTOTUNE)\
+                    .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
+                            reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                            )\
+                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
+                    .prefetch(tf.data.AUTOTUNE)
+
+
+    model.fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
+            validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
+            epochs=builder.train_cfg.get("reliability_epochs"),
+            callbacks=builder.get_callbacks(branch="reliability"))
+    # ============= saving ===================================
+    builder.save_model(model=model, suffix=f"{model_num_params}_fragment")
+    builder.save_config()
 
 
 def train_contig_core(**kwargs):
