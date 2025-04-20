@@ -62,6 +62,10 @@ class DynamicModelBuilder:
         self.loss_classifier = None
         self.loss_reliability = None
         self._load_training_params()
+        self._regularizer = {
+            "l2" : tf.keras.regularizers.L2,
+            "l1" : tf.keras.regularizers.L1,
+        }
 
         cb_list = config["training"].get("callbacks", dict())
         for p in cb_list.get("directories"):
@@ -90,11 +94,11 @@ class DynamicModelBuilder:
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
-            x_classifier = self._build_classifier(r, self.model_cfg["classifier"])
+            x_classifier = self._build_perceptron(r, self.model_cfg["classifier"], prefix="classifier")
 
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
-            x_reliability = self._build_reliability_model(r_lbn, self.model_cfg["reliability_model"])
+            x_reliability = self._build_perceptron(r_lbn, self.model_cfg["reliability_model"], prefix="reliability")
 
         self.outputs = {'classifier': x_classifier, 
                         'reliability': x_reliability
@@ -144,7 +148,8 @@ class DynamicModelBuilder:
                          use_bias=False,
                          name="masked_conv1d_1",
                          activation = None,
-                         kernel_regularizer=tf.keras.regularizers.L2(1e-6),
+                         kernel_regularizer= self._regularizer.get(cfg.get("masked_conv1d_1_regularizer"), 
+                                                                   )(cfg.get("masked_conv1d_1_regularizer_w")),
                          kernel_initializer=tf.keras.initializers.HeUniform())(x)
             # using batchnorm here gives a big advantage. You get a model that can work well with different input size.
             # infact the accuracy increase with the increasing input size.
@@ -152,11 +157,13 @@ class DynamicModelBuilder:
         x = MaskedBatchNorm(name="masked_batchnorm_1")(x)
         x = self.Activation(name="activation_1")(x)
 
-        for block, (block_size, block_filter, ksize, kdilation, kstride) in enumerate(zip(cfg.get("block_sizes", [3, 3, 3]),
+        for block, (block_size, block_filter, ksize, kdilation, kstride, kreg, kregw) in enumerate(zip(cfg.get("block_sizes", [3, 3, 3]),
                                                                cfg.get("block_filters", [128, 256, 512]), 
                                                                cfg.get("block_kernel_size", [5, 5, 5]),
                                                                cfg.get("block_kernel_dilation", [1, 1, 1]),
                                                                cfg.get("block_kernel_strides", [2, 2, 2]),
+                                                               cfg.get("block_regularizer", [ "l2", "l2", "l2" ]),
+                                                               cfg.get("block_regularizer_w", [1e-6, 1e-6, 1e-6])
                                                                ), start=1):
             # ========== blockn (compress -> res) =============
             x = MaskedConv1D(filters=block_filter,
@@ -165,7 +172,7 @@ class DynamicModelBuilder:
                             dilation_rate=kdilation,
                             use_bias=False,
                             name=f"ds_masked_conv1d_{block}",
-                            kernel_regularizer=tf.keras.regularizers.L2(1e-6),
+                            kernel_regularizer=self._regularizer.get(kreg)(kregw),
                             activation = None,
                             kernel_initializer=tf.keras.initializers.HeUniform())(x)
             x = MaskedBatchNorm(name=f"ds_masked_batchnorm_{block}")(x)
@@ -184,7 +191,8 @@ class DynamicModelBuilder:
                             dilation_rate=cfg.get("masked_conv1d_final_dilation_rate"),
                             use_bias=False,
                             name="masked_conv1d_final",
-                            kernel_regularizer=tf.keras.regularizers.L2(1e-6),
+                            kernel_regularizer= self._regularizer.get(cfg.get("masked_conv1d_final_regularizer"), 
+                                                                   )(cfg.get("masked_conv1d_final_regularizer_w")),
                             activation = None,
                             kernel_initializer=tf.keras.initializers.HeUniform())(x)
         # this layers mean vector is used as u[train] to calculate nmd u[example] - u[train]
@@ -194,68 +202,31 @@ class DynamicModelBuilder:
         x = self._get_pooler(cfg.get('pooling'))(name=f"global_{cfg.get('pooling')}pool")(x)
         return x, nmd
 
-    def _build_classifier(self, x, cfg: Dict[str, Any]):
-        '''
-        X -> num_classes
-        '''
-        x = tf.keras.layers.Dense(cfg.get("dense_1_units"),
-                        name=f'classifier_dense_1',
-                        kernel_regularizer=tf.keras.regularizers.L2(1e-5),
-                        use_bias=False)(x)
-        x = self.Activation(name=f'classifier_activation_1')(x)
-        x = tf.keras.layers.Dense(cfg.get('classes'),
-                        activation=None,
-                        name=f'classifier',
-                        kernel_regularizer=tf.keras.regularizers.L2(1e-5),
-                        use_bias=False)(x)
-        return x
 
-    def _build_reliability_model(self, x_lbn, cfg: Dict[str, Any]):
+    def _build_perceptron(self, x, cfg: Dict[str, Any], prefix:str):
         '''
-        X -> 1
+        Get an MLP for a given configuration
+        prefixes : reliability, projection, classifier
         '''
-        # ============reliability=================
-        # reliabily model is inspired by neural mean discrepancy method
-        x = tf.keras.layers.Dense(cfg.get('dense_1_units'),
-                                name='reliability_dense_1',
-                                kernel_regularizer=tf.keras.regularizers.L2(1e-5),
-                                use_bias=True)(x_lbn)
-        x = self.Activation(name='reliability_activation_1')(x)
-        reliability = tf.keras.layers.Dense(1,
-                                activation=None,
-                                name='reliability',
-                                kernel_regularizer=tf.keras.regularizers.L2(1e-5),
-                                use_bias=True)(x)
-        return reliability
-    
-    def _build_projector(self, x, cfg: Dict[str, Any]):
-        '''
-        X1 -> X2
-        '''
-        reg_map = {"l1": tf.keras.regularizers.l1, "l2": tf.keras.regularizers.l2}
 
-        dense_1 = cfg.get("dense_1", 32)
-        dense_2 = cfg.get("dense_2", 16)
+        for i, layer_cfg in enumerate(cfg.get('hidden_layers'), 1):
+            x = tf.keras.layers.Dense(layer_cfg.get("units"),
+                                      use_bias=layer_cfg.get("use_bias"),
+                                      name=f"{prefix}_dense_{i}",
+                                      #activation=layer_cfg.get("activation")
+                                      )(x)
+            x = self.Activation(name=f'{prefix}_activation_{i}')(x)
+            if cfg.get('dropout_rate', 0) > 0:
+                x = tf.keras.layers.Dropout(cfg.get('dropout_rate'),
+                                            name=f"{prefix}_dropout_{i}",
+                                            )(x)
 
-        reg1 = reg_map.get(cfg.get("kernel_regularizer_1"), lambda: None)(cfg.get("kernel_regularizer_1_w"))
-        reg2 = reg_map.get(cfg.get("kernel_regularizer_2"), lambda: None)(cfg.get("kernel_regularizer_2_w"))
-
-        # ============ projection =============================
-        # this projection can be used for supervised contrastive learning
-        # batch-norm and dropout do not play nicely together https://doi.org/10.48550/arXiv.1801.05134
-        x = tf.keras.layers.Dense(dense_1,
-                                name='projection_dense_1',
-                                kernel_regularizer=reg1,
-                                use_bias=False)(x)
-        x = self.Activation(name='projection_activation_1')(x)
-        x = tf.keras.layers.Dropout(cfg.get('dropout_rate'))(x)
-
-        representation = tf.keras.layers.Dense(dense_2,
-                                    kernel_regularizer=reg2,
-                                    name='projection_dense_2',
-                                    use_bias=False,
-                                    dtype='float32')(x)
-        return representation
+        outputs = tf.keras.layers.Dense(cfg.get('output_units'),
+                                        use_bias=layer_cfg.get("output_use_bias"),
+                                        name=prefix,
+                                        activation=cfg.get('output_activation')
+                                        )(x)
+        return outputs
     
     def _load_training_params(self):
         """
@@ -491,7 +462,7 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"),
                                                         input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
+                                                        num_classes=builder.model_cfg.get("classifier").get("output_units"),
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
@@ -523,7 +494,7 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"), 
                                                         input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.model_cfg.get("classifier").get("classes"),
+                                                        num_classes=builder.model_cfg.get("classifier").get("output_units"),
                                                         label_type='reliability',
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
