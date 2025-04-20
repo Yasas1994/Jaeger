@@ -216,8 +216,8 @@ class DynamicModelBuilder:
                                       #activation=layer_cfg.get("activation")
                                       )(x)
             x = self.Activation(name=f'{prefix}_activation_{i}')(x)
-            if cfg.get('dropout_rate', 0) > 0:
-                x = tf.keras.layers.Dropout(cfg.get('dropout_rate'),
+            if layer_cfg.get('dropout_rate', 0) > 0:
+                x = tf.keras.layers.Dropout(layer_cfg.get('dropout_rate'),
                                             name=f"{prefix}_dropout_{i}",
                                             )(x)
 
