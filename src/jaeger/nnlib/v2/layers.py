@@ -374,7 +374,7 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
     statistics and normalization. This custom layer has an extra kwarg that returns nmd
     vectors u[exmple] - u[train]
     """
-    def __init__(self, epsilon=1e-5, momentum=0.99, return_nmd=False, **kwargs):
+    def __init__(self, epsilon=1e-5, momentum=0.9, return_nmd=False, **kwargs):
         super().__init__( **kwargs)
         self.epsilon = epsilon
         self.momentum = momentum
