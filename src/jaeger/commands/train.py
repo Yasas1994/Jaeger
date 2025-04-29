@@ -19,7 +19,6 @@ from icecream import ic
 # todo
 # prevent over writing existing experiments
 # train from last checkpoint 
-# 
 
 logger = logging.getLogger("Jaeger")
 ic.configureOutput(prefix="Jaeger |")
@@ -81,6 +80,10 @@ class DynamicModelBuilder:
                 self.Activation = ReLU
 
     def build_fragment_classifier(self):
+        """
+        returns rep_model, classification_head and reliability head
+        """
+        models = {}
         # === 1. EMBEDDING ===
         if "embedding" in self.model_cfg:
             inputs, x = self._build_embedding(self.model_cfg["embedding"])
@@ -91,20 +94,49 @@ class DynamicModelBuilder:
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
             r, r_lbn = self._build_representation_learner(x, self.model_cfg["representation_learner"])
+            models["rep_model"] = tf.keras.Model(inputs=self.inputs, 
+                                                 outputs=[r, r_lbn], 
+                                                 name="rep_model")
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
-            x_classifier = self._build_perceptron(r, self.model_cfg["classifier"], prefix="classifier")
+            input_shape = (self.model_cfg["representation_learner"].get("block_filters")[-1], )
+            inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
+            x_classifier = self._build_perceptron(inputs, self.model_cfg["classifier"], prefix="classifier")
+            models["classification_head"] = tf.keras.Model(inputs=inputs, 
+                                                           outputs=x_classifier, 
+                                                           name="classification_head")
+            # combine with the representation learner
+            x = models["rep_model"].output[0]
+            x = models["classification_head"](x)
+            models["jaeger_classifier"]  = tf.keras.Model(inputs=models["rep_model"].input, 
+                                                          outputs=x, 
+                                                          name="Jaeger_classifier")
 
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
-            x_reliability = self._build_perceptron(r_lbn, self.model_cfg["reliability_model"], prefix="reliability")
+            input_shape = (self.model_cfg["representation_learner"].get("block_filters")[-1], )
+            inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
+            x_reliability = self._build_perceptron(inputs, self.model_cfg["reliability_model"], prefix="reliability")
+            models["reliability_head"] = tf.keras.Model(inputs=inputs, 
+                                                        outputs=x_reliability, 
+                                                        name="reliability_head")
+            # combine withe representation learner
+            x = models["rep_model"].output[1]
+            x = models["reliability_head"](x)
+            models["jaeger_reliability"] = tf.keras.Model(inputs=models["rep_model"].input, 
+                                                          outputs=x, 
+                                                          name="Jaeger_reliability")
 
-        self.outputs = {'classifier': x_classifier, 
-                        'reliability': x_reliability
-                        }
-
-        return tf.keras.Model(inputs=self.inputs, outputs=self.outputs, name="JaegerModel")
+        # ==== 5. COMBINED MODEL ====
+        x1, x2 = models["rep_model"].output
+        reliability = models["reliability_head"](x1)
+        class_ = models["classification_head"](x2)
+        models["jaeger_model"] = tf.keras.Model(inputs=models["rep_model"].input, 
+                                                outputs={'prediction':class_, 'reliability': reliability}, 
+                                                name="Jaeger_model")
+                    
+        return models
     
     def build_contig_classifier(self):
         '''
@@ -248,45 +280,37 @@ class DynamicModelBuilder:
         self.loss_reliability = self._get_loss(loss_reliability_name, loss_reliability_params)
         ic(self.loss_reliability)
 
-    def switch_branch(self, model, train_branch="classifier"):
+    def compile_model(self, model, train_branch="classifier"):
+        '''
+        compiles the reliability model or the classification model
+        '''
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
         if train_branch == "classifier":
-            # Freeze reliability module
-            for layer in model.layers:
-                if "reliability" in layer.name:
-                    layer.trainable = False
-                else:
-                    layer.trainable = True
+            model.get("rep_model").trainable = True
+            model.get('jaeger_classifier').compile(
+                optimizer=self.optimizer,
+                loss=self.loss_classifier,
+                metrics=[tf.keras.metrics.CategoricalAccuracy(name="acc")],
+                )
+            ic(f"model compiled for {train_branch}")
 
-            loss_weights = {"classifier": 1.0, "reliability": 0.0}
 
         elif train_branch == "reliability":
             # Freeze classifier and representation learner
-            for layer in model.layers:
-                if "reliability" not in layer.name:
-                    layer.trainable = False
-                else:
-                    layer.trainable = True
+            model.get("rep_model").trainable = False
+            model.get('jaeger_reliability').compile(
+                optimizer=self.optimizer,
+                loss=self.loss_reliability,
+                metrics=[tf.keras.metrics.AUC(name="auc", from_logits=True),
+                         tf.keras.metrics.BinaryAccuracy(name="acc")]
+                    
+                )
 
-            loss_weights = {"classifier": 0.0, "reliability": 1.0}
         else:
             raise ValueError("train_branch must be 'classifier' or 'reliability'")
 
-        model.compile(
-            optimizer=self.optimizer,
-            loss={
-                "classifier": self.loss_classifier,
-                "reliability": self.loss_reliability,
-                },
-            loss_weights=loss_weights,
-            metrics={
-                "classifier": [tf.keras.metrics.CategoricalAccuracy(name="acc")],
-                "reliability": [tf.keras.metrics.AUC(name="auc", from_logits=True)]
-                    }
-        )
-        ic(f"model compiled for {train_branch}")
 
     def save_model(self, model, suffix=None):
         '''
@@ -432,14 +456,15 @@ def train_fragment_core(**kwargs):
     config = load_model_config(Path(kwargs.get("config")))
     # Initialize the model
     builder = DynamicModelBuilder(config)
-    model = builder.build_fragment_classifier()
-    model.summary()
-    model_num_params = numerize(model.count_params(), decimal=1)
+    models = builder.build_fragment_classifier()
+    models.get("rep_model").summary()
+    model_num_params = numerize(models.get("rep_model").count_params(), decimal=1)
     ic(model_num_params)
-    # =================train classifier ======================
-    builder.switch_branch(model, train_branch="classifier")
 
-    for i in model.layers:
+    # =================train classifier ======================
+    builder.compile_model(models, train_branch="classifier")
+
+    for i in models.get("jaeger_classifier").layers:
         ic(i.name, i.trainable)
 
     # =================load train data ======================
@@ -473,14 +498,14 @@ def train_fragment_core(**kwargs):
     ic(builder.train_cfg.get("classifier_train_steps"))
     ic(builder.train_cfg.get("classifier_epochs"))
 
-    model.fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
+    models.get("jaeger_classifier").fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
             validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
             epochs=builder.train_cfg.get("classifier_epochs"),
             callbacks=builder.get_callbacks(branch="classifier"))
 
 
     # ============== reliability model ========================
-    builder.switch_branch(model, train_branch="reliability")
+    builder.compile_model(models, train_branch="reliability")
 
     _rel_train_data = builder._get_reliability_fragment_paths()
     rel_train_data = {"train":None, "validation": None}
@@ -495,8 +520,7 @@ def train_fragment_core(**kwargs):
                                                         crop_size=string_processor_config.get("crop_size"), 
                                                         input_type=string_processor_config.get("input_type"),
                                                         num_classes=builder.model_cfg.get("classifier").get("output_units"),
-                                                        label_type='reliability',
-                                                        class_label_onehot=True),
+                                                        class_label_onehot=False),
                         num_parallel_calls=tf.data.AUTOTUNE)\
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
                             reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
@@ -505,12 +529,12 @@ def train_fragment_core(**kwargs):
                     .prefetch(tf.data.AUTOTUNE)
 
 
-    model.fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
+    models.get("jaeger_reliability").fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
             validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
             epochs=builder.train_cfg.get("reliability_epochs"),
             callbacks=builder.get_callbacks(branch="reliability"))
     # ============= saving ===================================
-    builder.save_model(model=model, suffix=f"{model_num_params}_fragment")
+    builder.save_model(model=models.get('jaeger_model'), suffix=f"{model_num_params}_fragment")
     builder.save_config()
 
 
