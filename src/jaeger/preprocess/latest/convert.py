@@ -55,7 +55,6 @@ def process_string_train(
     label_original=None,
     label_alternative=None,
     class_label_onehot=True,
-    label_type="classifier",  # or "reliability"
     num_classes=5,
     crop_size=1024,
     timesteps=False,
@@ -74,7 +73,6 @@ def process_string_train(
         label_original: Original labels (optional)
         label_alternative: Alternative labels (optional)
         class_label_onehot: One-hot encode labels
-        label_type: 'classifier' or 'reliability'
         input_type: 'translated', 'nucleotide', 'both'
     """
 
@@ -142,19 +140,16 @@ def process_string_train(
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
 
-            outputs["translated"] = tf.one_hot(seq, depth=codon_depth, dtype=tf.float32)
-
-        # Handle label & reliability
-        if label_type == "reliability":
-            reliability = tf.expand_dims(label, axis=-1)
-        else:
-            reliability = tf.expand_dims(tf.zeros_like(label), axis=-1)
+            outputs["translated"] = tf.one_hot(seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0)
 
         if class_label_onehot:
-            label = tf.one_hot(label, depth=num_classes, dtype=tf.float32)
+            label = tf.one_hot(label, depth=num_classes, dtype=tf.float32, on_value=1, off_value=0)
+        else:
+            label = tf.expand_dims(label, axis=0)
 
-        return outputs, {'classifier': label,
-                         'reliability': reliability
-                         }
+        # return outputs, {'classifier': label,
+        #                  'reliability': reliability
+        #                 }
+        return outputs, label
 
     return p
