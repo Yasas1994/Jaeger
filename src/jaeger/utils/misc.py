@@ -3,6 +3,45 @@ from decimal import Decimal
 
 logger = logging.getLogger("Jaeger")
 
+from rich.progress import ProgressColumn
+from rich.text import Text
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from time import sleep
+
+class MsPerStepColumn(ProgressColumn):
+    """Custom column to display milliseconds per step."""
+    def render(self, task):
+        if task.speed and task.speed > 0:
+            ms_per_step = 1000 / task.speed
+            return Text(f"{ms_per_step:.2f} ms/step")
+        return Text("– ms/step")
+
+
+
+def track_ms(iterable, description="Working..."):
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(pulse_style="cyan") if not hasattr(iterable, '__len__') else BarColumn(),
+        TaskProgressColumn(),
+        MsPerStepColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    )
+    with progress:
+        task = progress.add_task(description, total=None)
+        for item in iterable:
+            yield item
+            progress.update(task, advance=1)
+
 
 def safe_divide(numerator, denominator):
     try:

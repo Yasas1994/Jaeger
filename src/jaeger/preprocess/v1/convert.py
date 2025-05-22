@@ -80,7 +80,7 @@ def process_string(onehot=True, label_onehot=True, crop_size=2048):
         mapped codons and nucleotides.
     """
 
-    @tf.function
+    @tf.function(jit_compile=False)
     def p(string):
         t1, t3 = codon_mapper(), complement_mapper()
         x = tf.strings.split(string, sep=",")
@@ -112,13 +112,16 @@ def process_string(onehot=True, label_onehot=True, crop_size=2048):
 
         return (
             {
-                "forward_1": f1,
-                "forward_2": f2,
-                "forward_3": f3,
-                "reverse_1": r1,
-                "reverse_2": r2,
-                "reverse_3": r3,
+                "forward_1":  tf.cast(f1, dtype=tf.float32),
+                "forward_2":  tf.cast(f2, dtype=tf.float32),
+                "forward_3":  tf.cast(f3, dtype=tf.float32),
+                "reverse_1":  tf.cast(r1, dtype=tf.float32),
+                "reverse_2":  tf.cast(r2, dtype=tf.float32),
+                "reverse_3":  tf.cast(r3, dtype=tf.float32),
             },
+            # metadata routine does not work anymore
+            # convert the models to new format
+            # 
             x[1],
             x[2],
             x[3],

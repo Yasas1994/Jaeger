@@ -8,8 +8,8 @@ import pyfastx
 import parasail
 import pandas as pd
 from rich.progress import Progress
-from utils.misc import safe_divide
-from utils.seq import reverse_complement
+from jaeger.utils.misc import safe_divide
+from jaeger.utils.seq import reverse_complement
 
 logger = logging.getLogger("jaeger")
 

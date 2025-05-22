@@ -153,3 +153,102 @@ def process_string_train(
         return outputs, label
 
     return p
+
+def process_string_inference(
+    codons=CODONS,
+    codon_num=CODON_ID,
+    codon_depth=64,
+    crop_size=1024,
+    timesteps=False,
+    num_time=None,
+    fragsize=200,
+    mutate=False,
+    mutation_rate=0.1,
+    input_type="translated"  # "translated", "nucleotide", "both"
+):
+    """
+    TensorFlow string processing function for sequence input.
+
+    Args:
+        codons: Codon vocabulary list
+        codon_num: Number of codons
+        label_original: Original labels (optional)
+        label_alternative: Alternative labels (optional)
+        class_label_onehot: One-hot encode labels
+        input_type: 'translated', 'nucleotide', 'both'
+    """
+
+    map_codon = _map_codon(codons=codons, codon_num=codon_num)
+    map_complement = _map_complement()
+    map_nucleotide = _map_nucleotide()
+
+
+    @tf.function
+    def p(string):
+        x = tf.strings.split(string, sep=',')
+        # Determine offset for codon splitting
+        offset = {0: -2, 1: -1, 2: 0}[crop_size % 3]
+        forward_strand = tf.strings.bytes_split(x[0])[:crop_size]
+
+        # Apply mutations if requested
+        if mutate:
+            alphabet = tf.constant(['A', 'T', 'G', 'C', 'N'], dtype=tf.string)
+            mask = tf.random.uniform(tf.shape(forward_strand)) < mutation_rate
+            mutations = tf.random.uniform(tf.shape(forward_strand), minval=0, maxval=4, dtype=tf.int32)
+            forward_strand = tf.where(mask, tf.gather(alphabet, mutations), forward_strand)
+
+        reverse_strand = map_complement.lookup(forward_strand[::-1])
+
+        outputs = {}
+
+        # Nucleotide representation
+        if input_type in ["nucleotide", "both"]:
+            nuc1 = map_nucleotide.lookup(forward_strand)
+            nuc2 = map_nucleotide.lookup(reverse_strand)
+            nuc = tf.stack([nuc1, nuc2], axis=0)
+            outputs["nucleotide"] = tf.one_hot(nuc, depth=4, dtype=tf.float32)
+
+        # Translated representation
+        if input_type in ["translated", "both"]:
+            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator='')
+            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator='')
+
+            f1 = map_codon.lookup(tri_forward[0:-3 + offset:3])
+            f2 = map_codon.lookup(tri_forward[1:-2 + offset:3])
+            f3 = map_codon.lookup(tri_forward[2:-1 + offset:3])
+            r1 = map_codon.lookup(tri_reverse[0:-3 + offset:3])
+            r2 = map_codon.lookup(tri_reverse[1:-2 + offset:3])
+            r3 = map_codon.lookup(tri_reverse[2:-1 + offset:3])
+
+            if timesteps:
+                f1 = tf.reshape(f1, (num_time, fragsize))
+                f2 = tf.reshape(f2, (num_time, fragsize))
+                f3 = tf.reshape(f3, (num_time, fragsize))
+                r1 = tf.reshape(r1, (num_time, fragsize))
+                r2 = tf.reshape(r2, (num_time, fragsize))
+                r3 = tf.reshape(r3, (num_time, fragsize))
+                seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=1)
+            else:
+                seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
+
+            outputs["translated"] = tf.one_hot(seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0)
+
+
+        # return outputs, {'classifier': label,
+        #                  'reliability': reliability
+        #                 }
+        return ( outputs,
+            x[1],
+            x[2],
+            x[3],
+            x[4],
+            x[5],
+            x[6],
+            x[7],
+            x[8],
+            x[9],
+            x[10],
+        )
+
+
+    return p

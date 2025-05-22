@@ -1,11 +1,12 @@
 import pyfastx
 from rich.progress import Progress
-from utils.misc import signal_l, safe_divide
+from jaeger.utils.misc import signal_l, safe_divide
 
 def fragment_generator(file_path,
               fragsize=None,
               stride=None,
               num=None,
+              no_progress=True
               ):
     """
     Generates fragments of DNA sequences from a FASTA file.
@@ -31,7 +32,7 @@ def fragment_generator(file_path,
     def c():
         # accepts a reference to a file handle
         fa = pyfastx.Fasta(file_path, build_index=False)
-        with Progress(transient=True) as progress:
+        with Progress(transient=True, disable=no_progress) as progress:
             task = progress.add_task("[cyan]Reading fasta...", total=num)
             for j, record in enumerate(fa):
                 progress.update(task, advance=1)
