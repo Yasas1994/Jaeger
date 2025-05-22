@@ -18,8 +18,8 @@ from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from kneed import KneeLocator
 from pycirclize import Circos
-from src.postprocess.helpers import calculate_gc_content, calculate_percentage_of_n, merge_overlapping_ranges, scale_range
-from src.utils.seq import reverse_complement
+from jaeger.postprocess.helpers import calculate_gc_content, calculate_percentage_of_n, merge_overlapping_ranges, scale_range
+from jaeger.utils.seq import reverse_complement
 
 logger = logging.getLogger("jaeger")
 
