@@ -1,6 +1,6 @@
 import numpy as np
 import logging
-from utils.misc import safe_divide
+from jaeger.utils.misc import safe_divide
 
 logger = logging.getLogger("jaeger")
 
@@ -128,6 +128,39 @@ def softmax_entropy(x):
 
     ex = np.exp(x)
     return shanon_entropy(ex / np.sum(ex, axis=-1).reshape(-1, 1))
+
+
+def sigmoid(x):
+    """
+    Calculates sigmoid.
+
+    Args:
+    ----
+        x (array-like): logits as an array-like
+                        object.
+
+    Returns:
+    -------
+        float: sigmoid transformed logits
+    """
+    return 1 / (1 + np.exp(-x))
+
+def softmax(x):
+    """
+    Calculates softmax of output distribution.
+
+    Args:
+    ----
+        x (array-like): logits as an array-like
+                        object.
+
+    Returns:
+    -------
+        float: softmax output distribution.
+    """
+    
+    ex = np.exp(x)
+    return ex / np.sum(ex, axis=-1).reshape(-1, 1)
 
 
 def smoothen_scores(x, w=5):
