@@ -150,7 +150,7 @@ def evaluate(model, x) -> dict[str, float]:
     accum = defaultdict(list)
     for j,i in track_ms(x, description="[cyan]Crunching data..."):
 
-        y_hat = model(j)
+        y_hat = model(j, training=False)
         y_true = i
         accum["logits"].append(y_hat["prediction"].numpy())
         accum["y_true"].append(y_true.numpy())
@@ -258,7 +258,7 @@ class DynamicModelBuilder:
                 return {"path": file, 
                         "epoch": int(epoch), 
                         "loss": float(loss), 
-                        "is_converged": True if path.name == check_convergence else False}
+                        "is_converged": False if path.name == check_convergence else False}
         return {"path": None, 
                 "epoch": 0, 
                 "loss": None, 
@@ -767,7 +767,8 @@ def train_fragment_core(**kwargs):
     
     # ============= test final model =========================
     models.get('jaeger_model').trainable = False
-
+    models.get('jaeger_classifier').evaluate( train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")))
+    
     predictions = evaluate(models.get('jaeger_model'), train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")))
     ic(predictions)
 
@@ -778,7 +779,8 @@ def train_fragment_core(**kwargs):
     # ============= load saved model and infer ===============================
     model_paths = AvailableModels(path=builder._saving_config.get("path"))
     ic(model_paths.info)
-    model = InferModel(model_paths.info.get("jaeger_886.3K_fragment"))
+    mname_ = list(model_paths.info.keys())[0]
+    model = InferModel(model_paths.info.get(mname_))
     ic(model.evaluate(train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps"))))
 
 
