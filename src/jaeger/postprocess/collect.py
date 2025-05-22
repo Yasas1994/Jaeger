@@ -4,7 +4,7 @@ import pandas as pd
 import traceback
 import pyfastx
 import logging
-from postprocess.helpers import (get_window_summary,
+from jaeger.postprocess.helpers import (get_window_summary,
                                  update_dict,
                                  ood_predict_default,
                                  softmax_entropy)
@@ -58,7 +58,7 @@ def pred_to_dict(config, y_pred, **kwargs) -> pd.DataFrame:
         )
         per_class_counts = list(
             map(
-                lambda x, n=config[kwargs.get('model')]["num_classes"]: update_dict(x, n),
+                lambda x, n=config["num_classes"]: update_dict(x, n),
                 per_class_counts,
             )
         )
@@ -95,7 +95,7 @@ def pred_to_dict(config, y_pred, **kwargs) -> pd.DataFrame:
         return data, data_full
 
 
-def generate_summary(config, data, **kwargs) -> pd.DataFrame:
+def generate_summary(config, data) -> pd.DataFrame:
     """
     Generates a per contig summary based on the provided configuration,
     arguments, and data.
@@ -114,8 +114,9 @@ def generate_summary(config, data, **kwargs) -> pd.DataFrame:
     """
 
     logger.info("Generating summary")
+    
     class_map = config["labels"]  # Comes from config
-    lab = {int(k): v for k, v in config[kwargs.get("model")]["all_labels"].items()}
+    lab = {int(k): v for k, v in config["all_labels"].items()}
     
     # Basic summary columns
     columns = {
@@ -129,7 +130,7 @@ def generate_summary(config, data, **kwargs) -> pd.DataFrame:
     }
 
     # Handle additional default model-specific features
-    if kwargs.get("model") == "default":
+    if config["model"] == "default":
         columns["G+C"] = [np.mean(x) for x in data["gc"]]
         columns["N%"] = [np.mean(x) for x in data["ns"]]
 
@@ -138,7 +139,7 @@ def generate_summary(config, data, **kwargs) -> pd.DataFrame:
         av = np.prod(np.argsort(data["pred_sum"], axis=1)[:, 2:4] == np.array([3, 1]), axis=1) * 2
         bv = np.prod(np.argsort(data["pred_sum"], axis=1)[:, 2:4] == np.array([0, 1]), axis=1) * 3
 
-        class_map2 = {int(k): v for k, v in config["default"]["second"].items()}
+        class_map2 = {int(k): v for k, v in config["second"].items()}
         columns["prediction_2"] = [class_map2[x] for x in (ev + av + bv)]
 
     # Appends class-wise information to the dictionary
@@ -149,7 +150,7 @@ def generate_summary(config, data, **kwargs) -> pd.DataFrame:
 
     # Append the window summary column
     columns["window_summary"] = [
-        get_window_summary(x, config[kwargs.get("model")]["vindex"]) for x in data["frag_pred"]
+        get_window_summary(x, config["vindex"]) for x in data["frag_pred"]
     ]
 
     # Create dataframe and merge with repeat data
@@ -184,7 +185,7 @@ def write_output(config:Any,
     """
 
     try:
-        df = generate_summary(config, data, model=kwargs.get('model'))
+        df = generate_summary(config, data)
         # Save the full summary
         df.to_csv(kwargs.get('output_table_path'),
                 sep="\t",
