@@ -55,8 +55,8 @@ darwin-arm = [
     "tensorflow-metal",
 ]
 gpu = [
-    "tensorflow[and-cuda] >=2.17, <2.18",
+    "tensorflow[and-cuda] >=2.18, <2.19",
 ]
 cpu = [
-    "tensorflow >=2.17, <2.18",
+    "tensorflow >=2.18, <2.19",
 ]
