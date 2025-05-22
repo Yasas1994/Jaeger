@@ -1,3 +1,13 @@
+
+"""
+Copyright 2024 R. Y. Wijesekara - University Medicine Greifswald, Germany
+
+Identifying phage genome sequences concealed in metagenomes is a
+long standing problem in viral metagenomics and ecology.
+The Jaeger approach uses homology-free machine learning to identify
+ both phages and prophages in metagenomic assemblies.
+"""
+
 import os
 # temporary fix
 os.environ['WRAPT_DISABLE_EXTENSIONS'] = "true" 
@@ -11,17 +21,162 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedAdd, MaskedBatchNorm, MaskedConv1D, ResidualBlock
 import logging
+import re
 from jaeger.utils.misc import numerize
 # dev
 import numpy as np
 from icecream import ic
-
+from collections import defaultdict
+from jaeger.utils.misc import track_ms
 # todo
 # prevent over writing existing experiments
 # train from last checkpoint 
 
 logger = logging.getLogger("Jaeger")
 ic.configureOutput(prefix="Jaeger |")
+
+class AvailableModels:
+    """
+    get all available models from the model path
+    """
+    def __init__(self, path):
+        self.path = Path(path)
+        self.info = self._scan_for_models()
+        
+
+    def _scan_for_models(self) -> defaultdict:
+        _tmp = defaultdict(dict)
+        for model_graph in self.path.rglob("*_graph"):
+            if model_graph.is_dir():
+                ic(model_graph)
+                _tmp[model_graph.name.rstrip("_graph")]['graph'] = model_graph
+            for _match in ("classes", "project"):
+                for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
+                    if _cfg.is_file():
+                        ic(_cfg)
+                        _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
+        
+        return _tmp
+
+class InferModel:
+    """
+    loads a graph given a dict with model graph location and class map
+    consumnes batched iterators and returns logits per iterator element
+    """
+    def __init__(self, path_dict):
+        self.class_map = self._load_class_map(path_dict.get("classes"))
+        self.loaded_model = tf.saved_model.load(path_dict.get("graph"))
+        self.inference_fn = self.loaded_model.signatures["serving_default"]
+        self.string_processor_config = self._load_string_processor_config(path_dict.get("project"))
+    
+    def _predict_step(self, batch):
+        # Unpack the data
+        x, meta = batch[0], batch[1:]
+        # set model to inference mode
+        y_logits = self.inference_fn(x.get(self.string_processor_config.get("input_type")))
+        return y_logits, meta
+
+    def predict(self, x) -> dict[str, np.ndarray]:
+        accum = defaultdict(list)
+
+        for batch in track_ms(x, description="[cyan]Crunching data..."):
+            y_hat, meta = self._predict_step(batch)
+
+            # Collect meta: tuple of tensors (B,)
+            for i, m in enumerate(meta):
+                accum[f"meta_{i}"].append(m.numpy())
+
+            # Collect y_hat: dict of tensors
+            for k, v in y_hat.items():
+                accum[k].append(v.numpy())
+
+        # Concatenate all batches
+        return {k: np.concatenate(v, axis=0) for k, v in accum.items()}
+
+    def evaluate(self, x) -> dict[str, float]:
+        accum = defaultdict(list)
+
+        for batch in track_ms(x, description="[cyan]Crunching data..."):
+            y_hat, y_true = self._predict_step(batch)
+
+            accum["logits"].append(y_hat["prediction"].numpy())
+            accum["y_true"].append(y_true[0].numpy())
+
+        # Concatenate over all batches
+        logits = np.concatenate(accum["logits"], axis=0)
+        y_true = np.concatenate(accum["y_true"], axis=0)
+
+        # Compute loss (categorical cross-entropy from logits)
+        loss = tf.reduce_mean(
+            tf.keras.losses.categorical_crossentropy(
+                y_true,
+                logits,
+                from_logits=True
+            )
+        ).numpy()
+
+        # Compute accuracy
+        pred_labels = np.argmax(logits, axis=1)
+        true_labels = np.argmax(y_true, axis=1)
+        accuracy = np.mean(pred_labels == true_labels)
+
+        return {
+            "loss": float(loss),
+            "accuracy": float(accuracy)
+        }
+    def _load_class_map(self, path):
+        with open(path) as f:
+            return yaml.safe_load(f)
+        
+    def _load_string_processor_config(self, path):
+        from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+
+        _map = {
+            "CODON" : CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID
+        }
+
+        return {'input_type':cfg.get('model').get('embedding').get('type'),
+                'codon_depth': cfg.get('model').get('embedding').get('input_shape')[-1],
+                'codons': _map.get(cfg.get('model').get('string_processor').get('codon')),
+                'codon_num': _map.get(cfg.get('model').get('string_processor').get('codon_id'))
+                }
+
+def evaluate(model, x) -> dict[str, float]:
+    accum = defaultdict(list)
+    for j,i in track_ms(x, description="[cyan]Crunching data..."):
+
+        y_hat = model(j)
+        y_true = i
+        accum["logits"].append(y_hat["prediction"].numpy())
+        accum["y_true"].append(y_true.numpy())
+
+    # Concatenate over all batches
+    logits = np.concatenate(accum["logits"], axis=0)
+    y_true = np.concatenate(accum["y_true"], axis=0)
+
+    # Compute loss (categorical cross-entropy from logits)
+    loss = tf.reduce_mean(
+        tf.keras.losses.categorical_crossentropy(
+            y_true,
+            logits,
+            from_logits=True
+        )
+    ).numpy()
+
+    # Compute accuracy
+    pred_labels = np.argmax(logits, axis=1)
+    true_labels = np.argmax(y_true, axis=1)
+    accuracy = np.mean(pred_labels == true_labels)
+
+    return {
+        "loss": float(loss),
+        "accuracy": float(accuracy)
+    }
 
 def load_model_config(path: Path) -> Dict:
     '''
@@ -49,7 +204,7 @@ class DynamicModelBuilder:
         tf.random.set_seed(self.model_cfg.get("seed"))
         np.random.seed(self.model_cfg.get("seed"))
         self.inputs = None
-        self.outputs = []
+        self.outputs = list()
         self._fragment_paths = self._get_fragment_paths()
         self._contig_paths = self._get_contig_paths()
         self._reliability_fragment_paths = self._get_reliability_fragment_paths()
@@ -57,9 +212,12 @@ class DynamicModelBuilder:
         ic(self._fragment_paths)
         # ic(self._reliability_fragment_paths)
         self._saving_config = self._get_model_saving_configuration()
+        ic(config.get("from_last_checkpoint"))
+        self._from_last_checkpoint = config.get("from_last_checkpoint")
         self.optimizer = None
         self.loss_classifier = None
         self.loss_reliability = None
+        self._checkpoints = None
         self._load_training_params()
         self._regularizer = {
             "l2" : tf.keras.regularizers.L2,
@@ -69,16 +227,43 @@ class DynamicModelBuilder:
         cb_list = config["training"].get("callbacks", dict())
         for p in cb_list.get("directories"):
             p =Path(p)
-            if p.exists() and cb_list.get("clean_old"):
+            if p.exists() and not self._from_last_checkpoint:
+                ic(f"removing the old found checkpoint at {p}")
+                ic(f"set --from_last_checkpoint flag to continue training from the last checkpoint")
                 shutil.rmtree(p)
+            elif p.exists() and self._from_last_checkpoint:
+                # None is not available
+                if self._checkpoints == None:
+                    self._checkpoints = dict()
+                self._checkpoints[p.name] = self.get_latest_h5_with_metadata(p)
+            
             p.mkdir(parents=True, exist_ok=True)
-
+        ic(self._checkpoints)
         match config.get("activation", "gelu"):
             case "gelu":
                 self.Activation = GeLU
             case "relu":
                 self.Activation = ReLU
 
+    def get_latest_h5_with_metadata(self, path: str | Path, 
+                                    check_convergence:str = "classifier",
+                                    pattern: str = r"epoch:(\d+)-loss:(\d+\.\d+)") -> Optional[tuple[Path, dict]]:
+        path = Path(path)
+        h5_files = sorted(path.glob("*.h5"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for file in h5_files:
+            match = re.search(pattern, file.name)
+            if match:
+
+                epoch, loss = match.groups()
+                return {"path": file, 
+                        "epoch": int(epoch), 
+                        "loss": float(loss), 
+                        "is_converged": True if path.name == check_convergence else False}
+        return {"path": None, 
+                "epoch": 0, 
+                "loss": None, 
+                "is_converged": False}
+    
     def build_fragment_classifier(self):
         """
         returns rep_model, classification_head and reliability head
@@ -101,7 +286,7 @@ class DynamicModelBuilder:
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
             input_shape = (self.model_cfg["representation_learner"].get("block_filters")[-1], )
-            inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
+            inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
             x_classifier = self._build_perceptron(inputs, self.model_cfg["classifier"], prefix="classifier")
             models["classification_head"] = tf.keras.Model(inputs=inputs, 
                                                            outputs=x_classifier, 
@@ -112,6 +297,10 @@ class DynamicModelBuilder:
             models["jaeger_classifier"]  = tf.keras.Model(inputs=models["rep_model"].input, 
                                                           outputs=x, 
                                                           name="Jaeger_classifier")
+            if self._checkpoints.get("classifier").get("path"):
+                # loads weights from the last checkpoint
+                models["jaeger_classifier"].load_weights(self._checkpoints.get("classifier").get("path"))
+                ic(f"Loaded classification model weights from {self._checkpoints.get("classifier").get("path")}")
 
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
@@ -128,10 +317,14 @@ class DynamicModelBuilder:
                                                           outputs=x, 
                                                           name="Jaeger_reliability")
 
+            if self._checkpoints.get("reliability").get("path"):
+                # loads weights from the last checkpoint
+                models["jaeger_reliability"].load_weights(self._checkpoints.get("reliability").get("path"))
+                ic(f"Loaded reliability model weights from {self._checkpoints.get("reliability").get("path")}")
         # ==== 5. COMBINED MODEL ====
         x1, x2 = models["rep_model"].output
-        reliability = models["reliability_head"](x1)
-        class_ = models["classification_head"](x2)
+        reliability = models["reliability_head"](x2)
+        class_ = models["classification_head"](x1)
         models["jaeger_model"] = tf.keras.Model(inputs=models["rep_model"].input, 
                                                 outputs={'prediction':class_, 'reliability': reliability}, 
                                                 name="Jaeger_model")
@@ -333,14 +526,18 @@ class DynamicModelBuilder:
         # save output indices -> class mapping in the same directory
         with open(path / f'{model_name}_classes.yaml', 'w') as yaml_file:
             ic("writing class_labels_map")
-            yaml.dump(dict(classes=self.model_cfg.get("class_labels_map")), yaml_file, default_flow_style=False)
+            yaml.dump(dict(classes=self.model_cfg.get("class_label_map")), yaml_file, default_flow_style=False)
     
-    def save_config(self):
+    def save_config(self, suffix=None):
         '''
         saves project config to the model output directory
         '''
         path = Path(self._saving_config.get("path"))
         model_name = self.model_cfg.get("name")
+
+        if suffix:
+            model_name += f"_{suffix}"
+
         with open(path / f'{model_name}_project.yaml', 'w+') as yaml_file:
             ic("saving project config")
             yaml.dump(self.cfg, yaml_file, default_flow_style=False)
@@ -453,7 +650,9 @@ def train_fragment_core(**kwargs):
     # with strategy.scope():
 
     ic(kwargs.get("config"))
+    ic(kwargs.get('from_last_checkpoint'))
     config = load_model_config(Path(kwargs.get("config")))
+    config["from_last_checkpoint"] = kwargs.get('from_last_checkpoint')
     # Initialize the model
     builder = DynamicModelBuilder(config)
     models = builder.build_fragment_classifier()
@@ -491,21 +690,38 @@ def train_fragment_core(**kwargs):
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
-                            reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                            #reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                             )\
                     .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
                     .prefetch(tf.data.AUTOTUNE)
     ic(builder.train_cfg.get("classifier_train_steps"))
     ic(builder.train_cfg.get("classifier_epochs"))
 
-    models.get("jaeger_classifier").fit(train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
-            validation_data=train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
-            epochs=builder.train_cfg.get("classifier_epochs"),
-            callbacks=builder.get_callbacks(branch="classifier"))
+    # ============ check if the model has converged ===========
+    checkpoint = builder._checkpoints
+    converged = checkpoint and checkpoint.get("classifier", {}).get("is_converged", False)
 
+    if not converged:
+        train_args = {
+
+            "validation_data": train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
+            "epochs": builder.train_cfg.get("classifier_epochs"),
+            "callbacks": builder.get_callbacks(branch="classifier"),
+        }
+
+        if checkpoint:
+            train_args["initial_epoch"] = checkpoint.get("classifier", {}).get("epoch", 0)
+
+        models.get("jaeger_classifier").fit(
+            train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
+            **train_args)
+    else:
+        ic("Skipping training — classification model already converged.")
 
     # ============== reliability model ========================
     builder.compile_model(models, train_branch="reliability")
+    for i in models.get("jaeger_reliability").layers:
+        ic(i.name, i.trainable)
 
     _rel_train_data = builder._get_reliability_fragment_paths()
     rel_train_data = {"train":None, "validation": None}
@@ -523,19 +739,47 @@ def train_fragment_core(**kwargs):
                                                         class_label_onehot=False),
                         num_parallel_calls=tf.data.AUTOTUNE)\
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
-                            reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                            #reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                             )\
                     .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
                     .prefetch(tf.data.AUTOTUNE)
+    # ============== check if the model has converged ========
 
+    checkpoint = builder._checkpoints
+    converged = checkpoint and checkpoint.get("reliability", {}).get("is_converged", False)
 
-    models.get("jaeger_reliability").fit(rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
-            validation_data=rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
-            epochs=builder.train_cfg.get("reliability_epochs"),
-            callbacks=builder.get_callbacks(branch="reliability"))
+    if not converged:
+        train_args = {
+
+            "validation_data":  rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
+            "epochs": builder.train_cfg.get("reliability_epochs"),
+            "callbacks": builder.get_callbacks(branch="reliability"),
+        }
+
+        if checkpoint:
+            train_args["initial_epoch"] = checkpoint.get("reliability", {}).get("epoch", 0)
+
+        models.get("jaeger_reliability").fit(
+            rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
+            **train_args)
+    else:
+        ic("Skipping training — reliability model already converged.")
+    
+    # ============= test final model =========================
+    models.get('jaeger_model').trainable = False
+
+    predictions = evaluate(models.get('jaeger_model'), train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")))
+    ic(predictions)
+
     # ============= saving ===================================
     builder.save_model(model=models.get('jaeger_model'), suffix=f"{model_num_params}_fragment")
-    builder.save_config()
+    builder.save_config(suffix=f"{model_num_params}_fragment")
+
+    # ============= load saved model and infer ===============================
+    model_paths = AvailableModels(path=builder._saving_config.get("path"))
+    ic(model_paths.info)
+    model = InferModel(model_paths.info.get("jaeger_886.3K_fragment"))
+    ic(model.evaluate(train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps"))))
 
 
 def train_contig_core(**kwargs):
