@@ -6,8 +6,8 @@ Copyright (c) 2024 Yasas Wijesekara
 import json
 from importlib.resources import files
 import tensorflow as tf
-from src.nnlib.v1.layers import WRes_model
-from src.nnlib.v1.cmodel import JaegerModel
+from jaeger.nnlib.v1.layers import WRes_model
+from jaeger.nnlib.v1.cmodel import JaegerModel
 from preprocessing import fasta_gen_lib, process_string
 from postprocessing import (
     extract_pred_entry,

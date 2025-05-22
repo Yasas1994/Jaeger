@@ -370,65 +370,89 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
 
 class MaskedBatchNorm(tf.keras.layers.Layer):
     """
-    Masked batch normalization ignores the masked positions when calculating the summary 
-    statistics and normalization. This custom layer has an extra kwarg that returns nmd
-    vectors u[exmple] - u[train]
+    Masked Batch Normalization that supports arbitrary input rank and optional return
+    of normalized mean difference vectors. Masked positions are excluded from statistics.
     """
+
     def __init__(self, epsilon=1e-5, momentum=0.9, return_nmd=False, **kwargs):
-        super().__init__( **kwargs)
+        super().__init__(**kwargs)
         self.epsilon = epsilon
         self.momentum = momentum
         self.supports_masking = True
         self.return_nmd = return_nmd
 
     def build(self, input_shape):
-        # Trainable parameters: gamma (scale) and beta (shift)
-        self.gamma = self.add_weight(shape=input_shape[-1:], initializer='ones', trainable=True, name='gamma')
-        self.beta = self.add_weight(shape=input_shape[-1:], initializer='zeros', trainable=True, name='beta')
+        channel_dim = input_shape[-1]
+        self.gamma = self.add_weight(
+            shape=(channel_dim,), initializer='ones', trainable=True, name='gamma'
+        )
+        self.beta = self.add_weight(
+            shape=(channel_dim,), initializer='zeros', trainable=True, name='beta'
+        )
+        self.moving_mean = self.add_weight(
+            shape=(channel_dim,), initializer='zeros', trainable=False, name='moving_mean'
+        )
+        self.moving_variance = self.add_weight(
+            shape=(channel_dim,), initializer='ones', trainable=False, name='moving_variance'
+        )
 
-        # Running mean and variance (used during inference)
-        self.moving_mean = self.add_weight(shape=input_shape[-1:], initializer='zeros', trainable=False, name='moving_mean')
-        self.moving_variance = self.add_weight(shape=input_shape[-1:], initializer='ones', trainable=False, name='moving_variance')
-        
     def call(self, inputs, mask=None, training=False):
+        input_shape = tf.shape(inputs)
+        ndims = inputs.shape.rank
+
+        reduce_axes = list(range(ndims - 1))  # all except channel dim
+        broadcast_shape = [1] * (ndims - 1) + [inputs.shape[-1]]
+
+        if mask is not None:
+            mask = tf.cast(mask, inputs.dtype)
+            if mask.shape.rank < inputs.shape.rank:
+                # Broadcast mask over the channel dimension
+                mask = tf.expand_dims(mask, axis=-1)
+
+            valid_elements = tf.reduce_sum(mask, axis=reduce_axes) + self.epsilon
+            masked_inputs = inputs * mask
+
+            mean_batch = tf.reduce_sum(masked_inputs, axis=reduce_axes) / valid_elements
+            mean_broadcast = tf.reshape(mean_batch, broadcast_shape)
+
+            variance_batch = tf.reduce_sum(
+                mask * tf.square(inputs - mean_broadcast), axis=reduce_axes
+            ) / valid_elements
+        else:
+            mean_batch, variance_batch = tf.nn.moments(inputs, axes=reduce_axes)
+
         if training:
-            if mask is not None:
-                mask = tf.cast(mask, inputs.dtype)
-                mask = tf.expand_dims(mask, axis=-1)  # Broadcast over channels
-
-                valid_elements = tf.reduce_sum(mask, axis=[0, 1, 2]) + self.epsilon  # Avoid division by zero
-                masked_inputs = inputs * mask
-
-                mean_batch = tf.reduce_sum(masked_inputs, axis=[0, 1, 2]) / valid_elements
-                # Broadcast mean_batch for variance calculation
-                mean_broadcast = tf.reshape(mean_batch, [1, 1, 1, -1])
-                variance_batch = tf.reduce_sum(mask * tf.square(masked_inputs - mean_broadcast), axis=[0, 1, 2]) / valid_elements
-            else:
-                mean_batch, variance_batch = tf.nn.moments(inputs, axes=[0, 1, 2])
-
-            # Update moving stats
-            self.moving_mean.assign(self.momentum * self.moving_mean + (1 - self.momentum) * mean_batch)
-            self.moving_variance.assign(self.momentum * self.moving_variance + (1 - self.momentum) * variance_batch)
-
-            # Normalize using batch statistics during training
+            self.moving_mean.assign(
+                self.momentum * self.moving_mean + (1 - self.momentum) * mean_batch
+            )
+            self.moving_variance.assign(
+                self.momentum * self.moving_variance + (1 - self.momentum) * variance_batch
+            )
             mean_to_use = mean_batch
             var_to_use = variance_batch
         else:
-            # Inference: use moving averages
             mean_to_use = self.moving_mean
             var_to_use = self.moving_variance
 
         # Normalize
-        mean_broadcast = tf.reshape(mean_to_use, [1, 1, 1, -1])
-        var_broadcast = tf.reshape(var_to_use, [1, 1, 1, -1])
+        mean_broadcast = tf.reshape(mean_to_use, broadcast_shape)
+        var_broadcast = tf.reshape(var_to_use, broadcast_shape)
         normalized_inputs = (inputs - mean_broadcast) / tf.sqrt(var_broadcast + self.epsilon)
         output = self.gamma * normalized_inputs + self.beta
 
         if self.return_nmd:
-            mean_channel, _ = tf.nn.moments(inputs, axes=[1, 2])
-            return output, mean_channel - mean_to_use
-        return output
+            # Compute per-example mean (excluding channel dim)
+            example_axes = list(range(1, ndims - 1))  # skip batch and channel dims
+            if mask is not None:
+                masked_inputs = inputs * mask
+            else:
+                masked_inputs = inputs
 
+            mean_channel = tf.reduce_mean(masked_inputs, axis=example_axes)  # shape (batch, channels)
+            nmd = mean_channel - mean_to_use  # broadcast mean
+            return output, nmd
+
+        return output
 
 
 class MaskedConv1D(tf.keras.layers.Layer):

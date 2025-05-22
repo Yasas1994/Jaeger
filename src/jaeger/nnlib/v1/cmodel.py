@@ -97,7 +97,7 @@ class JaegerModel(tf.keras.Model):
             "loss": self.loss_tracker.result(),
             **{m.name: m.result() for m in self.metrics},
         }
-
+    @tf.function(jit_compile=False)
     def predict_step(self, data):
         # Unpack the data
         x, y = data[0], data[1:]
