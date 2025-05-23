@@ -217,7 +217,7 @@ class DynamicModelBuilder:
         self.optimizer = None
         self.loss_classifier = None
         self.loss_reliability = None
-        self._checkpoints = None
+        self._checkpoints = dict()
         self._load_training_params()
         self._regularizer = {
             "l2" : tf.keras.regularizers.L2,
@@ -233,8 +233,6 @@ class DynamicModelBuilder:
                 shutil.rmtree(p)
             elif p.exists() and self._from_last_checkpoint:
                 # None is not available
-                if self._checkpoints == None:
-                    self._checkpoints = dict()
                 self._checkpoints[p.name] = self.get_latest_h5_with_metadata(p)
             
             p.mkdir(parents=True, exist_ok=True)
@@ -297,7 +295,7 @@ class DynamicModelBuilder:
             models["jaeger_classifier"]  = tf.keras.Model(inputs=models["rep_model"].input, 
                                                           outputs=x, 
                                                           name="Jaeger_classifier")
-            if self._checkpoints.get("classifier").get("path"):
+            if self._checkpoints.get("classifier", {}).get("path", False):
                 # loads weights from the last checkpoint
                 models["jaeger_classifier"].load_weights(self._checkpoints.get("classifier").get("path"))
                 ic(f"Loaded classification model weights from {self._checkpoints.get("classifier").get("path")}")
@@ -317,7 +315,7 @@ class DynamicModelBuilder:
                                                           outputs=x, 
                                                           name="Jaeger_reliability")
 
-            if self._checkpoints.get("reliability").get("path"):
+            if self._checkpoints.get("reliability", {}).get("path", False):
                 # loads weights from the last checkpoint
                 models["jaeger_reliability"].load_weights(self._checkpoints.get("reliability").get("path"))
                 ic(f"Loaded reliability model weights from {self._checkpoints.get("reliability").get("path")}")
