@@ -678,6 +678,10 @@ def train_fragment_core(**kwargs):
                                         num_parallel_reads=len(v.get("paths")),
                                         buffer_size=200)
         _buffer_size = string_processor_config.get("buffer_size")
+        if string_processor_config.get("input_type") == "translated":
+            padded_shape = {'translated': [6, string_processor_config.get("crop_size")//3 -1, string_processor_config.get("codon_depth")]} 
+        elif string_processor_config.get("input_type") == "nucleotide":
+            padded_shape = {'nucleotide': [2, string_processor_config.get("crop_size"), 4]} 
         train_data[k]=_data.map(process_string_train(
                                                         codons=string_processor_config.get("codon"),
                                                         codon_num=string_processor_config.get("codon_id"),
@@ -690,7 +694,8 @@ def train_fragment_core(**kwargs):
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
                             #reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                             )\
-                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
+                    .padded_batch(batch_size=builder.train_cfg.get("batch_size"),
+                            padded_shapes=(padded_shape, [builder.model_cfg.get("classifier").get("output_units")]))\
                     .prefetch(tf.data.AUTOTUNE)
     ic(builder.train_cfg.get("classifier_train_steps"))
     ic(builder.train_cfg.get("classifier_epochs"))
@@ -709,7 +714,8 @@ def train_fragment_core(**kwargs):
 
         if checkpoint:
             train_args["initial_epoch"] = checkpoint.get("classifier", {}).get("epoch", 0)
-
+        if kwargs.get('only_classification_head', False):
+            models.get('rep_model').trainable = False
         models.get("jaeger_classifier").fit(
             train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
             **train_args)
@@ -726,7 +732,11 @@ def train_fragment_core(**kwargs):
     for k,v in _rel_train_data.items():
         _data = tf.data.TextLineDataset(v.get("paths"), 
                                         num_parallel_reads=len(v.get("paths")),
-                                        buffer_size=200)   
+                                        buffer_size=200)  
+        if string_processor_config.get("input_type") == "translated":
+            padded_shape = {'translated': [6, string_processor_config.get("crop_size")//3 -1, string_processor_config.get("codon_depth")]} 
+        elif string_processor_config.get("input_type") == "nucleotide":
+            padded_shape = {'nucleotide': [2, string_processor_config.get("crop_size"), 4]} 
         rel_train_data[k] = _data.map(process_string_train(
                                                         codons=string_processor_config.get("codon"),
                                                         codon_num=string_processor_config.get("codon_id"),
@@ -739,7 +749,8 @@ def train_fragment_core(**kwargs):
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
                             #reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                             )\
-                    .batch(builder.train_cfg.get("batch_size"), drop_remainder=True)\
+                    .padded_batch(batch_size=builder.train_cfg.get("batch_size"),
+                            padded_shapes=(padded_shape, [builder.model_cfg.get("classifier").get("output_units")]))\
                     .prefetch(tf.data.AUTOTUNE)
     # ============== check if the model has converged ========
 
