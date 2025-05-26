@@ -75,6 +75,7 @@ def tune(**kwargs):
 
 @click.command()
 @click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=True, help="Path to training configuration file (YAML)")
+@click.option('--only_classification_head', is_flag=True, required=False, help="Only update the classification head")
 @click.option('--from_last_checkpoint', is_flag=True, required=False, help="Start training from the last checkpoint")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def train(**kwargs):
@@ -122,6 +123,86 @@ def dinuc_shuffle(**kwargs):
     shuffle_core(**kwargs)
     pass
 
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Simulate a metagenome assembly from contigs/genomes given fragment size range.
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger utils fragment [OPTIONS] -i contigs.fasta -o fragemented_contigs.fasta
+
+        """,
+)
+@click.option('-i', '--input', type=click.Path(exists=True), required=True, help="Path to input file")
+@click.option('-o', '--output', type=str, required=True, help="Path to output file")
+@click.option('--minlen', type=int, required=True, help="min fragment size")
+@click.option('--maxlen', type=int, required=True, help="max fragment size")
+@click.option('--overlap', type=int, required=False, help="overlap between fragments", default=0)
+@click.option('--shuffle', is_flag=True, help="enable shuffling.")
+def fragment(**kwargs):
+    """shuffles DNA sequences while preserving the dinucleotide composition."""
+    from jaeger.commands.utils import split_core
+    split_core(**kwargs)
+    pass
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Gradually mask random positions in a given fasta record.
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger utils mask [OPTIONS] -i contigs.fasta -o fragemented_contigs.fasta
+
+        """,
+)
+@click.option('-i', '--input', type=click.Path(exists=True), required=True, help="Path to input file")
+@click.option('-o', '--output', type=str, required=True, help="Path to output file")
+@click.option('--minperc', type=float, required=False, help="min percentage of positions to mask", default=0.0)
+@click.option('--maxperc', type=float, required=False, help="maxp percentage of positions to mask", default=1.0)
+@click.option('--step', type=float, required=False, help="perc positions to mask in each iteration", default=0.01)
+def mask(**kwargs):
+    """shuffles DNA sequences while preserving the dinucleotide composition."""
+    from jaeger.commands.utils import mask_core
+    mask_core(**kwargs)
+    pass
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Generate a non-redundant fragment database from fasta file for training/validating
+            fragment models
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger utils dataset [OPTIONS] -i contigs.fasta -o fragemented_contigs.fasta
+
+        """,
+)
+@click.option('-i', '--input', type=click.Path(exists=True), required=True, help="Path to input file")
+@click.option('-o', '--output', type=str, required=True, help="Path to output file")
+@click.option('--class',  type=int, required=True, help="class label")
+@click.option('--valperc', type=float, required=False, help="percentage of fragments to include in validation set", default=0.1)
+@click.option('--trainperc', type=float, required=False, help="percentage of fragments to include in train set", default=0.8)
+@click.option('--testperc', type=float, required=False, help="percentage of fragments to include in test set", default=0.1)
+@click.option('--maxiden',  type=float, required=False, help="max identity between any two fragments", default=0.6)
+@click.option('--maxcov',  type=float, required=False, help="max coverage between any two fragments", default=0.6)
+@click.option('--fraglen',  type=int, required=False, help="max fragment length", default=2048)
+@click.option('--overlap',  type=int, required=False, help="max overlap between sequences", default=1024)
+@click.option('--outtype', type=click.Choice(['CSV', 'FASTA'], case_sensitive=False), required=False, help="output type", default="CSV")
+@click.option('--method', type=click.Choice(['ANI', 'AAI'], case_sensitive=False), required=False, help="dereplication method", default="ANI")
+
+def dataset(**kwargs):
+    """Generate a non-redundant fragment database from fasta file for training/validating
+            fragment models"""
+    from jaeger.commands.utils import dataset_core
+    dataset_core(**kwargs)
+    pass
 
 
 main.add_command(test)
