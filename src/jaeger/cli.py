@@ -144,11 +144,46 @@ def tune(**kwargs):
 
 @click.command()
 @click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=True, help="Path to training configuration file (YAML)")
-@click.option('--only_classification_head', is_flag=True, required=False, help="Only update the classification head")
-@click.option('--from_last_checkpoint', is_flag=True, required=False, help="Start training from the last checkpoint")
+@click.option('--only_classification_head', is_flag=True, required=False, help="Only train the classification head without the updating the representation learner's weights")
+@click.option('--only_reliability_head', is_flag=True, required=False, help="Only train the reliability model head")
+@click.option('--only_heads', is_flag=True, required=False, help="Only train the reliability model head")
+@click.option('--from_last_checkpoint', is_flag=True, required=False, help="continue training from the last checkpoints")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def train(**kwargs):
-    """Train new models on custom databases from scratch."""
+    """Train new models on custom databases from scratch.
+    
+    # to start training from scratch
+    jaeger train -c training/test8.yaml
+
+    # to resume training (representation learner and heads) from latest checkpoints
+    jaeger train -c training/test8.yaml --from_last_checkpoint
+
+    # to resume training the classification head from the latest classification model checkpoint
+    jaeger train -c training/test8.yaml --from_last_checkpoint --only_classification_head
+
+    # to resume training the reliability model head from the latest reliability model checkpoint
+    jaeger train -c training/test8.yaml --from_last_checkpoint --only_reliability_head
+
+
+    # to resume training the reliability model head and classification model head from the latest model checkpoints
+    jaeger train -c training/test8.yaml --from_last_checkpoint --only_heads
+
+    """
+    
+    # Collect which flags are True
+    selected = [
+        flag for flag, value in {
+            'only_classification_head': kwargs.get("only_classification_head", False),
+            'only_reliability_head': kwargs.get("only_reliability_head", False),
+            'only_heads': kwargs.get("only_heads", False)
+        }.items() if value
+    ]
+
+    # Check mutual exclusivity
+    if len(selected) > 1:
+        raise click.UsageError(
+            f"Options {', '.join('--' + flag for flag in selected)} are mutually exclusive. Please specify only one."
+        )
     from jaeger.commands.train import train_contig_core, train_fragment_core
     train_fragment_core(**kwargs)
 
@@ -277,7 +312,6 @@ def dataset(**kwargs):
 
 main.add_command(test)
 main.add_command(predict)
-main.add_command(tune)
 main.add_command(train)
 main.add_command(register_models)
 main.add_command(utils)

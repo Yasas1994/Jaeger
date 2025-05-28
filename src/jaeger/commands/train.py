@@ -91,6 +91,9 @@ class DynamicModelBuilder:
                                     check_convergence:str = "classifier",
                                     pattern: str = r"epoch:(\d+)-loss:(\d+\.\d+)") -> Optional[tuple[Path, dict]]:
         path = Path(path)
+        """
+        to do: create a checkpoint file once the model converges
+        """
         h5_files = sorted(path.glob("*.h5"), key=lambda f: f.stat().st_mtime, reverse=True)
         for file in h5_files:
             match = re.search(pattern, file.name)
@@ -548,7 +551,7 @@ def train_fragment_core(**kwargs):
     checkpoint = builder._checkpoints
     converged = checkpoint and checkpoint.get("classifier", {}).get("is_converged", False)
 
-    if not converged:
+    if not converged and not kwargs.get('only_reliability_head', False):
         train_args = {
 
             "validation_data": train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
@@ -558,13 +561,13 @@ def train_fragment_core(**kwargs):
 
         if checkpoint:
             train_args["initial_epoch"] = checkpoint.get("classifier", {}).get("epoch", 0)
-        if kwargs.get('only_classification_head', False):
+        if kwargs.get('only_classification_head', False) or kwargs.get('only_heads', False) :
             models.get('rep_model').trainable = False
         models.get("jaeger_classifier").fit(
             train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
             **train_args)
     else:
-        ic("Skipping training — classification model already converged.")
+        ic("Skipping training — classification model")
 
     # ============== reliability model ========================
     builder.compile_model(models, train_branch="reliability")
@@ -601,7 +604,7 @@ def train_fragment_core(**kwargs):
     checkpoint = builder._checkpoints
     converged = checkpoint and checkpoint.get("reliability", {}).get("is_converged", False)
 
-    if not converged:
+    if not converged and not  kwargs.get('only_classification_head', False):
         train_args = {
 
             "validation_data":  rel_train_data.get("validation").take(builder.train_cfg.get("reliability_validation_steps")),
@@ -616,7 +619,7 @@ def train_fragment_core(**kwargs):
             rel_train_data.get("train").take(builder.train_cfg.get("reliability_train_steps")),
             **train_args)
     else:
-        ic("Skipping training — reliability model already converged.")
+        ic("Skipping training — reliability model")
     
     # ============= test final model =========================
     models.get('jaeger_model').trainable = False
