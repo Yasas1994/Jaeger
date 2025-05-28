@@ -1,6 +1,9 @@
 import logging
 from decimal import Decimal
-
+import jinja2
+from pathlib import Path
+from typing import Dict
+import yaml
 logger = logging.getLogger("Jaeger")
 
 from rich.progress import ProgressColumn
@@ -20,13 +23,13 @@ class MsPerStepColumn(ProgressColumn):
     """Custom column to display milliseconds per step."""
     def render(self, task):
         if task.speed and task.speed > 0:
-            ms_per_step = 1000 / task.speed
-            return Text(f"{ms_per_step:.2f} ms/step")
+            ms_per_step = 1000/ task.speed
+            return Text(f"{ms_per_step:.0f} ms/step")
         return Text("– ms/step")
 
 
 
-def track_ms(iterable, description="Working..."):
+def track_ms(iterable, description="Working...", disable=False):
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[cyan]{task.description}"),
@@ -35,6 +38,7 @@ def track_ms(iterable, description="Working..."):
         MsPerStepColumn(),
         TimeElapsedColumn(),
         TimeRemainingColumn(),
+        disable=disable
     )
     with progress:
         task = progress.add_task(description, total=None)
@@ -42,6 +46,20 @@ def track_ms(iterable, description="Working..."):
             yield item
             progress.update(task, advance=1)
 
+def load_model_config(path: Path) -> Dict:
+    '''
+    loads the configuration file from the template
+    '''
+    
+    with open(path) as fp:
+        _data = yaml.safe_load(fp)
+
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=path.parent))
+    template = env.get_template(path.name)
+
+    data = yaml.safe_load(template.render(_data))
+
+    return data
 
 def safe_divide(numerator, denominator):
     try:
@@ -77,8 +95,6 @@ def format_seconds(seconds):
     minutes = seconds // 60
     remaining_seconds = seconds % 60
     return f"{minutes} minutes and {remaining_seconds} seconds"
-
-
 
 # from https://github.com/davidsa03/numerize
 def round_num(n, decimal=2):
