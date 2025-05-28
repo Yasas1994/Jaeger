@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from importlib.resources import files
 import tensorflow as tf
-from jaeger.nnlib.v1.cmodel import JaegerModel
+from jaeger.nnlib.cmodel import JaegerModel
 from jaeger.nnlib.v1.layers import WRes_model_embeddings
 from jaeger.preprocess.v1.convert import process_string
 from jaeger.preprocess.fasta import fragment_generator
@@ -12,7 +12,7 @@ from jaeger.utils.test import test_tf
 import warnings
 from collections import defaultdict
 from typing import DefaultDict, Dict, Generator, Any
-from rich.progress import track
+from jaeger.utils.misc import track_ms as track
 warnings.filterwarnings("ignore")
 
 class InferModel:
@@ -123,7 +123,7 @@ def test_core(**kwargs) -> None:
         #ic(f"model computational graph is written to {path / f"{model_name}_graph"}")
 
         logger.info("loading the model")
-        model = InferModel(files("jaeger.data.models.default").joinpath(f"jaeger_graph"))
+        model = InferModel(files("jaeger.data.models.default").joinpath(f"jaeger_fragment_graph"))
         logger.info("starting model inference")
         _ = model.predict(idataset)
         logger.info("5 test model passed!")
