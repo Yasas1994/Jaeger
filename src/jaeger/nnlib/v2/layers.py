@@ -15,6 +15,7 @@ by simply adding this file to your project. If you find any bugs please contact 
 it and send me a pull request :)
 """
 
+
 ## Activations 
 class GeLU(keras.layers.Layer):
     def __init__(self, **kwargs):
@@ -683,3 +684,4 @@ class ResidualBlock(tf.keras.layers.Layer):
 
 # To do: implement a method to set epsilon considering the data type of the tensors passed to the layers
 # if not implemented correctly, this can lead to overflow/underflow issues. 
+
