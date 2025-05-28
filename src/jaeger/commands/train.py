@@ -19,15 +19,15 @@ import shutil
 import tensorflow as tf
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedAdd, MaskedBatchNorm, MaskedConv1D, ResidualBlock
+from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedBatchNorm, MaskedConv1D, ResidualBlock
+from jaeger.nnlib.inference import AvailableModels, InferModel, evaluate
 import logging
 import re
-from jaeger.utils.misc import numerize
+from jaeger.utils.misc  import numerize, load_model_config
 # dev
 import numpy as np
 from icecream import ic
-from collections import defaultdict
-from jaeger.utils.misc import track_ms
+
 # todo
 # prevent over writing existing experiments
 # train from last checkpoint 
@@ -35,163 +35,7 @@ from jaeger.utils.misc import track_ms
 logger = logging.getLogger("Jaeger")
 ic.configureOutput(prefix="Jaeger |")
 
-class AvailableModels:
-    """
-    get all available models from the model path
-    """
-    def __init__(self, path):
-        self.path = Path(path)
-        self.info = self._scan_for_models()
-        
 
-    def _scan_for_models(self) -> defaultdict:
-        _tmp = defaultdict(dict)
-        for model_graph in self.path.rglob("*_graph"):
-            if model_graph.is_dir():
-                ic(model_graph)
-                _tmp[model_graph.name.rstrip("_graph")]['graph'] = model_graph
-            for _match in ("classes", "project"):
-                for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
-                    if _cfg.is_file():
-                        ic(_cfg)
-                        _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
-        
-        return _tmp
-
-class InferModel:
-    """
-    loads a graph given a dict with model graph location and class map
-    consumnes batched iterators and returns logits per iterator element
-    """
-    def __init__(self, path_dict):
-        self.class_map = self._load_class_map(path_dict.get("classes"))
-        self.loaded_model = tf.saved_model.load(path_dict.get("graph"))
-        self.inference_fn = self.loaded_model.signatures["serving_default"]
-        self.string_processor_config = self._load_string_processor_config(path_dict.get("project"))
-    
-    def _predict_step(self, batch):
-        # Unpack the data
-        x, meta = batch[0], batch[1:]
-        # set model to inference mode
-        y_logits = self.inference_fn(x.get(self.string_processor_config.get("input_type")))
-        return y_logits, meta
-
-    def predict(self, x) -> dict[str, np.ndarray]:
-        accum = defaultdict(list)
-
-        for batch in track_ms(x, description="[cyan]Crunching data..."):
-            y_hat, meta = self._predict_step(batch)
-
-            # Collect meta: tuple of tensors (B,)
-            for i, m in enumerate(meta):
-                accum[f"meta_{i}"].append(m.numpy())
-
-            # Collect y_hat: dict of tensors
-            for k, v in y_hat.items():
-                accum[k].append(v.numpy())
-
-        # Concatenate all batches
-        return {k: np.concatenate(v, axis=0) for k, v in accum.items()}
-
-    def evaluate(self, x) -> dict[str, float]:
-        accum = defaultdict(list)
-
-        for batch in track_ms(x, description="[cyan]Crunching data..."):
-            y_hat, y_true = self._predict_step(batch)
-
-            accum["logits"].append(y_hat["prediction"].numpy())
-            accum["y_true"].append(y_true[0].numpy())
-
-        # Concatenate over all batches
-        logits = np.concatenate(accum["logits"], axis=0)
-        y_true = np.concatenate(accum["y_true"], axis=0)
-
-        # Compute loss (categorical cross-entropy from logits)
-        loss = tf.reduce_mean(
-            tf.keras.losses.categorical_crossentropy(
-                y_true,
-                logits,
-                from_logits=True
-            )
-        ).numpy()
-
-        # Compute accuracy
-        pred_labels = np.argmax(logits, axis=1)
-        true_labels = np.argmax(y_true, axis=1)
-        accuracy = np.mean(pred_labels == true_labels)
-
-        return {
-            "loss": float(loss),
-            "accuracy": float(accuracy)
-        }
-    def _load_class_map(self, path):
-        with open(path) as f:
-            return yaml.safe_load(f)
-        
-    def _load_string_processor_config(self, path):
-        from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
-
-        _map = {
-            "CODON" : CODONS,
-            "CODON_ID": CODON_ID,
-            "AA_ID": AA_ID,
-            "MURPHY10_ID": MURPHY10_ID
-        }
-
-        return {'input_type':cfg.get('model').get('embedding').get('type'),
-                'codon_depth': cfg.get('model').get('embedding').get('input_shape')[-1],
-                'codons': _map.get(cfg.get('model').get('string_processor').get('codon')),
-                'codon_num': _map.get(cfg.get('model').get('string_processor').get('codon_id'))
-                }
-
-def evaluate(model, x) -> dict[str, float]:
-    accum = defaultdict(list)
-    for j,i in track_ms(x, description="[cyan]Crunching data..."):
-
-        y_hat = model(j, training=False)
-        y_true = i
-        accum["logits"].append(y_hat["prediction"].numpy())
-        accum["y_true"].append(y_true.numpy())
-
-    # Concatenate over all batches
-    logits = np.concatenate(accum["logits"], axis=0)
-    y_true = np.concatenate(accum["y_true"], axis=0)
-
-    # Compute loss (categorical cross-entropy from logits)
-    loss = tf.reduce_mean(
-        tf.keras.losses.categorical_crossentropy(
-            y_true,
-            logits,
-            from_logits=True
-        )
-    ).numpy()
-
-    # Compute accuracy
-    pred_labels = np.argmax(logits, axis=1)
-    true_labels = np.argmax(y_true, axis=1)
-    accuracy = np.mean(pred_labels == true_labels)
-
-    return {
-        "loss": float(loss),
-        "accuracy": float(accuracy)
-    }
-
-def load_model_config(path: Path) -> Dict:
-    '''
-    loads the configuration file from the template
-    '''
-    
-    with open(path) as fp:
-        _data = yaml.safe_load(fp)
-
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=path.parent))
-    template = env.get_template(path.name)
-
-    data = yaml.safe_load(template.render(_data))
-
-    return data
 
 class DynamicModelBuilder:
     """
@@ -743,14 +587,14 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"), 
                                                         input_type=string_processor_config.get("input_type"),
-                                                        num_classes=builder.model_cfg.get("classifier").get("output_units"),
+                                                        num_classes=builder.model_cfg.get("reliability_model").get("output_units"),
                                                         class_label_onehot=False),
                         num_parallel_calls=tf.data.AUTOTUNE)\
                     .shuffle(buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size ,
                             #reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                             )\
                     .padded_batch(batch_size=builder.train_cfg.get("batch_size"),
-                            padded_shapes=(padded_shape, [builder.model_cfg.get("classifier").get("output_units")]))\
+                            padded_shapes=(padded_shape, [builder.model_cfg.get("reliability_model").get("output_units")]))\
                     .prefetch(tf.data.AUTOTUNE)
     # ============== check if the model has converged ========
 
