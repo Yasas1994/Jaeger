@@ -11,16 +11,82 @@ both phages and prophages in metagenomic assemblies.
 
 import os
 import sys
+import json
 import click
+from collections import defaultdict
+import logging
+from pathlib import Path
 from importlib.metadata import version
+from importlib.resources import files
+from jaeger.utils.logging import get_logger
 import warnings
 warnings.filterwarnings("ignore")
 
 if sys.platform == "darwin":
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 elif sys.platform.startswith("linux"):
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
     os.environ["XLA_FLAGS"] ="--xla_gpu_cuda_data_dir=/usr/lib/cuda"
+
+def json_to_dict(path: str):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {} 
+
+def add_data_to_json(path: str, new_data: dict, list_key: str = None):
+    """
+    Add new_data into the JSON at `path`.  
+    - If the top‐level JSON is a dict, this will merge new_data’s keys.  
+    - If list_key is provided, it will append new_data into the list at that key.
+    """
+    data = json_to_dict(path)
+
+    if list_key:
+        # ensure it’s a list
+        data.setdefault(list_key, [])
+        if not isinstance(data[list_key], list):
+            raise ValueError(f"Expected {list_key} to be a list")
+        data[list_key].append(new_data)
+    else:
+        if not isinstance(data, dict):
+            raise ValueError("Top‐level JSON is not an object")
+        data.update(new_data)
+
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+class AvailableModels:
+    """
+    get all available models from the model path
+    """
+    def __init__(self, path):
+        if isinstance(path, str) or isinstance(path, Path):
+            self.paths = [Path(path)]
+        elif isinstance(path, list):
+            self.paths = [Path(i) for i in path]
+        self.info = self._scan_for_models()
+        
+
+    def _scan_for_models(self) -> defaultdict:
+        _tmp = defaultdict(dict)
+        for path in self.paths:
+            for model_graph in path.rglob("*_graph"):
+                if model_graph.is_dir():
+                    _tmp[model_graph.name.rstrip("_graph")]['graph'] = model_graph
+                for _match in ("classes", "project"):
+                    for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
+                        if _cfg.is_file():
+                            _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
+        
+        return _tmp
+USER_MODEL_PATHS = json_to_dict(files('jaeger.data') / "config.json").get("model_paths")
+DEFAULT_MODEL_PATH = [files('jaeger.data')]
+AVAIL_MODELS = [i for i in AvailableModels(path=DEFAULT_MODEL_PATH + USER_MODEL_PATHS).info.keys() if i != "jaeger_fragment"] + ["default"] 
+logger = logging.getLogger("Jaeger")
 
 @click.group()
 @click.version_option(version("jaeger-bio"), prog_name="jaeger")
@@ -42,7 +108,7 @@ def test(**kwargs):
 @click.option('-o', '--output', type=str, required=True, help="Path to output directory")
 @click.option('--fsize', type=int, default=2048, help="Length of the sliding window (value must be 2^n). Default: 2048")
 @click.option('--stride', type=int, default=2048, help="Stride of the sliding window. Default: 2048 (stride==fsize)")
-@click.option('-m', '--model', type=click.Choice(['default', 'experimental_1', 'experimental_2']), default='default', help="Select a deep-learning model to use. Default: default")
+@click.option('-m', '--model', type=click.Choice(AVAIL_MODELS), default='default', help="Select a deep-learning model to use. Default: default")
 @click.option('-p', '--prophage', is_flag=True, help="Extract and report prophage-like regions. Default: False")
 @click.option('-s', '--sensitivity', type=float, default=1.5, help="Sensitivity of the prophage extraction algorithm (0-4). Default: 1.5")
 @click.option('--lc', type=int, default=500_000, help="Minimum contig length for prophage extraction. Default: 500000 bp")
@@ -59,8 +125,11 @@ def test(**kwargs):
 @click.option('-f', '--overwrite', is_flag=True, help="Overwrite existing files")
 def predict(**kwargs):
     """Run jaeger inference pipeline."""
-    from jaeger.commands.predict import run_core
-    run_core(**kwargs)
+    if kwargs.get('model') == "default":
+        from jaeger.commands.predict_legacy import run_core
+        run_core(**kwargs)
+    else:
+        logger.info("Comming soon!")
    
 @click.command()
 @click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=None, help="Path to tuning configuration file (YAML)")
@@ -84,13 +153,14 @@ def train(**kwargs):
     train_fragment_core(**kwargs)
 
 @click.command()
-@click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=None, help="Path to training configuration file (YAML)")
-@click.option('-m', '--model', type=str, required=True, help="Path to model weights or graph")
-@click.option('-n', required=True, help="Model name")
+@click.option('-p', '--path', type=str, required=True, help="Path to model weights, graph and configuration files")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
-def register_model(**kwargs):
-    """Adds newly trained and fine-tuned models to the model database."""
-    pass
+def register_models(**kwargs):
+    """Appends newly trained and fine-tuned models to the model path"""
+ 
+
+    path = Path(files('jaeger.data')) / "config.json"
+    add_data_to_json(path, kwargs.get("path"), list_key="model_paths")
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
@@ -121,7 +191,7 @@ def dinuc_shuffle(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import shuffle_core
     shuffle_core(**kwargs)
-    pass
+
 
 @utils.command(
     context_settings=dict(ignore_unknown_options=True),
@@ -145,7 +215,7 @@ def fragment(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import split_core
     split_core(**kwargs)
-    pass
+
 
 @utils.command(
     context_settings=dict(ignore_unknown_options=True),
@@ -168,7 +238,7 @@ def mask(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import mask_core
     mask_core(**kwargs)
-    pass
+
 
 
 @utils.command(
@@ -209,6 +279,7 @@ main.add_command(test)
 main.add_command(predict)
 main.add_command(tune)
 main.add_command(train)
+main.add_command(register_models)
 main.add_command(utils)
 
 
