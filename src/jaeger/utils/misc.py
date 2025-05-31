@@ -4,6 +4,9 @@ import jinja2
 from pathlib import Path
 from typing import Dict
 import yaml
+import json
+import os
+from collections import defaultdict
 logger = logging.getLogger("Jaeger")
 
 from rich.progress import ProgressColumn
@@ -129,3 +132,64 @@ def numerize(n, decimal=2):
                 return num + sufix if minus_buff > 0 else "-" + num + sufix
         except IndexError:
             print("You've reached the end")
+
+def json_to_dict(path: str):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {} 
+
+def add_data_to_json(path: str, new_data: dict, list_key: str = None):
+    """
+    Add new_data into the JSON at `path`.  
+    - If the top‐level JSON is a dict, this will merge new_data’s keys.  
+    - If list_key is provided, it will append new_data into the list at that key.
+    """
+    data = json_to_dict(path)
+
+    if list_key:
+        # ensure it’s a list
+        data.setdefault(list_key, [])
+        if not isinstance(data[list_key], list):
+            raise ValueError(f"Expected {list_key} to be a list")
+        data[list_key].append(new_data)
+    else:
+        if not isinstance(data, dict):
+            raise ValueError("Top‐level JSON is not an object")
+        data.update(new_data)
+
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+
+class AvailableModels:
+    """
+    get all available models from the model path
+    """
+    def __init__(self, path):
+        if isinstance(path, str) or isinstance(path, Path):
+            self.paths = [Path(path)]
+        elif isinstance(path, list):
+            self.paths = [Path(i) for i in path]
+        self.info = self._scan_for_models()
+        
+
+    def _scan_for_models(self) -> defaultdict:
+        _tmp = defaultdict(dict)
+        for path in self.paths:
+            for model_graph in path.rglob("*_graph"):
+                if model_graph.is_dir():
+                    _tmp[model_graph.name.rstrip("_graph")]['graph'] = model_graph
+                for _match in ("classes", "project", "weights"):
+                    for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
+                        if _cfg.is_file():
+                            _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
+        
+        return _tmp    
+    
+def get_model_id(model:str):
+    return model.split("_", 1)[1].rsplit("_", 1)[0]
