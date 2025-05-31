@@ -2,17 +2,26 @@ from jaeger.preprocess.shuffle_dna import dinuc_shuffle
 import polars as pl
 import pyfastx 
 import random
-import os
 import subprocess
-import tempfile
 import random
 import shutil
 import sys
 from pathlib import Path
 from rich.progress import track
 
+
+def shuffle_dna(seq: str) -> str:
+    """Randomly shuffles a DNA sequence."""
+    seq_list = list(seq)
+    random.shuffle(seq_list)
+    return ''.join(seq_list)
+
 def shuffle_core(**kwargs):
     
+    if kwargs.get("dinuc"):
+        shuffle_fn = dinuc_shuffle
+    else:
+        shuffle_fn = shuffle_dna
 
     match kwargs.get('itype'):
         case 'CSV':
@@ -24,7 +33,7 @@ def shuffle_core(**kwargs):
             )
             fs = f.with_columns(
                 pl.col("column_2")
-            .map_elements(lambda x : dinuc_shuffle(x) , return_dtype=pl.String),
+            .map_elements(lambda x : shuffle_fn(x) , return_dtype=pl.String),
                 pl.lit(0).alias("column_1")
             )
             f = pl.concat([f, fs]).sample(fraction=1.0, shuffle=True, with_replacement=False)
@@ -35,7 +44,7 @@ def shuffle_core(**kwargs):
             with open(kwargs.get('output'), "w") as fh:
                 for name, seq in f:
                     fh.write(f">{name}\n")
-                    shuffled = dinuc_shuffle(seq)
+                    shuffled = shuffle_fn(seq)
                     for i in range(0, len(shuffled), 70):
                         fh.write(shuffled[i:i+70] + "\n")
 
