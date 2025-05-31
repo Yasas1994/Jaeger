@@ -62,8 +62,8 @@ def get_window_summary(x, phage_pos):
 
     """
     items, run_length = find_runs(x == phage_pos)
-    run_length = np.array(run_length, dtype=np.unicode_)
-    tmp = np.empty(items.shape, dtype=np.unicode_)
+    run_length = np.array(run_length, dtype=np.str_)
+    tmp = np.empty(items.shape, dtype=np.str_)
     # print(phage_pos, items, run_length)
     tmp[items != phage_pos] = "n"
     tmp[items == phage_pos] = "V"
