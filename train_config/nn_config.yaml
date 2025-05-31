@@ -1,88 +1,132 @@
-# Author: yasas.wijesekara@uni-greofswald.de
+# Author: yasas.wijesekara@uni-greifswald.de
 # Jaeger model and training configuration for training new models and fine-tuning 
 # existing models.
 # model(input) -> [logits, reliability score] 
 
 model:
-  name: "jaeger_1.5M" # the trained model will be saved under this name
-  experiment: "1" 
-  seed: 3244534
+  name: "jaeger" # the trained model will be saved under this name
+  experiment: "test"
+  seed: 57341
+  base_dir: "/home/wijesekary/Jaeger_revisions/training"
   class_label_map:
-    - class: "phage"
-      label: 1
-    - class: "bacteria"
-      label: 0
-    - class: "archaea"
-      label: 2
-    - class: "virus"
-      label: 3
-    - class: "eukarya"
-      label: 4
+  - class: "bacteria"
+    label: 0
+  - class: "phage"
+    label: 1
+  - class: "eukarya"
+    label: 2
+  - class: "archaea"
+    label: 3
+  - class: "plasmid"
+    label: 4
+  - class: "virus"
+    label: 5
   activation: "gelu"
   mode: "training" # or "tunning" -> freeze the representation learner and train the classifier
   embedding:
-    type: "translated"             # or "nucleotide"
+    type: "translated" # or "nucleotide"
     strands: 2
     frames: 6
     length: null
-    input_shape: [6, null, 64]     #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
-    embedding_size: 4
+    input_shape: [ 6, null, 64 ] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
+    embedding_size: 192
 
-  string_processor: # only applicable when type:nucleotide
+  string_processor:
+    # only applicable when type:nucleotide
     codon: "CODON"
     codon_id: "CODON_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
     crop_size: 1024
+    buffer_size: 20000 # -1 invokes dataset.cardinality()
+    reshuffle_each_iteration: True
 
   representation_learner:
-    masked_conv1d_1_filters: 64
+    masked_conv1d_1_filters: 128
     masked_conv1d_1_kernel_size: 7
     masked_conv1d_1_strides: 1
     masked_conv1d_1_dilation_rate: 1
     masked_conv1d_1_regularizer: l2
-    masked_conv1d_1_regularizer_w: 1e-4
+    masked_conv1d_1_regularizer_w: 0
 
-    block_sizes: [1, 1, 1]
-    block_filters: [64, 128, 256]
-    block_kernel_size: [5, 5, 5]
-    block_kernel_dilation: [1, 1, 1]
-    block_kernel_strides: [2, 2, 2]
-    block_regularizer: ["l2", "l2", "l2"]
-    block_regularizer_w: [1e-4, 1e-4, 1e-4]
+    block_sizes: [ 2, 2, 2 ]
+    block_filters: [ 128, 128, 128 ]
+    block_kernel_size: [ 5, 5, 5 ]
+    block_kernel_dilation: [ 3, 3, 3 ]
+    block_kernel_strides: [ 1, 1, 1 ]
+    block_regularizer: [ "l2", "l2", "l2" ]
+    block_regularizer_w: [ 0, 0, 0 ]
 
     masked_conv1d_final_kernel_size: 5
     masked_conv1d_final_strides: 1
     masked_conv1d_final_dilation_rate: 1
     masked_conv1d_final_regularizer: "l2"
-    masked_conv1d_final_regularizer_w: 1e-4
+    masked_conv1d_final_regularizer_w: 0
 
     pooling: "max"
 
   classifier:
-    dense_1_units: 128
-    kernel_regularizer_1: "l2" # l2, l1
-    kernel_regularizer_1_w: 1e-4
-    classes: 5
+    hidden_layers:
+    - units: 128
+      activation: gelu
+      use_bias: false
+      dropout_rate: 0
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001
+    - units: 128
+      activation: gelu
+      use_bias: false
+      dropout_rate: 0
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001
+    # - units: 64
+    #   activation: gelu
+    #   use_bias: false
+    #   dropout_rate: 0.3
+    #   kernel_regularizer: "l2" # l2, l1
+    #   kernel_regularizer_w: 0.00001
+    output_activation: null # or None for linear
+    output_use_bias: false
+    output_units: 6
 
   reliability_model:
-    dense_1_units: 128
-    kernel_regularizer_1: "l2" # l2, l1
-    kernel_regularizer_1_w: 1e-4
+    hidden_layers:
+    - units: 128
+      activation: gelu
+      use_bias: false
+      dropout_rate: 0
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001
+    output_units: 1
+    output_activation: null
+    output_use_bias: false
 
-  projector: # for supervised contrastive learning
-    dense_1_units: 128
-    kernel_regularizer_1: "l2" # l2, l1
-    kernel_regularizer_1_w: 1e-4
-    dropout_rate: 0.2
-    dense_2_units: 128
-    kernel_regularizer_2: "l2" # l2, l1
-    kernel_regularizer_2_w: 1e-4
+  projector:
+    # for supervised contrastive learning
+    hidden_layers:
+    - units: 128
+      activation: gelu
+      use_bias: false
+      dropout_rate: 0
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001 # 1.0e-5
+    - units: 128
+      activation: gelu
+      use_bias: false
+      dropout_rate: 0
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001
 
 training:
-  classifier_epochs: 10
-  reliability_epochs: 10
+  classifier_epochs: 100
+  reliability_epochs: 20
+  classifier_train_steps: -1
+  reliability_train_steps: -1 # -1 to run till the generator exhausts
+  classifier_validation_steps: -1
+  reliability_validation_steps: -1
+  batch_size: 64
   optimizer: "adam" # adam, rmsprop
   optimizer_params:
-    learning_rate: 0.00005
+    learning_rate: 0.0001
+    clipnorm: 20
 
   loss_classifier: "categorical_crossentropy"
   loss_params_classifier:
@@ -96,220 +140,234 @@ training:
   callbacks:
     clean_old: true
     directories:
-      -  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier"
-      -  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability"
+    - "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier"
+    - "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability"
     classifier:
-      - name: "EarlyStopping"
-        params:
-          monitor: "val_classifier_loss"
-          patience: 5
-          mode: "min"
-          restore_best_weights: true
-      - name: "ModelCheckpoint"
-        params:
-          filepath:  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{classifier_loss:.2f}.weights.h5"
-          monitor: "classifier_loss"
-          mode: "min"
-          save_weights_only: true
-          verbose: 1
-          save_best_only: false
-      - name: "TerminateOnNaN"
-      - name: "CSVLogger"
-        params:
-          filename: "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/training.log"
-          separator: ","
-          append: false
-        callbacks:
+    - name: "EarlyStopping"
+      params:
+        monitor: "val_loss"
+        patience: 15
+        mode: "min"
+        restore_best_weights: true
+    - name: "ModelCheckpoint"
+      params:
+        filepath: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
+        monitor: "val_loss"
+        mode: "min"
+        save_weights_only: true
+        verbose: 1
+        save_best_only: false
+    - name: "ReduceLROnPlateau"
+      params:
+        monitor: "val_loss"
+        patience: 5
+        factor: 0.95
+        min_lr: 0.000001
+    - name: "TerminateOnNaN"
+    - name: "CSVLogger"
+      params:
+        filename: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/training.log"
+        separator: ","
+        append: true
+      callbacks:
+
+
     reliability:
-      - name: "EarlyStopping"
-        params:
-          monitor: "reliability_loss"
-          patience: 5
-          mode: "min"
-          restore_best_weights: true
-      - name: "ModelCheckpoint"
-        params:
-          filepath:  "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/epoch:{epoch:02d}-loss:{reliability_loss:.2f}.weights.h5"
-          monitor: "reliability_loss"
-          mode: "min"
-          save_weights_only: true
-          verbose: 1
-          save_best_only: false
-      - name: "TerminateOnNaN"
-      - name: "CSVLogger"
-        params:
-          filename: "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/training.log"
-          separator: ","
-          append: false
+    - name: "EarlyStopping"
+      params:
+        monitor: "val_loss"
+        patience: 15
+        mode: "min"
+        restore_best_weights: true
+    - name: "ModelCheckpoint"
+      params:
+        filepath: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
+        monitor: "val_loss"
+        mode: "min"
+        save_weights_only: true
+        verbose: 1
+        save_best_only: false
+    - name: "ReduceLROnPlateau"
+      params:
+        monitor: "val_loss"
+        patience: 5
+        factor: 0.95
+        min_lr: 0.000001
+    - name: "TerminateOnNaN"
+    - name: "CSVLogger"
+      params:
+        filename: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/training.log"
+        separator: ","
+        append: true
 
   model_saving:
-    path : "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/model"
-    save_weights : true #saves layer-wise weights
+    path: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/model"
+    save_weights: true #saves layer-wise weights
     save_exec_graph: true #saves the model in tf saved_model format
 
-# separate files per-class or a file with all classes
-# path, label and class should be defined per file
-# if all data is in a single file prove a list of class
+  # separate files per-class or a file with all classes
+  # path, label and class should be defined per file
+  # if all data is in a single file prove a list of class
   fragment_classifier_data:
     train:
-      - class: [bacteria, phage, archaea, virus, eukarya]
-        path:
-          - "path_to_combined_file"
-        label: [0, 1, 2, 3, 4]
-      # - class: bacteria
-      #   path: "path/to/bac"
-      #   label: 0
-      #   fragment_length: 1024
-      # - class: phage
-      #   path: "path/to/phage"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: archaea
-      #   path:
-      #   label: 2
-      #   fragment_length: 1024
-      # - class: virus
-      #   path:
-      #   label: 3
-      #   fragment_length: 1024
-      # - class: eukarya
-      #   path:
-      #   label: 4
-      #   fragment_length: 1024
+    - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
+      path:
+      - "{{ model.base_dir }}/data/train_data_derep_rep_seq.txt.tmp"
+      label: [ 0, 1, 2, 3, 4, 5 ]
+    # - class: bacteria
+    #   path: "path/to/bac"
+    #   label: 0
+    #   fragment_length: 1024
+    # - class: phage
+    #   path: "path/to/phage"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: archaea
+    #   path:
+    #   label: 2
+    #   fragment_length: 1024
+    # - class: virus
+    #   path:
+    #   label: 3
+    #   fragment_length: 1024
+    # - class: eukarya
+    #   path:
+    #   label: 4
+    #   fragment_length: 1024
 
     validation:
-      - class: [bacteria, phage, archaea, virus, eukarya]
-        path:
-          - "path_to_combined_file"
-        label: [0, 1, 2, 3, 4]
-      # - class: bacteria
-      #   path: "path/to/bac"
-      #   label: 0
-      #   fragment_length: 1024
-      # - class: phage
-      #   path: "path/to/phage"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: archaea
-      #   path:
-      #   label: 2
-      #   fragment_length: 1024
-      # - class: virus
-      #   path:
-      #   label: 3
-      #   fragment_length: 1024
-      # - class: eukarya
-      #   path:
-      #   label: 4
-      #   fragment_length: 1024
+    - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
+      path:
+      - "{{ model.base_dir }}/data/val_data.txt"
+      label: [ 0, 1, 2, 3, 4, 5 ]
+    # - class: bacteria
+    #   path: "path/to/bac"
+    #   label: 0
+    #   fragment_length: 1024
+    # - class: phage
+    #   path: "path/to/phage"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: archaea
+    #   path:
+    #   label: 2
+    #   fragment_length: 1024
+    # - class: virus
+    #   path:
+    #   label: 3
+    #   fragment_length: 1024
+    # - class: eukarya
+    #   path:
+    #   label: 4
+    #   fragment_length: 1024
 
   contig_classifier_data:
     train:
-      - class: [bacteria, phage, archaea, virus, eukarya]
-        path:
-          - "path_to_combined_file"
-        label: [0, 1, 2, 3, 4]
-      # - class: bacteria
-      #   path: "path/to/bac"
-      #   label: 0
-      #   fragment_length: 1024
-      # - class: phage
-      #   path: "path/to/phage"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: archaea
-      #   path:
-      #   label: 2
-      #   fragment_length: 1024
-      # - class: virus
-      #   path:
-      #   label: 3
-      #   fragment_length: 1024
-      # - class: eukarya
-      #   path:
-      #   label: 4
-      #   fragment_length: 1024
+    - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
+      path:
+      - "path_to_combined_file"
+      label: [ 0, 1, 2, 3, 4, 5 ]
+    # - class: bacteria
+    #   path: "path/to/bac"
+    #   label: 0
+    #   fragment_length: 1024
+    # - class: phage
+    #   path: "path/to/phage"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: archaea
+    #   path:
+    #   label: 2
+    #   fragment_length: 1024
+    # - class: virus
+    #   path:
+    #   label: 3
+    #   fragment_length: 1024
+    # - class: eukarya
+    #   path:
+    #   label: 4
+    #   fragment_length: 1024
 
     validation:
-      - class: [bacteria, phage, archaea, virus, eukarya]
-        path:
-          - "path_to_combined_file"
-        label: [0, 1, 2, 3, 4]
-      # - class: bacteria
-      #   path: "path/to/bac"
-      #   label: 0
-      #   fragment_length: 1024
-      # - class: phage
-      #   path: "path/to/phage"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: archaea
-      #   path:
-      #   label: 2
-      #   fragment_length: 1024
-      # - class: virus
-      #   path:
-      #   label: 3
-      #   fragment_length: 1024
-      # - class: eukarya
-      #   path:
-      #   label: 4
-      #   fragment_length: 1024
+    - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
+      path:
+      - "path_to_combined_file"
+      label: [ 0, 1, 2, 3, 4, 5 ]
+    # - class: bacteria
+    #   path: "path/to/bac"
+    #   label: 0
+    #   fragment_length: 1024
+    # - class: phage
+    #   path: "path/to/phage"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: archaea
+    #   path:
+    #   label: 2
+    #   fragment_length: 1024
+    # - class: virus
+    #   path:
+    #   label: 3
+    #   fragment_length: 1024
+    # - class: eukarya
+    #   path:
+    #   label: 4
+    #   fragment_length: 1024
 
   fragment_reliability_data:
     train:
-      - class: [indist, ood]
-        path:
-          - "path_to_combined_file"
-        label: [1, 0]
-      # - class: indist
-      #   path: "path/to/bac"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: ood
-      #   path: "path/to/phage"
-      #   label: 0
-      #   fragment_length: 1024
+    - class: [ indist, ood ]
+      path:
+      - "{{ model.base_dir }}/data/train_data_derep_rep_seq_ood.txt"
+      label: [ 1, 0 ]
+    # - class: indist
+    #   path: "path/to/bac"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: ood
+    #   path: "path/to/phage"
+    #   label: 0
+    #   fragment_length: 1024
 
     validation:
-      - class: [indist, ood]
-        path:
-          - "path_to_combined_file"
-        label: [1, 0]
-      # - class: indist
-      #   path: "path/to/bac"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: ood
-      #   path: "path/to/phage"
-      #   label: 0
-      #   fragment_length: 1024
+    - class: [ indist, ood ]
+      path:
+      - "{{ model.base_dir }}/data/val_data_ood.txt"
+      label: [ 1, 0 ]
+    # - class: indist
+    #   path: "path/to/bac"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: ood
+    #   path: "path/to/phage"
+    #   label: 0
+    #   fragment_length: 1024
 
   contig_reliability_data:
     train:
-      - class: [indist, ood]
-        path:
-          - "path_to_combined_file"
-        label: [1, 0]
-      # - class: indist
-      #   path: "path/to/bac"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: ood
-      #   path: "path/to/phage"
-      #   label: 0
-      #   fragment_length: 1024
+    - class: [ indist, ood ]
+      path:
+      - "path_to_combined_file"
+      label: [ 1, 0 ]
+    # - class: indist
+    #   path: "path/to/bac"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: ood
+    #   path: "path/to/phage"
+    #   label: 0
+    #   fragment_length: 1024
 
     validation:
-      - class: [indist, ood]
-        path:
-          - "path_to_combined_file"
-        label: [1, 0]
-      # - class: indist
-      #   path: "path/to/bac"
-      #   label: 1
-      #   fragment_length: 1024
-      # - class: ood
-      #   path: "path/to/phage"
-      #   label: 0
-      #   fragment_length: 1024
+    - class: [ indist, ood ]
+      path:
+      - "path_to_combined_file"
+      label: [ 1, 0 ]
+    # - class: indist
+    #   path: "path/to/bac"
+    #   label: 1
+    #   fragment_length: 1024
+    # - class: ood
+    #   path: "path/to/phage"
+    #   label: 0
+    #   fragment_length: 1024
