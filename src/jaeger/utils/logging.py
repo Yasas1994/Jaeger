@@ -5,7 +5,7 @@ from datetime import datetime
 from rich.logging import RichHandler
 
 def description(version):
-    return f"""
+    return fr"""
                   .
                ,'/ \`.
               |\/___\/|
@@ -20,10 +20,9 @@ def description(version):
     ,'   .-._ \ `---' / _,-.   `.
        ,'    `-`-._,-'-'   `.
       '
-    \n\n## Jaeger {version} (yet AnothEr phaGe idEntifier) Deep-learning based
-bacteriophage discovery https://github.com/Yasas1994/Jaeger.git
-
-"""
+        ## Jaeger {version} (yet AnothEr phaGe idEntifier) Deep-learning based
+        bacteriophage discovery https://github.com/Yasas1994/Jaeger.git
+    """
 
 def get_logger(log_path:Path, log_file:str, level:int) -> logging.Logger:
     # Create a custom logger
