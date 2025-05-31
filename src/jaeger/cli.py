@@ -19,6 +19,7 @@ from pathlib import Path
 from importlib.metadata import version
 from importlib.resources import files
 from jaeger.utils.logging import get_logger
+from jaeger.utils.misc import json_to_dict, add_data_to_json, AvailableModels
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -28,61 +29,8 @@ elif sys.platform.startswith("linux"):
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
     os.environ["XLA_FLAGS"] ="--xla_gpu_cuda_data_dir=/usr/lib/cuda"
 
-def json_to_dict(path: str):
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {} 
 
-def add_data_to_json(path: str, new_data: dict, list_key: str = None):
-    """
-    Add new_data into the JSON at `path`.  
-    - If the top‐level JSON is a dict, this will merge new_data’s keys.  
-    - If list_key is provided, it will append new_data into the list at that key.
-    """
-    data = json_to_dict(path)
 
-    if list_key:
-        # ensure it’s a list
-        data.setdefault(list_key, [])
-        if not isinstance(data[list_key], list):
-            raise ValueError(f"Expected {list_key} to be a list")
-        data[list_key].append(new_data)
-    else:
-        if not isinstance(data, dict):
-            raise ValueError("Top‐level JSON is not an object")
-        data.update(new_data)
-
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
-
-class AvailableModels:
-    """
-    get all available models from the model path
-    """
-    def __init__(self, path):
-        if isinstance(path, str) or isinstance(path, Path):
-            self.paths = [Path(path)]
-        elif isinstance(path, list):
-            self.paths = [Path(i) for i in path]
-        self.info = self._scan_for_models()
-        
-
-    def _scan_for_models(self) -> defaultdict:
-        _tmp = defaultdict(dict)
-        for path in self.paths:
-            for model_graph in path.rglob("*_graph"):
-                if model_graph.is_dir():
-                    _tmp[model_graph.name.rstrip("_graph")]['graph'] = model_graph
-                for _match in ("classes", "project"):
-                    for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
-                        if _cfg.is_file():
-                            _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
-        
-        return _tmp
 USER_MODEL_PATHS = json_to_dict(files('jaeger.data') / "config.json").get("model_paths")
 DEFAULT_MODEL_PATH = [files('jaeger.data')]
 AVAIL_MODELS = [i for i in AvailableModels(path=DEFAULT_MODEL_PATH + USER_MODEL_PATHS).info.keys() if i != "jaeger_fragment"] + ["default"] 
@@ -129,7 +77,8 @@ def predict(**kwargs):
         from jaeger.commands.predict_legacy import run_core
         run_core(**kwargs)
     else:
-        logger.info("Comming soon!")
+        from jaeger.commands.predict import run_core
+        run_core(**kwargs)
    
 @click.command()
 @click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=None, help="Path to tuning configuration file (YAML)")
@@ -195,7 +144,8 @@ def register_models(**kwargs):
  
 
     path = Path(files('jaeger.data')) / "config.json"
-    add_data_to_json(path, kwargs.get("path"), list_key="model_paths")
+    model_path = Path(kwargs.get("path")).resolve()
+    add_data_to_json(path, str(model_path), list_key="model_paths")
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
@@ -220,9 +170,10 @@ def utils(obj):
 )
 @click.option('-i', '--input', type=click.Path(exists=True), required=True, help="Path to input file")
 @click.option('-o', '--output', type=str, required=True, help="Path to output file")
+@click.option('--dinuc', is_flag=True, required=False, help="dinuc shuffle")
 @click.option('--itype', type=click.Choice(['FASTA', 'CSV'], case_sensitive=False), required=True, help="input file type")
 @click.option('--otype', type=click.Choice(['FASTA', 'CSV'], case_sensitive=False), required=True, help="out file type")
-def dinuc_shuffle(**kwargs):
+def shuffle(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import shuffle_core
     shuffle_core(**kwargs)
