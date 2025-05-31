@@ -20,10 +20,10 @@ import tensorflow as tf
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedBatchNorm, MaskedConv1D, ResidualBlock
-from jaeger.nnlib.inference import AvailableModels, InferModel, evaluate
+from jaeger.nnlib.inference import InferModel, evaluate
 import logging
 import re
-from jaeger.utils.misc  import numerize, load_model_config
+from jaeger.utils.misc  import numerize, load_model_config, AvailableModels
 # dev
 import numpy as np
 from icecream import ic
