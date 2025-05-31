@@ -50,27 +50,6 @@ def evaluate(model, x) -> dict[str, float]:
         "accuracy": float(accuracy)
     }
 
-
-class AvailableModels:
-    """
-    get all available models from the model path
-    """
-    def __init__(self, path):
-        self.path = Path(path)
-        self.info = self._scan_for_models()
-        
-
-    def _scan_for_models(self) -> DefaultDict:
-        _tmp = defaultdict(dict)
-        for model_graph in self.path.rglob("*_graph"):
-            if model_graph.is_dir():
-                _tmp[model_graph.name.rstrip("_graph")]['graph'] = model_graph
-            for _match in ("classes", "project", "weights"):
-                for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
-                    if _cfg.is_file():
-                        _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
-        
-        return _tmp
     
 class JaegerModel(tf.keras.Model):
     """
@@ -415,7 +394,12 @@ class InferModel:
         return {"loss": loss, "accuracy": accuracy}
     def _load_class_map(self, path):
         with open(path) as f:
-            return yaml.safe_load(f)
+            _class_map = yaml.safe_load(f)["classes"]
+
+            return {'num_classes':len(_class_map),
+                    'class':[i["class"] for i in _class_map],
+                    'index':[i["label"] for i in _class_map]
+                    }
         
     def _load_string_processor_config(self, path):
         from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID
