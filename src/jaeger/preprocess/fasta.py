@@ -43,7 +43,7 @@ def fragment_generator(file_path,
                 seqlen = len(
                     record[1]
                 )  # move size filtering to a separate preprocessing step
-                sequence = record[1].strip()
+                sequence = record[1].strip().upper()
                 if dustmask:
                     sequence = pydustmasker.DustMasker(sequence).mask()
                 header = record[0].strip().replace(",", "__")
