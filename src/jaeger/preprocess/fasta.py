@@ -1,4 +1,5 @@
 import pyfastx
+import pydustmasker
 from rich.progress import Progress
 from jaeger.utils.misc import signal_l, safe_divide
 
@@ -6,10 +7,13 @@ def fragment_generator(file_path,
               fragsize=None,
               stride=None,
               num=None,
-              no_progress=True
+              no_progress=True,
+              dustmask=True
               ):
     """
-    Generates fragments of DNA sequences from a FASTA file.
+    Generates fragments of DNA sequences from a FASTA file. 
+    optionally masks low complexity regions (recomemded to use when 
+    analysing eukaryotic host associated metagenomes)
 
     Args:
     ----
@@ -20,9 +24,9 @@ def fragment_generator(file_path,
         None.
         num (int, optional): Total number of sequences to process. Defaults
         to None.
-        disable (bool, optional): Flag to disable progress bar. Defaults to
+        no_progress (bool, optional): Flag to disable progress bar. Defaults to
         False.
-
+        dustmask (bool, optional): Flag to enable dust masking. Default to True
     Returns:
     -------
         generator: A generator that yields DNA sequence fragments with
@@ -40,6 +44,8 @@ def fragment_generator(file_path,
                     record[1]
                 )  # move size filtering to a separate preprocessing step
                 sequence = record[1].strip()
+                if dustmask:
+                    sequence = pydustmasker.DustMasker(sequence).mask()
                 header = record[0].strip().replace(",", "__")
                 # logger.debug(sequence)
                 # sequence = str(record[1]).upper()
