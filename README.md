@@ -31,16 +31,17 @@ Jaeger is a tool that utilizes homology-free machine learning to identify phage 
 
 If you use Jaeger in your work, please consider citing its preprint: 
 
-* <b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b>
-Yasas Wijesekara, Ling-Yi Wu, Rick Beeloo, Piotr Rozwalak, Ernestina Hauptfeld, Swapnil P. Doijad, Bas E. Dutilh, Lars Kaderali bioRxiv 2024.09.24.612722
+* **[Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences](https://www.biorxiv.org/content/early/2024/09/24/2024.09.24.612722)**  
+  Yasas Wijesekara, Ling-Yi Wu, Rick Beeloo, Piotr Rozwalak, Ernestina Hauptfeld, Swapnil P. Doijad, Bas E. Dutilh, Lars Kaderali  
+  *bioRxiv*, 2024.09.24.612722
+
+
 
 To cite the code itself:
 
 * <b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
 
 ---
-
-
 
 - [Installing Jaeger](#installation)
   - [Bioconda](#option-1--bioconda)
@@ -60,33 +61,24 @@ To cite the code itself:
 
 The performance of the Jaeger workflow can be significantly increased by utilizing GPUs. To enable GPU support, the CUDA Toolkit and cuDNN library must be accessible to conda.
 
-````
-# setup bioconda
-conda config --add channels defaults
-conda config --add channels bioconda
-conda config --add channels conda-forge
-conda config --set channel_priority strict
-
+````bash
 # create conda environment and install jaeger
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.9,<3.12" pip jaeger-bio
-
+mamba create -n jaeger -c bioconda jaeger-bio==1.2
 
 # activate environment
 conda activate jaeger
 ````
 Test the installation with test data
-```
+```bash
 jaeger test
 ```
 
 
 ##### option 2 : Installing from pypi (recomended)
 
-
-
-```
+```bash
 # create a conda environment and activate  
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.9,<3.12" pip
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<=3.12" pip
 conda activate jaeger
 
 # OR create a virtual environment using venv
@@ -102,18 +94,15 @@ pip install jaeger-bio[cpu]
 # to install on a Mac(arm)
 pip install jaeger-bio[darwin-arm]
 
-
+# test the installation
+jaeger test
 ```
 
-##### option 3 : Installing from git
+##### option 3 : Installing the dev version
 
-```
-# clone the jaeger repository
-git clone https://github.com/MGXlab/Jaeger.git
-cd Jaeger
-
+```bash
 # create a conda environment and activate  
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.9,<3.12" pip
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.12" pip
 conda activate jaeger
 
 # OR create a virtual environment using venv
@@ -123,123 +112,49 @@ source jaeger/bin/activate
 # install jaeger
 
 # to install with GPU support
-pip install ".[gpu]"
+pip install --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/MGXlab/Jaeger@dev"
 
 # to install without GPU support
-pip install ".[cpu]"
+pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[cpu] @ git+https://github.com/MGXlab/Jaeger@dev"
 
 # to install on a Mac(arm)
-pip install ".[darwin-arm]"
+pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[darwin-arm] @ git+https://github.com/MGXlab/Jaeger@dev"
+
+# test the installation
+jaeger test
 
 ```
 
 ##### option 4 : Apptainer (singularity)
-```
-# clone the jaeger repository
-git clone https://github.com/MGXlab/Jaeger.git
-cd Jaeger
+If you're using Apptainer on a cluster, it's recommended to build the container on your local machine and then transfer it to the cluster.
+```bash
+# get the container def
+wget https://github.com/Yasas1994/Jaeger/blob/main/singularity/jaeger_singularity.def
 
 # to build the container
 apptainer build jaeger.sif singularity/jaeger_singularity.def
 
-# to run jaeger
-apptainer run --nv jaeger.sif jaeger run -i input_file.fasta -o output_dir --batch 128
+# test container
+apptainer run --nv jaeger.sif jaeger --help
+
+# test the installation
+apptainer run --nv jaeger.sif jaeger test
 ```
+
 
 ---
-##### Troubleshooting
+#### Downloading models
 ---
-
-If you have a NVIDIA GPU on the system, and jaeger fails to detect it, try these steps.
-
-1. If you are on a HPC check whether cuda-toolkit is available as a module. (Skip this step if you are trying this out on your PC)
-
+Starting from version 1.2.0, users will need to download the new models separately after installing Jaeger. However, for backward compatibility, Jaeger will still include the old model by default.
+```bash
+jaeger download --path /path/to/store/models
 ```
-module avail
-```
-
-```
-angsd/0.937         boost/1.71.0        clang/14.0.4  fastp/0.23.1   gcc/13.2.0     julia/1.9.2         modeller/9.23      proj/7.0.1          structure/2.3.4     vcftools/0.1.16  
-autodockvina/1.1.2  boost/1.79.0        clang/17.0.5  fastqc/0.11.9  hdf5/1.12.1    kalign/1.04         mrbayes/3.2.7      r/4.1.1             superlu-dist/8.1.2  
-bamutil/1.0.15      bowtie/2.4.2        colmap/3.8    fgsl/1.5.0     hdf5/1.14.0    likwid/5.2.0        openmpi/4.1.1      r/4.3.1             superlu-dist/8.2.0  
-baypass/2.2         bwa/0.7.17          cuda/11.4     fsl/6.0.2      hhsuite/3.3.0  likwid/5.2.1        openpmix/3.1.5     samtools/1.12       superlu/4.3         
-bcftools/1.15       cdhit/4.8.1         cuda/11.7     gams/36.2.0    I-TASSER/5.1   mathematica/13.2.1  petsc-real/3.18.1  singularity/3.10.0  transdecoder/5.7.0  
-bedtools/2.30.0     ceres-solver/2.1.0  cuda/12.0.0   gcc/12.2.0 
+If you decide to change the model path later, or if you have a dir witg newly trained/tuned models
+register the path 
+```bash
+jaeger register-models --path /new/model/path
 ```
 
-If so, load it
-```
-module load cuda/12.0.0
-```
-
-2. Next, check whether the [NVIDIA GPU driver](https://www.nvidia.com/Download/index.aspx) is properly configured.
-
-````
-nvidia-smi
-````
-
-Above command returns the following output if everything is properly set-up. You can also determine the cuda version from it. For example here it is 11.7 (for step 3)
-````
-Fri Nov 15 07:46:02 2024       
-+---------------------------------------------------------------------------------------+
-| NVIDIA-SMI 535.216.01             Driver Version: 535.216.01   CUDA Version: 12.2     |
-|-----------------------------------------+----------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
-|                                         |                      |               MIG M. |
-|=========================================+======================+======================|
-|   0  NVIDIA A100-SXM4-80GB          On  | 00000000:01:00.0 Off |                    0 |
-| N/A   41C    P0              74W / 500W |   3616MiB / 81920MiB |      0%      Default |
-|                                         |                      |             Disabled |
-+-----------------------------------------+----------------------+----------------------+
-|   1  NVIDIA A100-SXM4-80GB          On  | 00000000:41:00.0 Off |                    0 |
-| N/A   40C    P0              65W / 500W |      0MiB / 81920MiB |      0%      Default |
-|                                         |                      |             Disabled |
-+-----------------------------------------+----------------------+----------------------+
-|   2  NVIDIA A100-SXM4-80GB          On  | 00000000:81:00.0 Off |                    0 |
-| N/A   39C    P0              65W / 500W |      0MiB / 81920MiB |      0%      Default |
-|                                         |                      |             Disabled |
-+-----------------------------------------+----------------------+----------------------+
-|   3  NVIDIA A100-SXM4-80GB          On  | 00000000:C1:00.0 Off |                    0 |
-| N/A   40C    P0              65W / 500W |      0MiB / 81920MiB |      0%      Default |
-|                                         |                      |             Disabled |
-+-----------------------------------------+----------------------+----------------------+
-                                                                                         
-+---------------------------------------------------------------------------------------+
-| Processes:                                                                            |
-|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
-|        ID   ID                                                             Usage      |
-|=======================================================================================|
-|    0   N/A  N/A   3583343      C   /opt/conda/bin/python                      3606MiB |
-+---------------------------------------------------------------------------------------+
-
-````
-
-Check whether Jaeger detects the GPU now.
-
-If that fails you will have to manually configure the conda environment as shown in step 3.
-
-3. * cuda-toolkit for cuda>=11.1 can be found here https://anaconda.org/nvidia/cuda-toolkit 
-
-Following example shows the installation process for cuda=11.3.0. Simply change the version number on the second "nvidia/label/cuda-11.x.x" command to install a different version
- 
-````
-libcudnn_cnn_infer.so.8
-
-# create a conda environment
-conda create -n jaeger -c conda-forge -c bioconda -c defaults "python>=3.9,<3.12" pip
-
-# cudatoolkit and cudnn
-conda install -n jaeger -c "nvidia/label/cuda-11.3.0" cudatoolkit=11
-conda install -n jaeger -c conda-forge cudnn
-
-# install jaeger
-conda install -n jaeger -c conda-forge -c bioconda -c defaults jaeger-bio
-
-# activate environment
-conda activate jaeger
-````
-More information on properly setting setting up tensorflow can be found [here](https://www.tensorflow.org/install/pip)
 
 ---
 #### Running Jaeger
@@ -247,26 +162,15 @@ More information on properly setting setting up tensorflow can be found [here](h
 ##### CPU/GPU mode
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed .fasta files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. 
 
-```
-jaeger run -i input_file.fasta -o output_dir --batch 128
+```bash
+jaeger predict -i input_file.fasta -o output_dir --batch 128
 ```
 
 To run jaeger with singularity
+```bash
+apptainer run --nv jaeger.sif jaeger predict -i input_file.fasta -o output_dir --batch 128
 ```
-singularity run --bind /path/to/wd --nv jaeger_1.1.30.sif jaeger run -i path/to/wd/xxx.fna -o path/to/wd/out
-```
-##### multi-GPU mode
 
-We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of GPUs at your disposal. **--maxworkers** flag can be used to set the number of samples that should be processed parallaly per GPU. All other arguments remains similar to 'Jaeger' program.
-
-
-```
-# to generate a list of fasta files in a dir
-ls ./files/*.fna | xargs realpath > input_file_list
-
-# to process eight samples in parallel on two GPUs 
-jaeger_parallel -i input_file_list -o output_dir --batch 128 --maxworkers 4 --ngpu 2
-```
 
 ##### Selecting the batch parameter 
 
