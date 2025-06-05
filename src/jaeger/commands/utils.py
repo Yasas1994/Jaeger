@@ -76,9 +76,11 @@ def split_core(**kwargs):
                 fragment = seq[start:end]
 
                 # Write FASTA record
-                fh.write(f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n")
-                for i in range(0, len(fragment), 70):
-                    fh.write(fragment[i:i+70] + "\n")
+                Ns = fragment.count("N")
+                if Ns/len(fragment) < 0.3 and len(fragment) >= min_len:
+                    fh.write(f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n")
+                    for i in range(0, len(fragment), 60):
+                        fh.write(fragment[i:i+60] + "\n")
 
                 # Move to next fragment start (with overlap)
                 if end == len(seq):

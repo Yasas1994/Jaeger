@@ -178,3 +178,6 @@ def run_core(**kwargs):
                      output_phage_table_path=output_phage_table_path)
         
         logger.info(f"processed {num_written}/{num} sequences")
+        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
+        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
+        logger.info(f"memory usage : {current_process.memory_full_info().rss/GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)")
