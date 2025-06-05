@@ -147,6 +147,40 @@ def register_models(**kwargs):
     model_path = Path(kwargs.get("path")).resolve()
     add_data_to_json(path, str(model_path), list_key="model_paths")
 
+@click.command()
+@click.option('-p', '--path', type=click.Path(file_okay=False), required=False,
+              help="Path to save model weights, graph and configuration files")
+@click.option('-m', '--model', 'model_name', required=False, help="Name of the model to download")
+@click.option('-l', '--list', 'list_models', is_flag=True, default=False, help="List all available models")
+@click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
+def download(path, model_name, list_models, verbose):
+    
+    """Downloads model weights and appends to model path, or lists available models."""
+    from jaeger.commands.downloads import list_ckan_model_download_links, download_file
+    # Enforce mutual exclusivity
+    if list_models and (model_name or path):
+        raise click.UsageError("The '--list' option cannot be used with '--model' or '--path'.")
+
+    if not list_models and (not model_name or not path):
+        raise click.UsageError("You must provide both '--model' and '--path', or just '--list'.")
+
+    model_links = list_ckan_model_download_links()
+
+    if list_models:
+        click.echo("Available models:")
+        for name in sorted(model_links.keys()):
+            click.echo(f"- {name}")
+        return
+
+    if model_name not in model_links:
+        raise click.UsageError(f"Model '{model_name}' not found. Use '--list' to see available models.")
+
+    model_path = Path(path).resolve()
+    download_file((model_name, model_links[model_name]), output_dir=model_path)
+
+    config_path = Path(files('jaeger.data')) / "config.json"
+    add_data_to_json(config_path, str(model_path), list_key="model_paths")
+
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
 def utils(obj):
@@ -265,6 +299,7 @@ main.add_command(test)
 main.add_command(predict)
 main.add_command(train)
 main.add_command(register_models)
+main.add_command(download)
 main.add_command(utils)
 
 
