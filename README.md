@@ -146,8 +146,14 @@ apptainer run --nv jaeger.sif jaeger test
 #### Downloading models
 ---
 Starting from version 1.2.0, users will need to download the new models separately after installing Jaeger. However, for backward compatibility, Jaeger will still include the old model by default.
+
+Use the --list flag to print out all models available for download
 ```bash
-jaeger download --path /path/to/store/models
+jaeger download --list
+```
+Then to download the model and add it to the model path run
+```bash
+jaeger download --path /path/to/store/models --model jaeger_38341_1.4M
 ```
 If you decide to change the model path later, or if you have a dir witg newly trained/tuned models
 register the path 
