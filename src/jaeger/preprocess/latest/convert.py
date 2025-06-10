@@ -62,6 +62,7 @@ def process_string_train(
     fragsize=200,
     mutate=False,
     mutation_rate=0.1,
+    masking=True,
     input_type="translated"  # "translated", "nucleotide", "both"
 ):
     """
@@ -109,7 +110,9 @@ def process_string_train(
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
         outputs = {}
-
+        if not masking:
+            forward_strand = tf.strings.upper(forward_strand)
+            reverse_strand = tf.strings.upper(reverse_strand)
         # Nucleotide representation
         if input_type in ["nucleotide", "both"]:
             nuc1 = map_nucleotide.lookup(forward_strand)
