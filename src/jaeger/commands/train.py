@@ -283,6 +283,8 @@ class DynamicModelBuilder:
             x = tf.keras.layers.Dense(layer_cfg.get("units"),
                                       use_bias=layer_cfg.get("use_bias"),
                                       name=f"{prefix}_dense_{i}",
+                                      kernel_regularizer=self._regularizer.get(layer_cfg.get("kernel_regularizer"),
+                                                                               )(layer_cfg.get("kernel_regularizer_w"))
                                       #activation=layer_cfg.get("activation")
                                       )(x)
             x = self.Activation(name=f'{prefix}_activation_{i}')(x)
@@ -405,7 +407,8 @@ class DynamicModelBuilder:
             "CODON" : CODONS,
             "CODON_ID": CODON_ID,
             "AA_ID": AA_ID,
-            "MURPHY10_ID": MURPHY10
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID
         }
         emb_config = self.model_cfg.get("embedding")
         sp_config = self.model_cfg.get("string_processor")
@@ -416,6 +419,7 @@ class DynamicModelBuilder:
                      "codon_depth": max(_map.get(sp_config.get("codon_id")))+1,
                      "crop_size": sp_config.get("crop_size"),
                      "buffer_size": sp_config.get("buffer_size"),
+                     "masking" : sp_config.get("masking"),
                      "reshuffle_each_iteration": sp_config.get("reshuffle_each_iteration"),
                      }
         
@@ -535,6 +539,7 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"),
                                                         input_type=string_processor_config.get("input_type"),
+                                                        masking=string_processor_config.get("masking"),
                                                         num_classes=builder.model_cfg.get("classifier").get("output_units"),
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
@@ -590,6 +595,7 @@ def train_fragment_core(**kwargs):
                                                         codon_depth=string_processor_config.get("codon_depth"),
                                                         crop_size=string_processor_config.get("crop_size"), 
                                                         input_type=string_processor_config.get("input_type"),
+                                                        masking=string_processor_config.get("masking"),
                                                         num_classes=builder.model_cfg.get("reliability_model").get("output_units"),
                                                         class_label_onehot=False),
                         num_parallel_calls=tf.data.AUTOTUNE)\
