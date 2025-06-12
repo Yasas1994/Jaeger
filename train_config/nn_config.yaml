@@ -5,9 +5,9 @@
 
 model:
   name: "jaeger" # the trained model will be saved under this name
-  experiment: "test"
+  experiment: "test_3_murphy_ss"
   seed: 57341
-  base_dir: "/home/wijesekary/Jaeger_revisions/training"
+  base_dir: "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training"
   class_label_map:
   - class: "bacteria"
     label: 0
@@ -24,17 +24,22 @@ model:
   activation: "gelu"
   mode: "training" # or "tunning" -> freeze the representation learner and train the classifier
   embedding:
+    masking: True # mask lower-case and N
     type: "translated" # or "nucleotide"
     strands: 2
     frames: 6
     length: null
-    input_shape: [ 6, null, 64 ] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
-    embedding_size: 192
+    input_shape: [ 6, null, 11 ] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
+    embedding_size: 128
+    mutate: True
+    mutation_rate: 0.1
+    use_positional_embeddings: True
+    positional_embedding_length: 10000
 
   string_processor:
     # only applicable when type:nucleotide
     codon: "CODON"
-    codon_id: "CODON_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
+    codon_id: "MURPHY10_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
     crop_size: 1024
     buffer_size: 20000 # -1 invokes dataset.cardinality()
     reshuffle_each_iteration: True
@@ -45,7 +50,7 @@ model:
     masked_conv1d_1_strides: 1
     masked_conv1d_1_dilation_rate: 1
     masked_conv1d_1_regularizer: l2
-    masked_conv1d_1_regularizer_w: 0
+    masked_conv1d_1_regularizer_w: 0.0001
 
     block_sizes: [ 2, 2, 2 ]
     block_filters: [ 128, 128, 128 ]
@@ -53,13 +58,17 @@ model:
     block_kernel_dilation: [ 3, 3, 3 ]
     block_kernel_strides: [ 1, 1, 1 ]
     block_regularizer: [ "l2", "l2", "l2" ]
-    block_regularizer_w: [ 0, 0, 0 ]
+    block_regularizer_w: [ 0.0001, 0.0001, 0.0001 ]
 
     masked_conv1d_final_kernel_size: 5
     masked_conv1d_final_strides: 1
     masked_conv1d_final_dilation_rate: 1
     masked_conv1d_final_regularizer: "l2"
-    masked_conv1d_final_regularizer_w: 0
+    masked_conv1d_final_regularizer_w: 0.0001
+
+    use_transformer_encoder: True
+    transformer_encoder_blocks: 1
+    attention_heads: 1
 
     pooling: "max"
 
@@ -68,15 +77,15 @@ model:
     - units: 128
       activation: gelu
       use_bias: false
-      dropout_rate: 0
+      dropout_rate: 0.5
       kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001
+      kernel_regularizer_w: 0.0001
     - units: 128
       activation: gelu
       use_bias: false
-      dropout_rate: 0
+      dropout_rate: 0.5
       kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001
+      kernel_regularizer_w: 0.0001
     # - units: 64
     #   activation: gelu
     #   use_bias: false
@@ -92,14 +101,14 @@ model:
     - units: 128
       activation: gelu
       use_bias: false
-      dropout_rate: 0
+      dropout_rate: 0.2
       kernel_regularizer: "l2" # l2, l1
       kernel_regularizer_w: 0.00001
     output_units: 1
     output_activation: null
     output_use_bias: false
 
-  projector:
+  projection:
     # for supervised contrastive learning
     hidden_layers:
     - units: 128
@@ -114,15 +123,19 @@ model:
       dropout_rate: 0
       kernel_regularizer: "l2" # l2, l1
       kernel_regularizer_w: 0.00001
+    # arcface params
+    margin: 0.1
+    scale: 30
 
 training:
-  classifier_epochs: 100
+  classifier_epochs: 20
   reliability_epochs: 20
-  classifier_train_steps: -1
-  reliability_train_steps: -1 # -1 to run till the generator exhausts
-  classifier_validation_steps: -1
-  reliability_validation_steps: -1
-  batch_size: 64
+  projection_epochs: 1
+  classifier_train_steps: 3000
+  reliability_train_steps: 3000 # -1 to run till the generator exhausts
+  classifier_validation_steps: 2000
+  reliability_validation_steps: 2000
+  batch_size: 32
   optimizer: "adam" # adam, rmsprop
   optimizer_params:
     learning_rate: 0.0001
