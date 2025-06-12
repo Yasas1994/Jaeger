@@ -19,7 +19,8 @@ import shutil
 import tensorflow as tf
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedBatchNorm, MaskedConv1D, ResidualBlock
+from jaeger.nnlib.v2.layers import GeLU, ReLU, MaskedBatchNorm, MaskedConv1D, ResidualBlock, MetricModel
+from jaeger.nnlib.v2.losses import ArcFaceLoss
 from jaeger.nnlib.inference import InferModel, evaluate
 import logging
 import re
@@ -127,6 +128,35 @@ class DynamicModelBuilder:
             models["rep_model"] = tf.keras.Model(inputs=self.inputs, 
                                                  outputs=[r, r_lbn], 
                                                  name="rep_model")
+            
+        # === 3. PRETRAINING ==
+        if "projection" in self.model_cfg:
+            input_shape = (self.model_cfg["representation_learner"].get("block_filters")[-1], )
+            inputs = tf.keras.Input(shape=input_shape, name="projection_input")
+            x_projection = self._build_perceptron(inputs, self.model_cfg["projection"], prefix="projection")
+            models["projection_head"] = tf.keras.Model(inputs=inputs, 
+                                                           outputs=x_projection, 
+                                                           name="projection_head")
+            num_class = self.model_cfg["classifier"]["output_units"]
+            projection_dim = self.model_cfg["projection"]["hidden_layers"][-1]["units"]
+
+            # combine with the representation learner
+            x = models["rep_model"].output[0]
+            x = models["projection_head"](x)
+            models["jaeger_projection"]  = MetricModel(inputs=models["rep_model"].input, 
+                                                          outputs=x, 
+                                                          name="Jaeger_projection")
+            # define arcface loss model
+            labels = tf.keras.Input(shape=(num_class,), name="labels")
+            embeddings= tf.keras.Input(shape=(projection_dim,), name="embedding") #output of the projection head
+            loss = ArcFaceLoss(num_classes=num_class,
+                               embedding_dim=projection_dim,
+                               margin=self.model_cfg["projection"]["margin"],
+                               scale=self.model_cfg["projection"]["scale"],
+                               onehot=True)(labels, embeddings)
+            models["arcface_loss"] = tf.keras.Model(inputs=[labels, embeddings],
+                                                    outputs=loss,
+                                                    name="Arcface")
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
@@ -195,16 +225,24 @@ class DynamicModelBuilder:
         inputs = tf.keras.Input(shape=input_shape, name=cfg.get('type'))
         masked_inputs = tf.keras.layers.Masking(name="input_mask", mask_value=0.0)(inputs)
 
+
         match cfg.get('type'):
             case "translated":
                 x = tf.keras.layers.Dense(embedding_size,
                                           name=f'{cfg.get('type')}_embedding',
                                           use_bias=False,
                                           kernel_initializer=tf.keras.initializers.Orthogonal())(masked_inputs)
+
             case "nucleotide":
                  x = masked_inputs
             case _:
                 raise ValueError(f"{cfg.get('type')} is invalid")
+            
+        if cfg.get("use_positional_embeddings", False):
+            from jaeger.nnlib.v2.layers import SinusoidalPositionEmbedding
+            positional = SinusoidalPositionEmbedding(max_wavelength=cfg.get("positional_embedding_length"))(x)
+            x = tf.keras.layers.Add()([x, positional])
+
         return inputs, x
 
     def _build_representation_learner(self, x, cfg: Dict[str, Any]):
@@ -268,6 +306,18 @@ class DynamicModelBuilder:
         # this layers mean vector is used as u[train] to calculate nmd u[example] - u[train]
         x, nmd = MaskedBatchNorm(name="masked_batchnorm_final", return_nmd=True)(x) 
         x = self.Activation(name="activation_final")(x)
+
+        # =========== transformer encoder ================
+        if cfg.get("use_transformer_encoder", False):
+            from jaeger.nnlib.v2.layers import TransformerEncoder
+            for i in range(cfg.get("transformer_encoder_blocks")):
+                x = TransformerEncoder(
+                                    embed_dim=128,
+                                    num_heads=cfg.get("attention_heads"),
+                                    feed_forward_dim=128,
+                                    name=f"transformer_encoder_{i}", 
+                                    #attention_axes=-2
+                                    )(x,x)
         # =========== Aggregation ==============
         x = self._get_pooler(cfg.get('pooling'))(name=f"global_{cfg.get('pooling')}pool")(x)
         return x, nmd
@@ -292,13 +342,13 @@ class DynamicModelBuilder:
                 x = tf.keras.layers.Dropout(layer_cfg.get('dropout_rate'),
                                             name=f"{prefix}_dropout_{i}",
                                             )(x)
-
-        outputs = tf.keras.layers.Dense(cfg.get('output_units'),
-                                        use_bias=layer_cfg.get("output_use_bias"),
-                                        name=prefix,
-                                        activation=cfg.get('output_activation')
+        if cfg.get('output_units'):
+            x = tf.keras.layers.Dense(cfg.get('output_units'),
+                                            use_bias=layer_cfg.get("output_use_bias"),
+                                            name=prefix,
+                                            activation=cfg.get('output_activation')
                                         )(x)
-        return outputs
+        return x
     
     def _load_training_params(self):
         """
@@ -327,7 +377,16 @@ class DynamicModelBuilder:
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
-        if train_branch == "classifier":
+        if train_branch == "pretrain":
+            model.get("rep_model").trainable = True
+            model.get('jaeger_projection').compile(
+                optimizer=self.optimizer,
+                loss_fn=model.get("arcface_loss"),
+                run_eagerly=True,
+                )
+            ic(f"model compiled for {train_branch}")
+
+        elif train_branch == "classifier":
             model.get("rep_model").trainable = True
             model.get('jaeger_classifier').compile(
                 optimizer=self.optimizer,
@@ -349,7 +408,7 @@ class DynamicModelBuilder:
                 )
 
         else:
-            raise ValueError("train_branch must be 'classifier' or 'reliability'")
+            raise ValueError("train_branch must be 'pretrain', 'classifier' or 'reliability'")
 
 
     def save_model(self, model, suffix=None):
@@ -540,6 +599,8 @@ def train_fragment_core(**kwargs):
                                                         crop_size=string_processor_config.get("crop_size"),
                                                         input_type=string_processor_config.get("input_type"),
                                                         masking=string_processor_config.get("masking"),
+                                                        mutate=string_processor_config.get("mutate"),
+                                                        mutation_rate=string_processor_config.get("mutation_rate"),
                                                         num_classes=builder.model_cfg.get("classifier").get("output_units"),
                                                         class_label_onehot=True),
                         num_parallel_calls=tf.data.AUTOTUNE)\
@@ -566,8 +627,25 @@ def train_fragment_core(**kwargs):
 
         if checkpoint:
             train_args["initial_epoch"] = checkpoint.get("classifier", {}).get("epoch", 0)
+
         if kwargs.get('only_classification_head', False) or kwargs.get('only_heads', False) :
             models.get('rep_model').trainable = False
+
+    # ============ self-supervised pre-training =============================
+        if kwargs.get('self_supervised_pretraining', False):
+            builder.compile_model(models, train_branch="pretrain")
+            models.get("jaeger_projection").summary()
+            self_suoervised_train_args = {
+
+                "validation_data": train_data.get("validation").take(builder.train_cfg.get("classifier_validation_steps")),
+                "epochs": builder.train_cfg.get("projection_epochs"),
+                "callbacks": builder.get_callbacks(branch="classifier"),
+            }
+            models.get("jaeger_projection").fit(
+                train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
+                **self_suoervised_train_args)
+
+    # ============== train the classification model ==========================
         models.get("jaeger_classifier").fit(
             train_data.get("train").take(builder.train_cfg.get("classifier_train_steps")),
             **train_args)

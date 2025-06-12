@@ -95,6 +95,7 @@ def tune(**kwargs):
 @click.option('-c', '--config', type=click.Path(exists=True, file_okay=True,), required=True, help="Path to training configuration file (YAML)")
 @click.option('--only_classification_head', is_flag=True, required=False, help="Only train the classification head without the updating the representation learner's weights")
 @click.option('--only_reliability_head', is_flag=True, required=False, help="Only train the reliability model head")
+@click.option('--self_supervised_pretraining', is_flag=True, required=False, help="retrain representation model with self supervised learning")
 @click.option('--only_heads', is_flag=True, required=False, help="Only train the reliability model head")
 @click.option('--from_last_checkpoint', is_flag=True, required=False, help="continue training from the last checkpoints")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
