@@ -685,3 +685,207 @@ class ResidualBlock(tf.keras.layers.Layer):
 # To do: implement a method to set epsilon considering the data type of the tensors passed to the layers
 # if not implemented correctly, this can lead to overflow/underflow issues. 
 
+
+class MetricModel(tf.keras.Model):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step = 0
+        self.loss_tracker = tf.keras.metrics.Mean(name="loss")
+        self.regularization_loss_tracker = tf.keras.metrics.Mean(name="reg-loss")
+        self.gradient_tracker = tf.keras.metrics.Mean(name="gradient")
+
+    def compile(self, optimizer, loss_fn, **kwargs):
+        super(MetricModel, self).compile(**kwargs)
+        self.loss_fn = loss_fn
+        self.optimizer = optimizer
+
+    def train_step(self, data):
+        if len(data) == 3:
+            x, y, sample_weights = data
+        else:
+            sample_weights = None
+            x, y = data
+
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)
+            # Adjust loss call based on your loss_fn signature:
+            loss = self.loss_fn([y, y_pred])
+            # Add regularization loss
+            loss += sum(self.losses)
+            # If using mixed precision
+            if hasattr(self.optimizer, 'get_scaled_loss'):
+                loss = self.optimizer.get_scaled_loss(loss)
+
+        # Compute gradients
+        trainable_vars = self.trainable_variables
+        grads = tape.gradient(loss, trainable_vars)
+        # If using mixed precision
+        if hasattr(self.optimizer, 'get_unscaled_gradients'):
+            grads = self.optimizer.get_unscaled_gradients(grads)
+
+        # Apply gradients
+        self.optimizer.apply_gradients(zip(grads, trainable_vars))
+
+        # Update step and metrics
+        self.step += 1
+        if self.step % 100 == 0:
+            # Optional: reset metrics every 100 steps
+            self.loss_tracker.reset_state()
+            self.gradient_tracker.reset_state()
+
+        self.loss_tracker.update_state(loss)
+        self.regularization_loss_tracker.update_state(sum(self.losses))
+
+        # Compute average gradient norm
+        total_norm = 0.0
+        total_params = 0.0
+        for grad, weight in zip(grads, self.trainable_weights):
+            if grad is not None:
+                norm = tf.norm(grad)
+                total_norm += norm
+                total_params += tf.cast(tf.math.reduce_prod(weight.shape), tf.float32)
+
+        avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
+        self.gradient_tracker.update_state(avg_grad_norm)
+
+        return {
+            "loss": self.loss_tracker.result(),
+            "reg-loss": self.regularization_loss_tracker.result(),
+            "grad": self.gradient_tracker.result(),
+            "lr": self.optimizer.learning_rate
+        }
+
+    def test_step(self, data):
+        x, y = data
+        y_pred = self(x, training=False)
+        # Adjust loss call based on your loss_fn signature:
+        loss = self.loss_fn([y, y_pred])
+        self.loss_tracker.update_state(loss)
+        return {"loss": self.loss_tracker.result()}
+
+    @property
+    def metrics(self):
+        return [self.loss_tracker,
+                self.regularization_loss_tracker,
+                self.gradient_tracker]
+
+class SinusoidalPositionEmbedding(tf.keras.layers.Layer):
+    def __init__(self, max_wavelength=10000, **kwargs):
+        super().__init__(**kwargs)
+        self.max_wavelength = max_wavelength
+        self.supports_masking = True
+
+    def call(self, inputs, start_index=0):
+        # inputs: tensor with shape [..., seq_length, hidden_size]
+        # Compute dynamic shapes
+        input_shape = tf.shape(inputs)
+        seq_length = input_shape[-2]
+        hidden_size = input_shape[-1]
+
+        # Positions [0, 1, ..., seq_length-1] offset by start_index
+        positions = tf.cast(tf.range(seq_length) + start_index, dtype=self.compute_dtype)
+
+        # Minimum frequency as inverse of max_wavelength
+        min_freq = tf.cast(1.0 / self.max_wavelength, dtype=self.compute_dtype)
+
+        # Compute timescales for each dimension: min_freq^(2i/hidden_size)
+        dim_indices = tf.cast(tf.range(hidden_size), dtype=self.compute_dtype)
+        # floor(dim_indices/2)*2 for pairing sin/cos
+        even_dims = tf.floor(dim_indices / 2) * 2
+        timescales = tf.pow(
+            min_freq,
+            even_dims / tf.cast(hidden_size, self.compute_dtype)
+        )
+
+        # Compute angles: outer product of positions and timescales
+        angles = tf.expand_dims(positions, -1) * tf.expand_dims(timescales, 0)
+
+        # Build masks: even dims use sine, odd use cosine
+        sin_mask = tf.cast(tf.equal(dim_indices % 2, 0), self.compute_dtype)
+        cos_mask = 1.0 - sin_mask
+
+        # Compute positional encodings: sin for even, cos for odd dims
+        pos_encoding = tf.sin(angles) * sin_mask + tf.cos(angles) * cos_mask
+        # pos_encoding shape [seq_length, hidden_size]
+
+        # Broadcast to match input shape
+        broadcast_shape = tf.concat([input_shape[:-2], [seq_length, hidden_size]], axis=0)
+        pos_encoding = tf.broadcast_to(pos_encoding, broadcast_shape)
+
+        return pos_encoding
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"max_wavelength": self.max_wavelength})
+        return config
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+class TransformerEncoder(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        embed_dim,
+        num_heads,
+        feed_forward_dim,
+        dropout_rate=0.1,
+        attention_axes=2,  # For (batch, strand, length, feature), axis=2 is "length"
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.feed_forward_dim = feed_forward_dim
+        self.dropout_rate = dropout_rate
+        self.attention_axes = attention_axes  # Make sure axis is correct for your input
+
+        # 1) Self-attention sublayer
+        self.attn_norm = tf.keras.layers.LayerNormalization(epsilon=1e-6, name="attn_norm")
+        self.mha = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=embed_dim // num_heads,
+            dropout=dropout_rate,
+            attention_axes=[self.attention_axes],
+            name="mha"
+        )
+        self.attn_dropout = tf.keras.layers.Dropout(dropout_rate, name="attn_dropout")
+
+        # 2) Feed-forward sublayer
+        self.ffn_norm = tf.keras.layers.LayerNormalization(epsilon=1e-6, name="ffn_norm")
+        self.ffn_dense1 = tf.keras.layers.Dense(feed_forward_dim, activation="gelu", name="ffn_dense1")
+        self.ffn_dropout1 = tf.keras.layers.Dropout(dropout_rate, name="ffn_dropout1")
+        self.ffn_dense2 = tf.keras.layers.Dense(embed_dim, name="ffn_dense2")
+        self.ffn_dropout2 = tf.keras.layers.Dropout(dropout_rate, name="ffn_dropout2")
+
+    def call(self, inputs, mask=None, training=False, return_attention=False):
+        # --- Multi-Head Self-Attention + Residual
+        x_norm = self.attn_norm(inputs)
+        # Reshape/transpose if needed to ensure attention is over length
+        # For (batch, strand, length, feature), attention_axes=[2] is correct
+        attn_out, attn_weights = self.mha(
+            x_norm, x_norm, training=training, return_attention_scores=True
+        )
+        attn_out = self.attn_dropout(attn_out, training=training)
+        x = inputs + attn_out
+
+        # --- Feed-Forward Network + Residual
+        x_norm = self.ffn_norm(x)
+        ffn_out = self.ffn_dense1(x_norm)
+        ffn_out = self.ffn_dropout1(ffn_out, training=training)
+        ffn_out = self.ffn_dense2(ffn_out)
+        ffn_out = self.ffn_dropout2(ffn_out, training=training)
+        output = x + ffn_out
+
+        if return_attention:
+            return output, attn_weights
+        return output
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update({
+            "embed_dim": self.embed_dim,
+            "num_heads": self.num_heads,
+            "feed_forward_dim": self.feed_forward_dim,
+            "dropout_rate": self.dropout_rate,
+        })
+        return cfg
