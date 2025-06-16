@@ -50,13 +50,24 @@ def test(**kwargs):
    test_core(**kwargs)
 
 
-
 @click.command()
 @click.option('-i', '--input', type=click.Path(exists=True), required=True, help="Path to input file")
 @click.option('-o', '--output', type=str, required=True, help="Path to output directory")
 @click.option('--fsize', type=int, default=2048, help="Length of the sliding window (value must be 2^n). Default: 2048")
 @click.option('--stride', type=int, default=2048, help="Stride of the sliding window. Default: 2048 (stride==fsize)")
-@click.option('-m', '--model', type=click.Choice(AVAIL_MODELS), default='default', help="Select a deep-learning model to use. Default: default")
+@click.option(
+    '-m', '--model',
+    help=(
+        f"Select a deep-learning model to use. "
+        f"Default: 'default'. "
+        f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
+    )
+)
+@click.option(
+    '--config',
+    type=click.Path(exists=True),
+    help="Path to Jaeger config file (e.g., when using Apptainer or Docker)"
+)
 @click.option('-p', '--prophage', is_flag=True, help="Extract and report prophage-like regions. Default: False")
 @click.option('-s', '--sensitivity', type=float, default=1.5, help="Sensitivity of the prophage extraction algorithm (0-4). Default: 1.5")
 @click.option('--lc', type=int, default=500_000, help="Minimum contig length for prophage extraction. Default: 500000 bp")
@@ -72,8 +83,21 @@ def test(**kwargs):
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 @click.option('-f', '--overwrite', is_flag=True, help="Overwrite existing files")
 def predict(**kwargs):
+    
+    model = kwargs.get("model") 
+    if kwargs.get("config") is None:
+        if model is None:
+            model = 'default'
+        elif model not in AVAIL_MODELS:
+            raise click.BadParameter(
+                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
+            )
+    else:
+        if model is None:
+            model = 'default'
+
     """Run jaeger inference pipeline."""
-    if kwargs.get('model') == "default":
+    if model == "default":
         from jaeger.commands.predict_legacy import run_core
         run_core(**kwargs)
     else:
@@ -138,23 +162,29 @@ def train(**kwargs):
     train_fragment_core(**kwargs)
 
 @click.command()
-@click.option('-p', '--path', type=str, required=True, help="Path to model weights, graph and configuration files")
+@click.option('-p', '--path',  type=click.Path(file_okay=False), required=True, help="Path to model weights, graph and configuration files")
+@click.option('-c', '--config', type=str, required=False, help="Path to jager config file (Apptainer or Docker)")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
 def register_models(**kwargs):
     """Appends newly trained and fine-tuned models to the model path"""
  
-
-    path = Path(files('jaeger.data')) / "config.json"
+    if kwargs.get("config") != None:
+        # update an external config file
+        path = Path(kwargs.get("config"))
+    else:
+        # update internal config file 
+        path = Path(files('jaeger.data')) / "config.json"
     model_path = Path(kwargs.get("path")).resolve()
     add_data_to_json(path, str(model_path), list_key="model_paths")
 
 @click.command()
 @click.option('-p', '--path', type=click.Path(file_okay=False), required=False,
               help="Path to save model weights, graph and configuration files")
+@click.option('-c', '--config', type=str, required=False, help="Path to jager config file (Apptainer or Docker)")
 @click.option('-m', '--model', 'model_name', required=False, help="Name of the model to download")
 @click.option('-l', '--list', 'list_models', is_flag=True, default=False, help="List all available models")
 @click.option('-v', '--verbose', count=True, help="Verbosity level: -vv debug, -v info (default: info)", default=1)
-def download(path, model_name, list_models, verbose):
+def download(path, model_name, list_models, **kwargs):
     
     """Downloads model weights and appends to model path, or lists available models."""
     from jaeger.commands.downloads import list_ckan_model_download_links, download_file
@@ -179,8 +209,16 @@ def download(path, model_name, list_models, verbose):
     model_path = Path(path).resolve()
     download_file((model_name, model_links[model_name]), output_dir=model_path)
 
-    config_path = Path(files('jaeger.data')) / "config.json"
-    add_data_to_json(config_path, str(model_path), list_key="model_paths")
+    if kwargs.get("config", False):
+        # update an external config file
+        config_path = Path(kwargs.get("config"))
+    else:
+        # update internal config file 
+        config_path = Path(files('jaeger.data')) / "config.json"
+    try:
+        add_data_to_json(config_path, str(model_path), list_key="model_paths")
+    except Exception as e:
+        logger.warning("failed to add model path to jaeger config. Seems like you are running jaeger inside a container. please explicitly define the model path `jaeger predict --modelpath`")
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context

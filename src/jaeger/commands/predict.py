@@ -30,7 +30,11 @@ def run_core(**kwargs):
     MODEL = kwargs.get("model")
     MODEL_ID = get_model_id(MODEL)
     DATA_PATH = files("jaeger.data")
-    CONFIG_PATH = DATA_PATH / "config.json"
+    if kwargs.get("config") is None:
+        CONFIG_PATH = DATA_PATH / "config.json"
+    else:
+        CONFIG_PATH = kwargs.get("config")
+        
     USER_MODEL_PATHS = json_to_dict(CONFIG_PATH).get("model_paths")
     MODEL_INFO = AvailableModels(path=USER_MODEL_PATHS).info[MODEL]
     
@@ -43,9 +47,9 @@ def run_core(**kwargs):
     
     log_file = Path(f"{file_base}_jaeger.log")
     logger = get_logger(OUTPUT_DIR, log_file, level=kwargs.get("verbose"))
-    
     logger.info(description(version("jaeger-bio")) + "\n{:-^80}".format("validating parameters"))
     logger.debug(DATA_PATH)
+    logger.debug(AvailableModels(path=USER_MODEL_PATHS).info)
     
     try:
         num = validate_fasta_entries(str(input_file_path), min_len=kwargs.get("fsize"))
@@ -60,7 +64,7 @@ def run_core(**kwargs):
     if output_table_path.exists() and not kwargs.get('overwrite'):
         logger.error("output file exists. enable --overwrite option to overwrite the output file.")
         sys.exit(1)
-    
+    logger.info(MODEL_INFO)
     
     if not MODEL_INFO["graph"].exists():
         logger.error(f"could not find model graph. please check {USER_MODEL_PATHS}")
