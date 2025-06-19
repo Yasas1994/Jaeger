@@ -3,6 +3,7 @@
 Copyright (c) 2024 Yasas Wijesekara
 
 """
+
 import os
 import logging
 import traceback
@@ -18,16 +19,18 @@ from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from kneed import KneeLocator
 from pycirclize import Circos
-from jaeger.postprocess.helpers import calculate_gc_content, calculate_percentage_of_n, merge_overlapping_ranges, scale_range
+from jaeger.postprocess.helpers import (
+    calculate_gc_content,
+    calculate_percentage_of_n,
+    merge_overlapping_ranges,
+    scale_range,
+)
 from jaeger.utils.seq import reverse_complement
 
 logger = logging.getLogger("jaeger")
 
-def logits_to_df(
-    config: Any,
-    cutoff_length:int =500_000,
-    **kwargs
-) -> Dict:
+
+def logits_to_df(config: Any, cutoff_length: int = 500_000, **kwargs) -> Dict:
     """
     Convert logits to a dict of dataframe for prophage region identification.
     Output of this function serves as the input for change point based
@@ -42,32 +45,32 @@ def logits_to_df(
     -------
         tmp : Dict of [pandas dataframes, str:host, int:lengths]
     """
-    lab = {int(k): v for k, v in config[kwargs.get('model')]["all_labels"].items()}
+    lab = {int(k): v for k, v in config[kwargs.get("model")]["all_labels"].items()}
     tmp = {}
-    for key, value, length, gc_skew, gc in zip(kwargs.get('headers'),
-                                               kwargs.get('logits'),
-                                               kwargs.get('lengths'),
-                                               kwargs.get('gc_skews'),
-                                               kwargs.get('gcs')):
+    for key, value, length, gc_skew, gc in zip(
+        kwargs.get("headers"),
+        kwargs.get("logits"),
+        kwargs.get("lengths"),
+        kwargs.get("gc_skews"),
+        kwargs.get("gcs"),
+    ):
         if length >= cutoff_length:
             try:
-                value = np.exp(value) / np.sum(np.exp(value),
-                                               axis=1).reshape(-1, 1)
+                value = np.exp(value) / np.sum(np.exp(value), axis=1).reshape(-1, 1)
                 # bac, phage, euk, arch
                 max_class = np.argmax(np.mean(value, axis=0))
                 host = lab[max_class]
                 t = pd.DataFrame(
                     value,
-                    columns=list(config[kwargs.get('model')]["all_labels"].values())
+                    columns=list(config[kwargs.get("model")]["all_labels"].values()),
                 )
-                t = t.assign(length=[i * kwargs.get('fsize') for i in range(len(t))])
+                t = t.assign(length=[i * kwargs.get("fsize") for i in range(len(t))])
 
                 for k, v in lab.items():
                     t[v] = np.convolve(value[:, k], np.ones(4), mode="same")
                 t["gc"] = gc
                 t["gc_skew"] = scale_range(
-                    np.convolve(np.array(gc_skew),
-                                np.ones(10) / 10, mode="same"),
+                    np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"),
                     min=-1,
                     max=1,
                 )
@@ -80,14 +83,15 @@ def logits_to_df(
     return tmp
 
 
-
-def plot_scores(logits_df:pd.DataFrame, 
-                config:Any,
-                model:str, 
-                fsize:int,
-                infile_base:str,
-                outdir:Path,
-                phage_cordinates:Dict) -> None:
+def plot_scores(
+    logits_df: pd.DataFrame,
+    config: Any,
+    model: str,
+    fsize: int,
+    infile_base: str,
+    outdir: Path,
+    phage_cordinates: Dict,
+) -> None:
     """
     Creates a circos plot of the host genome including putative prophages
     identified by Jaeger.
@@ -113,7 +117,6 @@ def plot_scores(logits_df:pd.DataFrame,
     minor_ticks_interval = 100_000
 
     for contig_id in logits_df.keys():
-
         tmp, host, length = logits_df[contig_id]
         circos = Circos(sectors={contig_id: length})
         sector = circos.get_sector(contig_id)
@@ -128,10 +131,7 @@ def plot_scores(logits_df:pd.DataFrame,
         )
 
         outer_track.xticks_by_interval(
-            minor_ticks_interval,
-            tick_length=1,
-            show_label=False,
-            label_size=11
+            minor_ticks_interval, tick_length=1, show_label=False, label_size=11
         )
         colors = ["gray", "green", "red", "teal", "brown"]
         patches = []
@@ -190,12 +190,7 @@ def plot_scores(logits_df:pd.DataFrame,
             alpha=0.5,
         )
         gc_content_track.fill_between(
-            tmp["length"],
-            negative_gc_contents,
-            0,
-            vmin=vmin,
-            vmax=vmax,
-            color="black"
+            tmp["length"], negative_gc_contents, 0, vmin=vmin, vmax=vmax, color="black"
         )
 
         # Plot GC skew
@@ -205,26 +200,15 @@ def plot_scores(logits_df:pd.DataFrame,
         abs_max_gc_skew = np.max(np.abs(tmp["gc_skew"]))
         vmin, vmax = -abs_max_gc_skew, abs_max_gc_skew
         gc_skew_track.fill_between(
-            tmp["length"],
-            positive_gc_skews,
-            0,
-            vmin=vmin,
-            vmax=vmax,
-            color="olive"
+            tmp["length"], positive_gc_skews, 0, vmin=vmin, vmax=vmax, color="olive"
         )
         gc_skew_track.fill_between(
-            tmp["length"],
-            negative_gc_skews,
-            0,
-            vmin=vmin,
-            vmax=vmax,
-            color="purple"
+            tmp["length"], negative_gc_skews, 0, vmin=vmin, vmax=vmax, color="purple"
         )
 
         _ = circos.plotfig()
         plt.title(
-            f"{contig_id.replace('__',',')}",
-            fontdict={"size": 14, "weight": "bold"}
+            f"{contig_id.replace('__',',')}", fontdict={"size": 14, "weight": "bold"}
         )
         # Add legend
         handles = (
@@ -274,15 +258,12 @@ def plot_scores(logits_df:pd.DataFrame,
             ]
         )
         _ = circos.ax.legend(
-            handles=handles,
-            bbox_to_anchor=(0.51, 0.50),
-            loc="center",
-            fontsize=11
+            handles=handles, bbox_to_anchor=(0.51, 0.50), loc="center", fontsize=11
         )
 
         plt.savefig(
             os.path.join(
-                outdir/f'{infile_base}_jaeger_{contig_id.split(" ")[0]}.pdf',
+                outdir / f'{infile_base}_jaeger_{contig_id.split(" ")[0]}.pdf',
             ),
             bbox_inches="tight",
             dpi=300,
@@ -291,7 +272,7 @@ def plot_scores(logits_df:pd.DataFrame,
             (
                 "prophage plot saved at "
                 + os.path.join(
-                    outdir/f'{infile_base}_jaeger_{contig_id.split(" ")[0]}.pdf',
+                    outdir / f'{infile_base}_jaeger_{contig_id.split(" ")[0]}.pdf',
                 )
             )
         )
@@ -299,12 +280,12 @@ def plot_scores(logits_df:pd.DataFrame,
 
 
 def segment(
-    logits_df:pd.DataFrame,
+    logits_df: pd.DataFrame,
     outdir: Path,
-    cutoff_length:int=500_000,
-    sensitivity:float=1.5,
-    identifier:str="phage"
-)->Dict:
+    cutoff_length: int = 500_000,
+    sensitivity: float = 1.5,
+    identifier: str = "phage",
+) -> Dict:
     """
     Segments the logit arrays based on change point detection and a
     sensitivity threshold.
@@ -355,23 +336,21 @@ def segment(
                 #     tmp[identifier] > np.quantile(tmp[identifier], q=0.975)
                 # ].index.to_numpy()
                 ranges = [
-                    bkpts[bkpt_index][i: i + 2]
+                    bkpts[bkpt_index][i : i + 2]
                     for i in range(len(bkpts[bkpt_index]) - 1)
                 ]
                 range_scores = np.array(
                     [tmp.loc[s:e][identifier].mean() for s, e in ranges]
                 )
                 range_mask = range_scores > sensitivity
-                selected_ranges = merge_overlapping_ranges(
-                    np.array(ranges)[range_mask])
+                selected_ranges = merge_overlapping_ranges(np.array(ranges)[range_mask])
                 selected_ranges = np.array(selected_ranges)
                 # nw_bkpts = np.append(
                 #     selected_ranges.flatten(),
                 # tmp[[identifier]].to_numpy().shape[0]
                 # )
 
-                phage_cordinates[key] = [selected_ranges,
-                                         range_scores[range_mask]]
+                phage_cordinates[key] = [selected_ranges, range_scores[range_mask]]
             else:
                 phage_cordinates[key] = [[], []]
         except Exception:
@@ -380,13 +359,10 @@ def segment(
 
     return phage_cordinates
 
+
 def get_prophage_alignment_summary(
-    result_object,
-    seq_len, record,
-    cordinates,
-    phage_score,
-    type_="DTR"
-)->Dict:
+    result_object, seq_len, record, cordinates, phage_score, type_="DTR"
+) -> Dict:
     """
     Generates a summary of the prophage alignment results.
 
@@ -485,10 +461,9 @@ def get_prophage_alignment_summary(
         }
 
 
-def prophage_report(fsize:int,
-                    filehandle:Any, 
-                    prophage_cordinates:Dict,
-                    outdir:Path):
+def prophage_report(
+    fsize: int, filehandle: Any, prophage_cordinates: Dict, outdir: Path
+):
     """
     Searches for direct repeats at prophage boundaries and generates
     prophage summaries.
@@ -526,7 +501,7 @@ def prophage_report(fsize:int,
         for record in pyfastx.Fasta(filehandle, build_index=False):
             seq_len = len(record[1])
             header = record[0].replace(",", "__")
-            logger.debug(f'generating prophage report for {header}')
+            logger.debug(f"generating prophage report for {header}")
             if seq_len > 500_000:
                 cords, scores = prophage_cordinates.get(f"{header}", [[], []])
                 if len(cords) > 0 and len(scores) > 0:
@@ -534,8 +509,7 @@ def prophage_report(fsize:int,
                         start, end = start * fsize, end * fsize
                         scan_length = min(max(int(seq_len * 0.04), 400), 4000)
                         off_set = (
-                            2000 if (end - start) // 2 >= 14000
-                            else (end - start) // 4
+                            2000 if (end - start) // 2 >= 14000 else (end - start) // 4
                         )
 
                         logger.info(
@@ -543,21 +517,17 @@ def prophage_report(fsize:int,
                         )
 
                         result_dtr = parasail.sw_trace_scan_16(
-                            str(record[1][start - scan_length:
-                                          start + off_set]),
-                            str(record[1][end - off_set:
-                                          end + scan_length]),
+                            str(record[1][start - scan_length : start + off_set]),
+                            str(record[1][end - off_set : end + scan_length]),
                             100,
                             5,
                             user_matrix,
                         )
 
                         result_itr = parasail.sw_trace_scan_16(
-                            str(record[1][start - scan_length:
-                                          start + off_set]),
+                            str(record[1][start - scan_length : start + off_set]),
                             reverse_complement(
-                                str(record[1][end - off_set:
-                                              end + scan_length])
+                                str(record[1][end - off_set : end + scan_length])
                             ),
                             100,
                             5,
@@ -605,17 +575,10 @@ def prophage_report(fsize:int,
 
         if summaries:
             df = pd.DataFrame(summaries)
-            df["contig_id"] = df["contig_id"].apply(lambda x:
-                                                    x.replace("__", ","))
-            df.to_csv(
-                outdir/"prophages_jaeger.tsv",
-                sep="\t",
-                index=False
-            )
+            df["contig_id"] = df["contig_id"].apply(lambda x: x.replace("__", ","))
+            df.to_csv(outdir / "prophages_jaeger.tsv", sep="\t", index=False)
             logger.info(f"prophage cordinates saved at {outdir/'prophages_jaeger.tsv'}")
 
     except Exception as e:
         logger.error(f"an error {e} occured during prophage report generation")
         logger.debug(traceback.format_exc())
-
-

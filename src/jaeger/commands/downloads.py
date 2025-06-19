@@ -1,8 +1,6 @@
-
-#curl -X GET  "https://ckan.fdm.uni-greifswald.de/api/3/action/package_search?q=jaeger_models"
+# curl -X GET  "https://ckan.fdm.uni-greifswald.de/api/3/action/package_search?q=jaeger_models"
 import requests
 from pathlib import Path
-import os
 import tarfile
 import logging
 
@@ -11,7 +9,7 @@ QUERY = "jaeger_models"
 logger = logging.getLogger("Jaeger")
 
 
-def list_ckan_model_download_links(api_url: str=API_URL, query: str=QUERY):
+def list_ckan_model_download_links(api_url: str = API_URL, query: str = QUERY):
     """
     Query the CKAN API to retrieve all resources associated with the specified dataset query,
     and extract direct download URLs for each available model.
@@ -86,7 +84,6 @@ def download_file(download_link: tuple, output_dir: str):
         logger.info(f"Failed to download {name} from {url}: {e}")
 
 
-
 def extract_tar_archive(tar_path):
     """
     Extracts a .tar[.gz] file into the same directory as the archive,
@@ -119,5 +116,7 @@ def extract_tar_archive(tar_path):
 if __name__ == "__main__":
     model_links = list_ckan_model_download_links(API_URL, QUERY)
     print(model_links)
-    download_file(("jaeger_57341_1.5M", model_links['jaeger_57341_1.5M']),
-                  output_dir="/home/yasas-wijesekara/Downloads/models")
+    download_file(
+        ("jaeger_57341_1.5M", model_links["jaeger_57341_1.5M"]),
+        output_dir="/home/yasas-wijesekara/Downloads/models",
+    )

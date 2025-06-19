@@ -129,7 +129,9 @@ jaeger test
 If you're using Apptainer on a cluster, it's recommended to build the container on your local machine and then transfer it to the cluster.
 ```bash
 # get the container def
-wget https://github.com/Yasas1994/Jaeger/blob/main/singularity/jaeger_singularity.def
+wget -O jaeger_singularity.def https://raw.githubusercontent.com/Yasas1994/Jaeger/dev/singularity/jaeger_singularity.def
+# get the configuration file
+wget -O config.json https://raw.githubusercontent.com/Yasas1994/Jaeger/dev/src/jaeger/data/config.json
 
 # to build the container
 apptainer build jaeger.sif singularity/jaeger_singularity.def
@@ -139,6 +141,15 @@ apptainer run --nv jaeger.sif jaeger --help
 
 # test the installation
 apptainer run --nv jaeger.sif jaeger test
+
+# list jaeger models available for download
+apptainer run --nv jaeger.sif download --list
+# download jaeger models
+apptainer run --nv jaeger.sif download --model jaeger_57341_1.5M_fragment --path /path/to/save/model --config /path/to/config.json
+
+# run jaeger
+apptainer run --nv jaeger.sif predict --model jaeger_57341_1.5M_fragment --config /path/to/config.json -i /path/to/input.fasta -o /path/to/save/results
+
 ```
 
 

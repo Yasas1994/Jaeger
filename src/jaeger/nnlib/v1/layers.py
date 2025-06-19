@@ -9,14 +9,8 @@ import numpy as np
 
 
 def rc_cnn(
-    x, name="",
-    filters=16,
-    stride=1,
-    kernel_size=5,
-    dilation_rate=1,
-    padding="same"
+    x, name="", filters=16, stride=1, kernel_size=5, dilation_rate=1, padding="same"
 ):
-
     f = tf.keras.layers.Conv1D(
         filters=filters,
         kernel_size=kernel_size,
@@ -52,7 +46,6 @@ class SplitLayer(tf.keras.layers.Layer):
 
 
 def rc_batchnorm(x, name):
-
     f = tf.keras.layers.BatchNormalization(name=f"bn_{name}")
 
     outputs = [f(i) for i in x]
@@ -61,7 +54,6 @@ def rc_batchnorm(x, name):
 
 
 def rc_batchnorm2(x, name):
-
     splits = len(x)
     x = tf.keras.layers.Concatenate(axis=0)(x)
     x = tf.keras.layers.BatchNormalization(name=f"bn_{name}")(x)
@@ -76,6 +68,7 @@ def rc_maxpool(x, pool_size=2):
 
     return outputs
 
+
 class GeLU(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -85,8 +78,8 @@ class GeLU(tf.keras.layers.Layer):
     def call(self, inputs):
         return tf.nn.gelu(inputs)
 
-def rc_gelu(x):
 
+def rc_gelu(x):
     f = GeLU()
     outputs = []
     outputs = [f(i) for i in x]
@@ -123,9 +116,7 @@ def rc_resnet_block(
     xx = rc_batchnorm(xx, name=f"{name}{1}")
 
     # Create layers
-    for n, (k, d, f) in enumerate(zip(kernel_size[1:],
-                                      dilation_rate[1:],
-                                      filters[1:])):
+    for n, (k, d, f) in enumerate(zip(kernel_size[1:], dilation_rate[1:], filters[1:])):
         xx = rc_cnn(
             xx,
             name=f"{name}{n+2}",
@@ -139,8 +130,7 @@ def rc_resnet_block(
 
     # scale up the skip connection output if the filter sizes are different
 
-    if (filters[-1] != filters[0] or x[-1].shape[-1] != filters[-1])\
-       and add_residual:
+    if (filters[-1] != filters[0] or x[-1].shape[-1] != filters[-1]) and add_residual:
         x = rc_cnn(
             x,
             name=f"{name}_skip",
@@ -218,7 +208,6 @@ def ConvolutionalTower(inputs, num_res_blocks=5, add_residual=True):
 
 
 class PositionalEmbedding(tf.keras.layers.Layer):
-
     def __init__(self, sequence_length, output_dim, **kwargs):
         super(PositionalEmbedding, self).__init__(**kwargs)
 
@@ -255,7 +244,6 @@ class PositionalEmbedding(tf.keras.layers.Layer):
 
 
 class Patches(tf.keras.layers.Layer):
-
     def __init__(self, num_patches, patch_size, name="split"):
         super(Patches, self).__init__()
         self.num_patches = num_patches
@@ -282,11 +270,7 @@ class Patches(tf.keras.layers.Layer):
 class PatchEncoder(tf.keras.layers.Layer):
     # Parch encoding + Position encoding
     def __init__(
-        self,
-        num_patches,
-        projection_dim=None,
-        embed_input=False,
-        use_sine=True
+        self, num_patches, projection_dim=None, embed_input=False, use_sine=True
     ):  # num_patches == sequence length when input comes from a conv block
         super(PatchEncoder, self).__init__()
         self.num_patches = num_patches
@@ -347,28 +331,19 @@ def Baseline_model(input_shape=None):  # archeae model 1
     r1input = tf.keras.Input(shape=input_shape, name="reverse_1")
     r2input = tf.keras.Input(shape=input_shape, name="reverse_2")
     r3input = tf.keras.Input(shape=input_shape, name="reverse_3")
-    embedding_layer = tf.keras.layers.Embedding(22,
-                                                4,
-                                                name="aa",
-                                                mask_zero=True)
-    embeddings = [embedding_layer(i) for i in [f1input,
-                                               f2input,
-                                               f3input,
-                                               r1input,
-                                               r2input,
-                                               r3input]]
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = [
+        embedding_layer(i)
+        for i in [f1input, f2input, f3input, r1input, r2input, r3input]
+    ]
     # A block
     x = ConvolutionalTower(embeddings, num_res_blocks=None)
     x = tf.keras.layers.GlobalMaxPool1D()(x)
     # C block
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-1")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-1")(x)
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-2")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-2")(x)
     out = tf.keras.layers.Dense(4, name="outdense")(x)
     return [f1input, f2input, f3input, r1input, r2input, r3input], out
 
@@ -380,28 +355,19 @@ def Res_model(input_shape=None):  # archeae model 1
     r1input = tf.keras.Input(shape=input_shape, name="reverse_1")
     r2input = tf.keras.Input(shape=input_shape, name="reverse_2")
     r3input = tf.keras.Input(shape=input_shape, name="reverse_3")
-    embedding_layer = tf.keras.layers.Embedding(22,
-                                                4,
-                                                name="aa",
-                                                mask_zero=True)
-    embeddings = [embedding_layer(i) for i in [f1input,
-                                               f2input,
-                                               f3input,
-                                               r1input,
-                                               r2input,
-                                               r3input]]
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = [
+        embedding_layer(i)
+        for i in [f1input, f2input, f3input, r1input, r2input, r3input]
+    ]
     # A block
     x = ConvolutionalTower(embeddings, num_res_blocks=5)
     x = tf.keras.layers.GlobalMaxPool1D()(x)
     # C block
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-1")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-1")(x)
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-2")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-2")(x)
     out = tf.keras.layers.Dense(4, name="outdense")(x)
     return [f1input, f2input, f3input, r1input, r2input, r3input], out
 
@@ -413,33 +379,21 @@ def WRes_model(input_shape=None):  # archeae model 1
     r1input = tf.keras.Input(shape=input_shape, name="reverse_1")
     r2input = tf.keras.Input(shape=input_shape, name="reverse_2")
     r3input = tf.keras.Input(shape=input_shape, name="reverse_3")
-    embedding_layer = tf.keras.layers.Embedding(22,
-                                                4,
-                                                name="aa",
-                                                mask_zero=True)
-    embeddings = [embedding_layer(i) for i in [f1input,
-                                               f2input,
-                                               f3input,
-                                               r1input,
-                                               r2input,
-                                               r3input]]
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = [
+        embedding_layer(i)
+        for i in [f1input, f2input, f3input, r1input, r2input, r3input]
+    ]
     # B block
-    x = ConvolutionalTower(embeddings,
-                           num_res_blocks=5,
-                           add_residual=False)
+    x = ConvolutionalTower(embeddings, num_res_blocks=5, add_residual=False)
     x = tf.keras.layers.GlobalMaxPool1D()(x)
     # C block
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-1")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-1")(x)
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-2")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-2")(x)
     out = tf.keras.layers.Dense(4, name="outdense")(x)
-    return ([f1input, f2input, f3input, r1input, r2input, r3input],
-            {"output": out})
+    return ([f1input, f2input, f3input, r1input, r2input, r3input], {"output": out})
 
 
 def WRes_model_embeddings(input_shape=None, dropout_active=True):
@@ -449,32 +403,20 @@ def WRes_model_embeddings(input_shape=None, dropout_active=True):
     r1input = tf.keras.Input(shape=input_shape, name="reverse_1")
     r2input = tf.keras.Input(shape=input_shape, name="reverse_2")
     r3input = tf.keras.Input(shape=input_shape, name="reverse_3")
-    embedding_layer = tf.keras.layers.Embedding(22,
-                                                4,
-                                                name="aa",
-                                                mask_zero=True)
-    embeddings = [embedding_layer(i) for i in [f1input,
-                                               f2input,
-                                               f3input,
-                                               r1input,
-                                               r2input,
-                                               r3input]]
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = [
+        embedding_layer(i)
+        for i in [f1input, f2input, f3input, r1input, r2input, r3input]
+    ]
     # B block
     x = ConvolutionalTower(embeddings, num_res_blocks=5, add_residual=False)
     x = tf.keras.layers.GlobalMaxPool1D()(x)
     # C block
-    x = tf.keras.layers.Dropout(0.5)(x,
-                                     training=dropout_active)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-1")(x)
-    x = tf.keras.layers.Dropout(0.5)(x,
-                                     training=dropout_active)
-    gmp = tf.keras.layers.Dense(128,
-                                activation=tf.nn.gelu,
-                                name="augdense-2")(x)
-    out = tf.keras.layers.Dense(4,
-                                name="outdense")(gmp)
+    x = tf.keras.layers.Dropout(0.5)(x, training=dropout_active)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-1")(x)
+    x = tf.keras.layers.Dropout(0.5)(x, training=dropout_active)
+    gmp = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-2")(x)
+    out = tf.keras.layers.Dense(4, name="outdense")(gmp)
     return [f1input, f2input, f3input, r1input, r2input, r3input], {
         "output": out,
         "embedding": gmp,
@@ -488,33 +430,21 @@ def LSTM_model(input_shape=None):
     r1input = tf.keras.Input(shape=input_shape, name="reverse_1")
     r2input = tf.keras.Input(shape=input_shape, name="reverse_2")
     r3input = tf.keras.Input(shape=input_shape, name="reverse_3")
-    embedding_layer = tf.keras.layers.Embedding(22,
-                                                4,
-                                                name="aa",
-                                                mask_zero=True)
-    embeddings = [embedding_layer(i) for i in [f1input,
-                                               f2input,
-                                               f3input,
-                                               r1input,
-                                               r2input,
-                                               r3input]]
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = [
+        embedding_layer(i)
+        for i in [f1input, f2input, f3input, r1input, r2input, r3input]
+    ]
 
     x = ConvolutionalTower(embeddings, num_res_blocks=5)
     x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.LSTM(128,
-                             name="lstm"),
-        name="bidirlstm"
+        tf.keras.layers.LSTM(128, name="lstm"), name="bidirlstm"
     )(x)
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-1")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-1")(x)
     x = tf.keras.layers.Dropout(0.1)(x)
-    x = tf.keras.layers.Dense(128,
-                              activation=tf.nn.gelu,
-                              name="augdense-2")(x)
-    out = tf.keras.layers.Dense(4,
-                                name="outdense")(x)
+    x = tf.keras.layers.Dense(128, activation=tf.nn.gelu, name="augdense-2")(x)
+    out = tf.keras.layers.Dense(4, name="outdense")(x)
     return [f1input, f2input, f3input, r1input, r2input, r3input], out
 
 
@@ -531,23 +461,17 @@ def Vitra(
     use_global=True,
     global_type="max",
 ):
-
     f2input = tf.keras.Input(shape=input_shape, name="forward_2")
     f3input = tf.keras.Input(shape=input_shape, name="forward_3")
     r1input = tf.keras.Input(shape=input_shape, name="reverse_1")
     r2input = tf.keras.Input(shape=input_shape, name="reverse_2")
     f1input = tf.keras.Input(shape=input_shape, name="forward_1")
     r3input = tf.keras.Input(shape=input_shape, name="reverse_3")
-    embedding_layer = tf.keras.layers.Embedding(22,
-                                                4,
-                                                name="aa",
-                                                mask_zero=True)
-    embeddings = [embedding_layer(i) for i in [f1input,
-                                               f2input,
-                                               f3input,
-                                               r1input,
-                                               r2input,
-                                               r3input]]
+    embedding_layer = tf.keras.layers.Embedding(22, 4, name="aa", mask_zero=True)
+    embeddings = [
+        embedding_layer(i)
+        for i in [f1input, f2input, f3input, r1input, r2input, r3input]
+    ]
     # Create patches.
     patches = ConvolutionalTower(embeddings, num_res_blocks=5)
     # patches = Patches(num_patches=num_patches,patch_size=patch_size)(inputs)
@@ -586,9 +510,7 @@ def Vitra(
 
     rep = tf.keras.layers.Dropout(0.1)(rep)
     # Add MLP.
-    features = mlp(rep,
-                   hidden_units=mlp_hidden_units,
-                   dropout_rate=0.5)
+    features = mlp(rep, hidden_units=mlp_hidden_units, dropout_rate=0.5)
     # Classify outputs.
     logits = tf.keras.layers.Dense(4)(features)
     # Create the Keras model.
@@ -639,10 +561,7 @@ class MeanReduce(tf.keras.layers.Layer):
 
     def call(self, inputs):
         # Take the maximum value along the frame axis
-        return tf.reduce_mean(inputs,
-                              axis=1,
-                              keepdims=False,
-                              name="max_reduce")
+        return tf.reduce_mean(inputs, axis=1, keepdims=False, name="max_reduce")
 
     def compute_output_shape(self, input_shape):
         # Output shape will have the same batch size and the number of features
@@ -721,15 +640,12 @@ def resnet_block_g2(
         kernel_initializer=tf.keras.initializers.Orthogonal(gain=2),
     )(x)
 
-    xx = tf.keras.layers.BatchNormalization(axis=-1,
-                                            name=f"{name}_{1}_norm")(xx)
+    xx = tf.keras.layers.BatchNormalization(axis=-1, name=f"{name}_{1}_norm")(xx)
     xx = tf.nn.relu(xx)
     # Create layers
     for n, (k, d, f) in enumerate(
-        zip(kernel_size[1:], dilation_rate[1:], filters[1:]),
-        1
+        zip(kernel_size[1:], dilation_rate[1:], filters[1:]), 1
     ):
-
         xx = tf.keras.layers.Conv1D(
             f,
             k,
@@ -740,14 +656,12 @@ def resnet_block_g2(
             kernel_initializer=tf.keras.initializers.Orthogonal(gain=2),
         )(xx)
 
-        xx = tf.keras.layers.BatchNormalization(axis=-1,
-                                                name=f"{name}_{n+2}_norm")(xx)
+        xx = tf.keras.layers.BatchNormalization(axis=-1, name=f"{name}_{n+2}_norm")(xx)
         xx = tf.nn.leaky_relu(xx, alpha=0.1)
 
     # scale up the skip connection output if the filter sizes are different
 
     if (x.shape[-1] != filters[-1]) and add_residual:
-
         x = tf.keras.layers.Conv1D(
             filters[-1],
             1,
@@ -757,8 +671,7 @@ def resnet_block_g2(
             kernel_initializer=tf.keras.initializers.Orthogonal(gain=2),
         )(x)
 
-        x = tf.keras.layers.BatchNormalization(axis=-1,
-                                               name=f"{name}_skip_norm")(x)
+        x = tf.keras.layers.BatchNormalization(axis=-1, name=f"{name}_skip_norm")(x)
         x = tf.nn.leaky_relu(x, alpha=0.1)
 
     # Add Residue
@@ -768,9 +681,7 @@ def resnet_block_g2(
         return xx
 
 
-def ConvolutionalTower_g2(x,
-                          num_res_blocks=5,
-                          add_residual=True):
+def ConvolutionalTower_g2(x, num_res_blocks=5, add_residual=True):
     """
     Covolutional tower to increase the receptive filed size with dilated
     convolutions
@@ -822,7 +733,6 @@ def ConvolutionalTower_g2(x,
 def create_jaeger_model(
     input_shape, vocab_size=22, embedding_size=4, out_shape=6, bias_init=None
 ):
-
     inputs = tf.keras.Input(shape=input_shape, name="translated")
     #     embedding_layer = tf.keras.layers.Embedding(vocab_size,
     #                                                 embedding_size,
@@ -833,8 +743,7 @@ def create_jaeger_model(
     x = ConvolutionalTower_g2(inputs, num_res_blocks=10, add_residual=True)
     # A block
     x = SumReduce()(x)
-    x = tf.keras.layers.BatchNormalization(axis=-1,
-                                           name="sum_reduce_norm")(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1, name="sum_reduce_norm")(x)
     # create amino acid feature vec
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
     # x batch-norm and dropout do not play nicely together
@@ -846,8 +755,7 @@ def create_jaeger_model(
         kernel_initializer=tf.keras.initializers.HeNormal(),
         kernel_regularizer=tf.keras.regularizers.L2(1e-4),
     )(x)
-    x = tf.keras.layers.BatchNormalization(axis=-1,
-                                           name="dense1")(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1, name="dense1")(x)
     x = tf.keras.layers.Dense(
         32,
         activation=tf.nn.relu,
@@ -855,8 +763,7 @@ def create_jaeger_model(
         kernel_initializer=tf.keras.initializers.HeNormal(),
         kernel_regularizer=tf.keras.regularizers.L2(1e-4),
     )(x)
-    x1 = tf.keras.layers.BatchNormalization(axis=-1,
-                                            name="dense2")(x)
+    x1 = tf.keras.layers.BatchNormalization(axis=-1, name="dense2")(x)
     # x = tf.keras.layers.Dense(dense_c2_nodes,
     # activation=tf.nn.gelu,
     # name='augdense-2',
@@ -870,8 +777,6 @@ def create_jaeger_model(
         kernel_initializer=tf.keras.initializers.HeNormal(),
         use_bias=True,
         bias_initializer=bias_init,
-    )(
-        x1
-    )  # validation loss jumps when bias is removed
+    )(x1)  # validation loss jumps when bias is removed
 
     return inputs, {"output": out, "embedding": x1}

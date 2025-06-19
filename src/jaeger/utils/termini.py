@@ -13,11 +13,14 @@ from jaeger.utils.seq import reverse_complement
 
 logger = logging.getLogger("jaeger")
 
-def get_alignment_summary(result_object: Any,
-                          seq_len: int,
-                          record_id: str,
-                          input_length: int,
-                          type_:str="DTR") -> Dict:
+
+def get_alignment_summary(
+    result_object: Any,
+    seq_len: int,
+    record_id: str,
+    input_length: int,
+    type_: str = "DTR",
+) -> Dict:
     """
     Generates a summary of the alignment results from parasail.
 
@@ -82,10 +85,9 @@ def get_alignment_summary(result_object: Any,
     }
 
 
-def scan_for_terminal_repeats(file_path: Union[str, Path],
-                              num:int,
-                              workers:int,
-                              fsize:int ) -> pd.DataFrame:
+def scan_for_terminal_repeats(
+    file_path: Union[str, Path], num: int, workers: int, fsize: int
+) -> pd.DataFrame:
     """
     Scans for terminal repeats in DNA sequences using Smith-Waterman alignment.
 
@@ -107,7 +109,6 @@ def scan_for_terminal_repeats(file_path: Union[str, Path],
     summaries = []
 
     def helper(record):
-
         seq_len = len(record[1])
         headder = record[0].replace(",", "__")
         logger.debug(f"{headder}, {seq_len}")
@@ -128,8 +129,7 @@ def scan_for_terminal_repeats(file_path: Union[str, Path],
             5,
             user_matrix,
         )
-        if len(result_itr.traceback.query) > 12 or\
-           len(result_dtr.traceback.query) > 12:
+        if len(result_itr.traceback.query) > 12 or len(result_dtr.traceback.query) > 12:
             if result_itr.score > result_dtr.score:
                 return get_alignment_summary(
                     result_object=result_itr,
@@ -172,7 +172,7 @@ def scan_for_terminal_repeats(file_path: Union[str, Path],
                 executor.submit(helper, record)
                 for record in pyfastx.Fasta(file_path, build_index=False)
                 if len(record[1]) >= fsize
-                ]
+            ]
 
             with Progress(transient=True) as progress:
                 task = progress.add_task("[cyan]processing...", total=num)

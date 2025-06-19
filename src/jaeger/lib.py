@@ -3,6 +3,7 @@
 Copyright (c) 2024 Yasas Wijesekara
 
 """
+
 import json
 from importlib.resources import files
 import tensorflow as tf
@@ -21,10 +22,8 @@ from postprocessing import (
 # experimental code
 class Predictor:
     def __init__(self):
-
         self.stratergy = tf.distribute.MirroredStrategy()
-        config = json.load(open(files("jaegeraa.data").joinpath("config.json"),
-                                "r"))
+        config = json.load(open(files("jaegeraa.data").joinpath("config.json"), "r"))
         self.weights_path = files("jaegeraa.data").joinpath(
             config["default"]["weights"]
         )
@@ -63,7 +62,7 @@ class Predictor:
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
             ).batch(batch_size=batch, num_parallel_calls=tf.data.AUTOTUNE)
-            for c, (a, s, d, f, l) in enumerate(
+            for c, (a, s, d, f, g) in enumerate(
                 extract_pred_entry(self.model, idataset)
             ):
                 # code for further processing goes here
@@ -73,7 +72,7 @@ class Predictor:
                 c5 = pred2string(s)
 
                 results["contig_id"].append(d[-1].decode())
-                results["length"].append(l[-1])
+                results["length"].append(g[-1])
                 results["#num_prok_windows"].append(c1[0])
                 results["#num_vir_windows"].append(c1[1])
                 results["#num_fun_windows"].append(c1[2])

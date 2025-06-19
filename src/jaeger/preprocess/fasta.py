@@ -3,16 +3,13 @@ import pydustmasker
 from rich.progress import Progress
 from jaeger.utils.misc import signal_l, safe_divide
 
-def fragment_generator(file_path,
-              fragsize=None,
-              stride=None,
-              num=None,
-              no_progress=True,
-              dustmask=True
-              ):
+
+def fragment_generator(
+    file_path, fragsize=None, stride=None, num=None, no_progress=True, dustmask=True
+):
     """
-    Generates fragments of DNA sequences from a FASTA file. 
-    optionally masks low complexity regions (recomemded to use when 
+    Generates fragments of DNA sequences from a FASTA file.
+    optionally masks low complexity regions (recomemded to use when
     analysing eukaryotic host associated metagenomes)
 
     Args:
@@ -56,8 +53,7 @@ def fragment_generator(file_path,
                         # sequence and sequence headder
                         yield f"{sequence},{header}"
                     elif fragsize is not None:
-
-                        for i, (l, index) in enumerate(
+                        for i, (b, index) in enumerate(
                             signal_l(
                                 range(
                                     0,
@@ -66,14 +62,14 @@ def fragment_generator(file_path,
                                 )
                             )
                         ):
-                            g = sequence[index: index + fragsize].count("G")
-                            c = sequence[index: index + fragsize].count("C")
-                            a = sequence[index: index + fragsize].count("A")
-                            t = sequence[index: index + fragsize].count("T")
+                            g = sequence[index : index + fragsize].count("G")
+                            c = sequence[index : index + fragsize].count("C")
+                            a = sequence[index : index + fragsize].count("A")
+                            t = sequence[index : index + fragsize].count("T")
                             gc_skew = safe_divide((g - c), (g + c))
                             # sequnce_fragment, contig_id, index, contig_end, i,
                             # g, c, gc_skew
-                            yield f"{sequence[index : index + fragsize]},{header},{index},{l},{i},{seqlen},{g},{c},{a},{t},{gc_skew : .3f}"
+                            yield f"{sequence[index : index + fragsize]},{header},{index},{b},{i},{seqlen},{g},{c},{a},{t},{gc_skew : .3f}"
 
     return c
 
@@ -130,7 +126,7 @@ def fragment_generator_lib(filename, fragsize=None, stride=None, num=None):
                 if fragsize is None:
                     yield f"{str(seq)},{str(headder)}"
                 elif fragsize is not None:
-                    for i, (l, index) in enumerate(
+                    for i, (b, index) in enumerate(
                         signal_l(
                             range(
                                 0,
@@ -139,6 +135,6 @@ def fragment_generator_lib(filename, fragsize=None, stride=None, num=None):
                             )
                         )
                     ):
-                        yield f"{str(seq)[index:index + fragsize]},{str(headder)},{str(index)},{str(l)},{str(i)},{str(seqlen)}"
+                        yield f"{str(seq)[index:index + fragsize]},{str(headder)},{str(index)},{str(b)},{str(i)},{str(seqlen)}"
 
     return c

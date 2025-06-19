@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-class Precision_per_class(tf.keras.metrics.Metric):
 
+class Precision_per_class(tf.keras.metrics.Metric):
     def __init__(self, name="Precision_per_class", num_classes=4, **kwargs):
         super(Precision_per_class, self).__init__(name=name, **kwargs)
         self.true_positives = self.add_weight(
@@ -38,13 +38,11 @@ class Precision_per_class(tf.keras.metrics.Metric):
         self.pred_positives.assign(tf.zeros(shape=self.num_classes))
 
     def result(self):
-        result = tf.math.divide_no_nan(self.true_positives,
-                                       self.pred_positives)
+        result = tf.math.divide_no_nan(self.true_positives, self.pred_positives)
         return result
 
 
 class Recall_per_class(tf.keras.metrics.Metric):
-
     def __init__(self, name="Recall_per_class", num_classes=4, **kwargs):
         super(Recall_per_class, self).__init__(name=name, **kwargs)
         self.true_positives = self.add_weight(
@@ -56,7 +54,6 @@ class Recall_per_class(tf.keras.metrics.Metric):
         self.num_classes = num_classes
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-
         y_pred = tf.math.argmax(y_pred, axis=-1)
         y_pred = tf.one_hot(y_pred, self.num_classes)
 

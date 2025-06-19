@@ -11,7 +11,6 @@ import pyfastx
 logger = logging.getLogger("Jaeger")
 
 
-
 class Compression(Enum):
     gzip = auto()
     bzip2 = auto()
@@ -27,13 +26,7 @@ def is_compressed(filepath: Union[str, Path]) -> Any:
             return Compression.gzip
         elif tuple(signature[:3]) == (0x42, 0x5A, 0x68):
             return Compression.bzip2
-        elif tuple(signature[:7]) == (0xFD,
-                                      0x37,
-                                      0x7A,
-                                      0x58,
-                                      0x5A,
-                                      0x00,
-                                      0x00):
+        elif tuple(signature[:7]) == (0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00, 0x00):
             return Compression.xz
         else:
             return Compression.noncompressed
@@ -62,6 +55,7 @@ def remove_directory_recursively(directory: Union[str, Path]) -> None:
             os.rmdir(dir_path)
     os.rmdir(directory)
 
+
 def delete_all_in_directory(root_path: Union[str, Path]) -> None:
     """delete all files and directories in a path"""
     if os.path.exists(root_path):
@@ -74,6 +68,7 @@ def delete_all_in_directory(root_path: Union[str, Path]) -> None:
                 os.remove(file_path)
         os.rmdir(root_path)
 
+
 def remove_directory(directory):
     """remove a directory"""
     if os.path.exists(directory):
@@ -85,7 +80,8 @@ def remove_directory(directory):
                 remove_directory(file_path)
         os.rmdir(directory)
 
-def dir_path(path:str) -> str:
+
+def dir_path(path: str) -> str:
     """checks path and creates if absent"""
     if not os.path.isdir(path):
         os.mkdir(path)
@@ -99,8 +95,10 @@ def check_file_path(path: str) -> str:
     else:
         raise f"ERROR:{path} is not a valid file"
 
-def validate_fasta_entries(input_file_path: str,
-                           min_len: int = 2048) -> Union[int, Exception]:
+
+def validate_fasta_entries(
+    input_file_path: str, min_len: int = 2048
+) -> Union[int, Exception]:
     num = 0
     gt_min_len = 0
     # try:
@@ -115,4 +113,3 @@ def validate_fasta_entries(input_file_path: str,
         raise Exception(f"all records in {input_file_path} are < {min_len}bp")
 
     return num
-

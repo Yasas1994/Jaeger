@@ -1,52 +1,56 @@
 import tensorflow as tf
-import numpy as np
-from jaeger.preprocess.latest.maps import *
+from jaeger.preprocess.latest.maps import CODON_ID, CODONS
 
-#map codons to amino acids
+
+# map codons to amino acids
 def _map_codon(codons, codon_num):
-    trimers=tf.constant(codons)
+    trimers = tf.constant(codons)
     trimer_vals = tf.constant(codon_num)
     trimer_init = tf.lookup.KeyValueTensorInitializer(trimers, trimer_vals)
     trimer_table = tf.lookup.StaticHashTable(trimer_init, default_value=-1)
-    
+
     return trimer_table
 
-#convert to complement 
+
+# convert to complement
 def _map_complement():
-    rc_keys = tf.constant([b'A', b'T', b'G', b'C',b'a', b't', b'g', b'c'])
-    rc_vals = tf.constant([b'T', b'A', b'C', b'G',b't', b'a', b'c', b'g'])
+    rc_keys = tf.constant([b"A", b"T", b"G", b"C", b"a", b"t", b"g", b"c"])
+    rc_vals = tf.constant([b"T", b"A", b"C", b"G", b"t", b"a", b"c", b"g"])
     rc_init = tf.lookup.KeyValueTensorInitializer(rc_keys, rc_vals)
     rc_table = tf.lookup.StaticHashTable(rc_init, default_value="N")
-    
+
     return rc_table
 
-    
+
 def _remap_labels(original, alternative):
     """
     helper function remaps labels ids to alternative ids
     """
     keys_tensor = tf.constant(original)
-    vals_tensor = tf.constant(alternative) #[0,1,2,3,4,5,6]
+    vals_tensor = tf.constant(alternative)  # [0,1,2,3,4,5,6]
     ini = tf.lookup.KeyValueTensorInitializer(keys_tensor, vals_tensor)
     map_ = tf.lookup.StaticHashTable(ini, default_value=0)
     return map_
 
+
 def _map_nucleotide():
-    keys_tensor = tf.constant([b'A', b'G', b'C', b'T' ,b'a', b'g', b'c', b't'])
+    keys_tensor = tf.constant([b"A", b"G", b"C", b"T", b"a", b"g", b"c", b"t"])
     vals_tensor = tf.constant([0, 1, 2, 3, 0, 1, 2, 3])
     ini = tf.lookup.KeyValueTensorInitializer(keys_tensor, vals_tensor)
     map_ = tf.lookup.StaticHashTable(ini, default_value=-1)
     return map_
 
+
 def _map_nucleotide_type():
     """
     maps to purine and pyrimidine
     """
-    keys_tensor = tf.constant([b'A', b'G', b'C', b'T'])
-    vals_tensor = tf.constant([0,1,1,0])
+    keys_tensor = tf.constant([b"A", b"G", b"C", b"T"])
+    vals_tensor = tf.constant([0, 1, 1, 0])
     ini = tf.lookup.KeyValueTensorInitializer(keys_tensor, vals_tensor)
     map_ = tf.lookup.StaticHashTable(ini, default_value=-1)
     return map_
+
 
 def process_string_train(
     codons=CODONS,
@@ -63,7 +67,7 @@ def process_string_train(
     mutate=False,
     mutation_rate=0.1,
     masking=True,
-    input_type="translated"  # "translated", "nucleotide", "both"
+    input_type="translated",  # "translated", "nucleotide", "both"
 ):
     """
     TensorFlow string processing function for sequence input.
@@ -83,17 +87,20 @@ def process_string_train(
 
     # Setup label lookup function
     if label_original is not None and label_alternative is not None:
-        remap_labels = _remap_labels(original=label_original, alternative=label_alternative)
+        remap_labels = _remap_labels(
+            original=label_original, alternative=label_alternative
+        )
 
         def lookup_label(x):
             return remap_labels.lookup(tf.strings.to_number(x, tf.int32))
     else:
+
         def lookup_label(x):
             return tf.strings.to_number(x, tf.int32)
 
     @tf.function
     def p(string):
-        x = tf.strings.split(string, sep=',')
+        x = tf.strings.split(string, sep=",")
         label = tf.cast(lookup_label(x[0]), dtype=tf.int32)
 
         # Determine offset for codon splitting
@@ -102,10 +109,14 @@ def process_string_train(
 
         # Apply mutations if requested
         if mutate:
-            alphabet = tf.constant(['A', 'T', 'G', 'C', 'N'], dtype=tf.string)
+            alphabet = tf.constant(["A", "T", "G", "C", "N"], dtype=tf.string)
             mask = tf.random.uniform(tf.shape(forward_strand)) < mutation_rate
-            mutations = tf.random.uniform(tf.shape(forward_strand), minval=0, maxval=4, dtype=tf.int32)
-            forward_strand = tf.where(mask, tf.gather(alphabet, mutations), forward_strand)
+            mutations = tf.random.uniform(
+                tf.shape(forward_strand), minval=0, maxval=4, dtype=tf.int32
+            )
+            forward_strand = tf.where(
+                mask, tf.gather(alphabet, mutations), forward_strand
+            )
 
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
@@ -122,15 +133,15 @@ def process_string_train(
 
         # Translated representation
         if input_type in ["translated", "both"]:
-            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator='')
-            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator='')
+            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
+            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
 
-            f1 = map_codon.lookup(tri_forward[0:-3 + offset:3])
-            f2 = map_codon.lookup(tri_forward[1:-2 + offset:3])
-            f3 = map_codon.lookup(tri_forward[2:-1 + offset:3])
-            r1 = map_codon.lookup(tri_reverse[0:-3 + offset:3])
-            r2 = map_codon.lookup(tri_reverse[1:-2 + offset:3])
-            r3 = map_codon.lookup(tri_reverse[2:-1 + offset:3])
+            f1 = map_codon.lookup(tri_forward[0 : -3 + offset : 3])
+            f2 = map_codon.lookup(tri_forward[1 : -2 + offset : 3])
+            f3 = map_codon.lookup(tri_forward[2 : -1 + offset : 3])
+            r1 = map_codon.lookup(tri_reverse[0 : -3 + offset : 3])
+            r2 = map_codon.lookup(tri_reverse[1 : -2 + offset : 3])
+            r3 = map_codon.lookup(tri_reverse[2 : -1 + offset : 3])
 
             if timesteps:
                 f1 = tf.reshape(f1, (num_time, fragsize))
@@ -143,10 +154,14 @@ def process_string_train(
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
 
-            outputs["translated"] = tf.one_hot(seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0)
+            outputs["translated"] = tf.one_hot(
+                seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
+            )
 
         if class_label_onehot:
-            label = tf.one_hot(label, depth=num_classes, dtype=tf.float32, on_value=1, off_value=0)
+            label = tf.one_hot(
+                label, depth=num_classes, dtype=tf.float32, on_value=1, off_value=0
+            )
         else:
             label = tf.expand_dims(label, axis=0)
 
@@ -156,6 +171,7 @@ def process_string_train(
         return outputs, label
 
     return p
+
 
 def process_string_inference(
     codons=CODONS,
@@ -167,7 +183,7 @@ def process_string_inference(
     fragsize=200,
     mutate=False,
     mutation_rate=0.1,
-    input_type="translated"  # "translated", "nucleotide", "both"
+    input_type="translated",  # "translated", "nucleotide", "both"
 ):
     """
     TensorFlow string processing function for sequence input.
@@ -185,20 +201,23 @@ def process_string_inference(
     map_complement = _map_complement()
     map_nucleotide = _map_nucleotide()
 
-
     @tf.function
     def p(string):
-        x = tf.strings.split(string, sep=',')
+        x = tf.strings.split(string, sep=",")
         # Determine offset for codon splitting
         offset = {0: -2, 1: -1, 2: 0}[crop_size % 3]
         forward_strand = tf.strings.bytes_split(x[0])[:crop_size]
 
         # Apply mutations if requested
         if mutate:
-            alphabet = tf.constant(['A', 'T', 'G', 'C', 'N'], dtype=tf.string)
+            alphabet = tf.constant(["A", "T", "G", "C", "N"], dtype=tf.string)
             mask = tf.random.uniform(tf.shape(forward_strand)) < mutation_rate
-            mutations = tf.random.uniform(tf.shape(forward_strand), minval=0, maxval=4, dtype=tf.int32)
-            forward_strand = tf.where(mask, tf.gather(alphabet, mutations), forward_strand)
+            mutations = tf.random.uniform(
+                tf.shape(forward_strand), minval=0, maxval=4, dtype=tf.int32
+            )
+            forward_strand = tf.where(
+                mask, tf.gather(alphabet, mutations), forward_strand
+            )
 
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
@@ -213,15 +232,15 @@ def process_string_inference(
 
         # Translated representation
         if input_type in ["translated", "both"]:
-            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator='')
-            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator='')
+            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
+            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
 
-            f1 = map_codon.lookup(tri_forward[0:-3 + offset:3])
-            f2 = map_codon.lookup(tri_forward[1:-2 + offset:3])
-            f3 = map_codon.lookup(tri_forward[2:-1 + offset:3])
-            r1 = map_codon.lookup(tri_reverse[0:-3 + offset:3])
-            r2 = map_codon.lookup(tri_reverse[1:-2 + offset:3])
-            r3 = map_codon.lookup(tri_reverse[2:-1 + offset:3])
+            f1 = map_codon.lookup(tri_forward[0 : -3 + offset : 3])
+            f2 = map_codon.lookup(tri_forward[1 : -2 + offset : 3])
+            f3 = map_codon.lookup(tri_forward[2 : -1 + offset : 3])
+            r1 = map_codon.lookup(tri_reverse[0 : -3 + offset : 3])
+            r2 = map_codon.lookup(tri_reverse[1 : -2 + offset : 3])
+            r3 = map_codon.lookup(tri_reverse[2 : -1 + offset : 3])
 
             if timesteps:
                 f1 = tf.reshape(f1, (num_time, fragsize))
@@ -234,13 +253,15 @@ def process_string_inference(
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
 
-            outputs["translated"] = tf.one_hot(seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0)
-
+            outputs["translated"] = tf.one_hot(
+                seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
+            )
 
         # return outputs, {'classifier': label,
         #                  'reliability': reliability
         #                 }
-        return ( outputs,
+        return (
+            outputs,
             x[1],
             x[2],
             x[3],
@@ -252,6 +273,5 @@ def process_string_inference(
             x[9],
             x[10],
         )
-
 
     return p

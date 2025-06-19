@@ -34,5 +34,4 @@ def reverse_complement(dna_sequence):
         "g": "C",
         "c": "G",
     }
-    return "".join(complement_dict.get(base, "N") for base in
-                   reversed(dna_sequence))
+    return "".join(complement_dict.get(base, "N") for base in reversed(dna_sequence))

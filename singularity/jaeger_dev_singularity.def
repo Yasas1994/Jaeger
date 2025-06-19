@@ -13,6 +13,7 @@ From: python:3.12.7-bookworm
 
     # Install Jaeger and other dependencies
     pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/MGXlab/Jaeger@dev" # install jaeger without tensorflow support
+    pip install --root-user-action=ignore --no-cache-dir  icecream
 
 %environment
     # Set environment variables for TensorFlow GPU usage

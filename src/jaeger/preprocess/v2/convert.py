@@ -1,6 +1,6 @@
 from typing import Any
 import tensorflow as tf
-from jaeger.preprocess.v2.maps import (CODONS, MURPHY10_INT)
+from jaeger.preprocess.v2.maps import CODONS, MURPHY10_INT
 
 
 def codon_mapper(mapto: list) -> Any:
@@ -17,7 +17,6 @@ def codon_mapper(mapto: list) -> Any:
     trimer_vals = tf.constant(mapto)
     trimer_init = tf.lookup.KeyValueTensorInitializer(trimers, trimer_vals)
     return tf.lookup.StaticHashTable(trimer_init, default_value=0)
-
 
 
 def complement_mapper():
@@ -70,10 +69,10 @@ def alt_nuc_enc_mapper():
 
 
 def process_string(
-    crop_size:int=1024,
-    timesteps:bool=False,
-    num_time:int=None,
-    fragsize:int=200,
+    crop_size: int = 1024,
+    timesteps: bool = False,
+    num_time: int = None,
+    fragsize: int = 200,
 ):
     """
     Processes a DNA sequence string by mapping codons, nucleotides, and codon
@@ -103,7 +102,6 @@ def process_string(
 
     @tf.function
     def p(string):
-
         t1 = codon_mapper(MURPHY10_INT)
         t3 = complement_mapper()
         # t4 = nuc_enc_mapper()
@@ -125,24 +123,20 @@ def process_string(
         # nuc1 = t4.lookup(forward_strand[:])
         # nuc2 = t4.lookup(reverse_strand[:])
 
-        tri_forward = tf.strings.ngrams(forward_strand,
-                                        ngram_width=3,
-                                        separator="")
-        tri_reverse = tf.strings.ngrams(reverse_strand,
-                                        ngram_width=3,
-                                        separator="")
+        tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
+        tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
 
-        f1 = t1.lookup(tri_forward[: -3 + offset: 3])
-        f2 = t1.lookup(tri_forward[1: -2 + offset: 3])
-        f3 = t1.lookup(tri_forward[2: -1 + offset: 3])
+        f1 = t1.lookup(tri_forward[: -3 + offset : 3])
+        f2 = t1.lookup(tri_forward[1 : -2 + offset : 3])
+        f3 = t1.lookup(tri_forward[2 : -1 + offset : 3])
 
         # fb1=t5.lookup(tri_forward[0:-3+offset:3])
         # fb2=t5.lookup(tri_forward[1:-2+offset:3])
         # fb3=t5.lookup(tri_forward[2:-1+offset:3])
 
-        r1 = t1.lookup(tri_reverse[: -3 + offset: 3])
-        r2 = t1.lookup(tri_reverse[1: -2 + offset: 3])
-        r3 = t1.lookup(tri_reverse[2: -1 + offset: 3])
+        r1 = t1.lookup(tri_reverse[: -3 + offset : 3])
+        r2 = t1.lookup(tri_reverse[1 : -2 + offset : 3])
+        r3 = t1.lookup(tri_reverse[2 : -1 + offset : 3])
 
         # rb1=t5.lookup(tri_reverse[0:-3+offset:3])
         # rb2=t5.lookup(tri_reverse[1:-2+offset:3])

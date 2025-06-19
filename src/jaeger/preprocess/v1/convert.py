@@ -1,6 +1,7 @@
 import logging
 import tensorflow as tf
-from jaeger.preprocess.v1.maps import (TRIMERS, TRIMER_INT, AMINO_ACIDS, AMINO_ACIDS_INT)
+from jaeger.preprocess.v1.maps import TRIMERS, TRIMER_INT, AMINO_ACIDS, AMINO_ACIDS_INT
+
 logger = logging.getLogger("Jaeger")
 
 
@@ -14,12 +15,8 @@ def codon_mapper():
         tf.lookup.StaticHashTable: A static hash table for codon mapping.
     """
 
-    trimers = tf.constant(
-        TRIMERS
-    )
-    trimer_vals = tf.constant(
-       TRIMER_INT
-    )
+    trimers = tf.constant(TRIMERS)
+    trimer_vals = tf.constant(TRIMER_INT)
     trimer_init = tf.lookup.KeyValueTensorInitializer(trimers, trimer_vals)
     return tf.lookup.StaticHashTable(trimer_init, default_value=0)
 
@@ -34,12 +31,8 @@ def amino_mapper():
         tf.lookup.StaticHashTable: A static hash table for amino acid mapping.
     """
 
-    aa = tf.constant(
-       AMINO_ACIDS
-    )
-    aa_num = tf.constant(
-       AMINO_ACIDS_INT
-    )
+    aa = tf.constant(AMINO_ACIDS)
+    aa_num = tf.constant(AMINO_ACIDS_INT)
     aa_init = tf.lookup.KeyValueTensorInitializer(aa, aa_num)
     return tf.lookup.StaticHashTable(aa_init, default_value=0)
 
@@ -58,7 +51,6 @@ def complement_mapper():
     rc_vals = tf.constant([b"T", b"A", b"C", b"G", b"t", b"a", b"c", b"g"])
     rc_init = tf.lookup.KeyValueTensorInitializer(rc_keys, rc_vals)
     return tf.lookup.StaticHashTable(rc_init, default_value="N")
-
 
 
 def process_string(onehot=True, label_onehot=True, crop_size=2048):
@@ -95,33 +87,29 @@ def process_string(onehot=True, label_onehot=True, crop_size=2048):
         forward_strand = tf.strings.bytes_split(x[0])  # split the string
         reverse_strand = t3.lookup(forward_strand[::-1])
 
-        tri_forward = tf.strings.ngrams(forward_strand,
-                                        ngram_width=3,
-                                        separator="")
-        tri_reverse = tf.strings.ngrams(reverse_strand,
-                                        ngram_width=3,
-                                        separator="")
+        tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
+        tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
 
-        f1 = t1.lookup(tri_forward[: -3 + offset: 3])
-        f2 = t1.lookup(tri_forward[1: -2 + offset: 3])
-        f3 = t1.lookup(tri_forward[2: -1 + offset: 3])
+        f1 = t1.lookup(tri_forward[: -3 + offset : 3])
+        f2 = t1.lookup(tri_forward[1 : -2 + offset : 3])
+        f3 = t1.lookup(tri_forward[2 : -1 + offset : 3])
 
-        r1 = t1.lookup(tri_reverse[: -3 + offset: 3])
-        r2 = t1.lookup(tri_reverse[1: -2 + offset: 3])
-        r3 = t1.lookup(tri_reverse[2: -1 + offset: 3])
+        r1 = t1.lookup(tri_reverse[: -3 + offset : 3])
+        r2 = t1.lookup(tri_reverse[1 : -2 + offset : 3])
+        r3 = t1.lookup(tri_reverse[2 : -1 + offset : 3])
 
         return (
             {
-                "forward_1":  tf.cast(f1, dtype=tf.float32),
-                "forward_2":  tf.cast(f2, dtype=tf.float32),
-                "forward_3":  tf.cast(f3, dtype=tf.float32),
-                "reverse_1":  tf.cast(r1, dtype=tf.float32),
-                "reverse_2":  tf.cast(r2, dtype=tf.float32),
-                "reverse_3":  tf.cast(r3, dtype=tf.float32),
+                "forward_1": tf.cast(f1, dtype=tf.float32),
+                "forward_2": tf.cast(f2, dtype=tf.float32),
+                "forward_3": tf.cast(f3, dtype=tf.float32),
+                "reverse_1": tf.cast(r1, dtype=tf.float32),
+                "reverse_2": tf.cast(r2, dtype=tf.float32),
+                "reverse_3": tf.cast(r3, dtype=tf.float32),
             },
             # metadata routine does not work anymore
             # convert the models to new format
-            # 
+            #
             x[1],
             x[2],
             x[3],
@@ -168,11 +156,7 @@ def process_string_textline_protein(label_onehot=True, numclasses=4):
 
         if label_onehot:
             label = tf.one_hot(
-                label,
-                depth=numclasses,
-                dtype=tf.float32,
-                on_value=1,
-                off_value=0
+                label, depth=numclasses, dtype=tf.float32, on_value=1, off_value=0
             )
 
         return protein, label
@@ -210,12 +194,8 @@ def process_string_textline(onehot=True, label_onehot=True, numclasses=4):
         forward_strand = tf.strings.bytes_split(x[1])
         reverse_strand = t3.lookup(forward_strand[::-1])
 
-        tri_forward = tf.strings.ngrams(forward_strand,
-                                        ngram_width=3,
-                                        separator="")
-        tri_reverse = tf.strings.ngrams(reverse_strand,
-                                        ngram_width=3,
-                                        separator="")
+        tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
+        tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
 
         f1 = t1.lookup(tri_forward[::3])
         f2 = t1.lookup(tri_forward[1::3])
@@ -227,11 +207,7 @@ def process_string_textline(onehot=True, label_onehot=True, numclasses=4):
 
         if label_onehot:
             label = tf.one_hot(
-                label,
-                depth=numclasses,
-                dtype=tf.float32,
-                on_value=1,
-                off_value=0
+                label, depth=numclasses, dtype=tf.float32, on_value=1, off_value=0
             )
 
         return {
@@ -244,5 +220,3 @@ def process_string_textline(onehot=True, label_onehot=True, numclasses=4):
         }, label
 
     return p
-
-

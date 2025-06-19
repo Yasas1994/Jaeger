@@ -4,6 +4,7 @@ from jaeger.utils.misc import safe_divide
 
 logger = logging.getLogger("jaeger")
 
+
 def find_runs(x):  # sourcery skip: extract-method
     # from https://gist.github.com/alimanfoo/c5977e87111abe8127453b21204c1065
     """Find runs of consecutive items in an array.
@@ -145,6 +146,7 @@ def sigmoid(x):
     """
     return 1 / (1 + np.exp(-x))
 
+
 def softmax(x):
     """
     Calculates softmax of output distribution.
@@ -158,7 +160,7 @@ def softmax(x):
     -------
         float: softmax output distribution.
     """
-    
+
     ex = np.exp(x)
     return ex / np.sum(ex, axis=-1).reshape(-1, 1)
 
@@ -180,8 +182,7 @@ def smoothen_scores(x, w=5):
                     moving average.
     """
     return np.column_stack(
-        [np.convolve(x[:, i], np.ones(w) / w, mode="same")
-         for i in range(x.shape[1])]
+        [np.convolve(x[:, i], np.ones(w) / w, mode="same") for i in range(x.shape[1])]
     )
 
 
@@ -202,13 +203,10 @@ def ood_predict(x_features, params):
     """
 
     # Normalize x_features using NumPy's built-in functions
-    x_features = (x_features - np.mean(x_features,
-                                       axis=-1,
-                                       keepdims=True)) / np.std(x_features,
-                                                                axis=-1,
-                                                                keepdims=True)
-    logits = np.dot(x_features,
-                    params["coeff"].flatten()) + params["intercept"]
+    x_features = (x_features - np.mean(x_features, axis=-1, keepdims=True)) / np.std(
+        x_features, axis=-1, keepdims=True
+    )
+    logits = np.dot(x_features, params["coeff"].flatten()) + params["intercept"]
     return (1 / (1 + np.exp(logits))).flatten(), logits
 
 
@@ -290,8 +288,7 @@ def ood_predict_default(x_features, params):
         # params['batch_std']
         x_features = normalize(x_features)
         logits = (
-            np.dot(x_features,
-                   params["coeff"].reshape(-1, 1)) + params["intercept"]
+            np.dot(x_features, params["coeff"].reshape(-1, 1)) + params["intercept"]
         )
         return (1 / (1 + np.exp(-logits))).flatten(), logits
     # use a saved a sklearn model
@@ -320,8 +317,8 @@ def get_ood_probability(ood, threshold=0.5):
              None, otherwise returns "-".
     """
 
-    return f"{sum((ood < threshold) * 1) / len(ood) :2f}" if\
-        ood is not None else "-"
+    return f"{sum((ood < threshold) * 1) / len(ood) :2f}" if ood is not None else "-"
+
 
 def consecutive(data, stepsize=1):
     """
@@ -386,7 +383,7 @@ def check_middle_number(array):
                     certain conditions.
     """
     indices = np.arange(len(array) - 1)
-    tmp = indices + np.argmax(array[indices: indices + 2], axis=1)
+    tmp = indices + np.argmax(array[indices : indices + 2], axis=1)
     mask = np.zeros(len(array), dtype=np.bool_)
     mask[tmp] = 1
 
@@ -441,15 +438,10 @@ def gc_skew(seq: str, window: int = 2048):
         gc_skew.append(safe_divide((g - c), (g + c)))
         lengths.append(i)
     gc_skew = scale_range(
-        np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"),
-        min=-1,
-        max=1
+        np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"), min=-1, max=1
     )
     cumsum = scale_range(np.cumsum(gc_skew), min=-1, max=1)
-    return {"gc_skew": gc_skew,
-            "position": np.array(lengths),
-            "cum_gc": cumsum}
-
+    return {"gc_skew": gc_skew, "position": np.array(lengths), "cum_gc": cumsum}
 
 
 def calculate_gc_content(sequence):
@@ -482,5 +474,3 @@ def calculate_percentage_of_n(sequence):
     """
 
     return sequence.count("N") / len(sequence)
-
-
