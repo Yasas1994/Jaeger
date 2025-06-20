@@ -14,7 +14,7 @@ def configure_multi_gpu_inference(gpus):
 
 def get_device_name(device):
     name = device.name
-    return f"{name.split(':',1)[-1]}"
+    return f"{name.split(':', 1)[-1]}"
 
 
 def create_virtual_gpus(logger, num_gpus=2, memory_limit=2048):

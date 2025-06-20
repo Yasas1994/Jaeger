@@ -204,7 +204,7 @@ class DynamicModelBuilder:
                     self._checkpoints.get("classifier").get("path")
                 )
                 ic(
-                    f"Loaded classification model weights from {self._checkpoints.get("classifier").get("path")}"
+                    f"Loaded classification model weights from {self._checkpoints.get('classifier').get('path')}"
                 )
 
         # === 4. RELIABILITY ===
@@ -232,7 +232,7 @@ class DynamicModelBuilder:
                     self._checkpoints.get("reliability").get("path")
                 )
                 ic(
-                    f"Loaded reliability model weights from {self._checkpoints.get("reliability").get("path")}"
+                    f"Loaded reliability model weights from {self._checkpoints.get('reliability').get('path')}"
                 )
         # ==== 5. COMBINED MODEL ====
         x1, x2 = models["rep_model"].output
@@ -271,7 +271,7 @@ class DynamicModelBuilder:
             case "translated":
                 x = tf.keras.layers.Dense(
                     embedding_size,
-                    name=f'{cfg.get('type')}_embedding',
+                    name=f"{cfg.get('type')}_embedding",
                     use_bias=False,
                     kernel_initializer=tf.keras.initializers.Orthogonal(),
                 )(masked_inputs)
@@ -506,13 +506,13 @@ class DynamicModelBuilder:
 
         if self._saving_config.get("save_weights"):
             model.save_weights(path / f"{model_name}.weights.h5")
-            ic(f"model weights are written to {path / f"{model_name}.weights.h5"}")
+            ic(f"model weights are written to {path / f'{model_name}.weights.h5'}")
 
         if self._saving_config.get("save_exec_graph"):
             # this way, you don't need the model configuration to rebuild the model
             tf.saved_model.save(model, path / f"{model_name}_graph")
             ic(
-                f"model computational graph is written to {path / f"{model_name}_graph"}"
+                f"model computational graph is written to {path / f'{model_name}_graph'}"
             )
         # save output indices -> class mapping in the same directory
         with open(path / f"{model_name}_classes.yaml", "w") as yaml_file:

@@ -317,7 +317,7 @@ def get_ood_probability(ood, threshold=0.5):
              None, otherwise returns "-".
     """
 
-    return f"{sum((ood < threshold) * 1) / len(ood) :2f}" if ood is not None else "-"
+    return f"{sum((ood < threshold) * 1) / len(ood):2f}" if ood is not None else "-"
 
 
 def consecutive(data, stepsize=1):

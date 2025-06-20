@@ -443,4 +443,4 @@ def write_fasta_from_results(
         if record[0] in phages:
             phage_fasta.write(f">{record[0]}\n")
             for i in range(0, len(record), width):
-                phage_fasta.write(f">{record[0][i:i+width]}\n")
+                phage_fasta.write(f">{record[0][i : i + width]}\n")

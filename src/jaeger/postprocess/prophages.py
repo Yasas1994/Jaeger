@@ -125,7 +125,7 @@ def plot_scores(
         outer_track.axis(fc="lightgrey")
         outer_track.xticks_by_interval(
             major_ticks_interval,
-            label_formatter=lambda v: f"{v/ 1e6:.1f} Mb",
+            label_formatter=lambda v: f"{v / 1e6:.1f} Mb",
             show_endlabel=False,
             label_size=11,
         )
@@ -208,7 +208,7 @@ def plot_scores(
 
         _ = circos.plotfig()
         plt.title(
-            f"{contig_id.replace('__',',')}", fontdict={"size": 14, "weight": "bold"}
+            f"{contig_id.replace('__', ',')}", fontdict={"size": 14, "weight": "bold"}
         )
         # Add legend
         handles = (
@@ -263,7 +263,7 @@ def plot_scores(
 
         plt.savefig(
             os.path.join(
-                outdir / f'{infile_base}_jaeger_{contig_id.split(" ")[0]}.pdf',
+                outdir / f"{infile_base}_jaeger_{contig_id.split(' ')[0]}.pdf",
             ),
             bbox_inches="tight",
             dpi=300,
@@ -272,7 +272,7 @@ def plot_scores(
             (
                 "prophage plot saved at "
                 + os.path.join(
-                    outdir / f'{infile_base}_jaeger_{contig_id.split(" ")[0]}.pdf',
+                    outdir / f"{infile_base}_jaeger_{contig_id.split(' ')[0]}.pdf",
                 )
             )
         )
@@ -577,7 +577,9 @@ def prophage_report(
             df = pd.DataFrame(summaries)
             df["contig_id"] = df["contig_id"].apply(lambda x: x.replace("__", ","))
             df.to_csv(outdir / "prophages_jaeger.tsv", sep="\t", index=False)
-            logger.info(f"prophage cordinates saved at {outdir/'prophages_jaeger.tsv'}")
+            logger.info(
+                f"prophage cordinates saved at {outdir / 'prophages_jaeger.tsv'}"
+            )
 
     except Exception as e:
         logger.error(f"an error {e} occured during prophage report generation")

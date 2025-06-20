@@ -69,7 +69,7 @@ def fragment_generator(
                             gc_skew = safe_divide((g - c), (g + c))
                             # sequnce_fragment, contig_id, index, contig_end, i,
                             # g, c, gc_skew
-                            yield f"{sequence[index : index + fragsize]},{header},{index},{b},{i},{seqlen},{g},{c},{a},{t},{gc_skew : .3f}"
+                            yield f"{sequence[index : index + fragsize]},{header},{index},{b},{i},{seqlen},{g},{c},{a},{t},{gc_skew: .3f}"
 
     return c
 
@@ -135,6 +135,6 @@ def fragment_generator_lib(filename, fragsize=None, stride=None, num=None):
                             )
                         )
                     ):
-                        yield f"{str(seq)[index:index + fragsize]},{str(headder)},{str(index)},{str(b)},{str(i)},{str(seqlen)}"
+                        yield f"{str(seq)[index : index + fragsize]},{str(headder)},{str(index)},{str(b)},{str(i)},{str(seqlen)}"
 
     return c

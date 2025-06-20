@@ -136,12 +136,12 @@ def run_core(**kwargs):
     logger.info(f"stride: {kwargs.get('stride')}")
     logger.info(f"batch size: {kwargs.get('batch')}")
     logger.info(f"mode: {mode}")
-    logger.info(f"avail mem: {psutil.virtual_memory().available/(GB_BYTES):.2f}GB")
+    logger.info(f"avail mem: {psutil.virtual_memory().available / (GB_BYTES):.2f}GB")
     logger.info(f"avail cpus: {psutil.cpu_count()}")
     logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
     logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
     logger.info(
-        f"memory usage : {current_process.memory_full_info().rss/GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
+        f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
     )
 
     term_repeats = scan_for_terminal_repeats(
@@ -208,14 +208,14 @@ def run_core(**kwargs):
         logger.info("loading model to memory")
         model.load_weights(filepath=weights_path)
         logger.info(
-            f'avail mem : {psutil.virtual_memory().available/(GB_BYTES): .2f}GB\n{"-"*80}'
+            f"avail mem : {psutil.virtual_memory().available / (GB_BYTES): .2f}GB\n{'-' * 80}"
         )
 
         if mode == "GPU":
             for device_number, d in enumerate(device_names):
                 gpu_mem = tf.config.experimental.get_memory_info(d)
                 logger.info(
-                    f'GPU {device_number} current : {gpu_mem["current"]/(GB_BYTES): .2f}GB  peak : {gpu_mem["peak"]/(GB_BYTES) : .2f}GB'
+                    f"GPU {device_number} current : {gpu_mem['current'] / (GB_BYTES): .2f}GB  peak : {gpu_mem['peak'] / (GB_BYTES): .2f}GB"
                 )
 
         try:
@@ -224,7 +224,7 @@ def run_core(**kwargs):
         except Exception as e:
             logger.debug(traceback.format_exc())
             logger.error(
-                f'an error {e} occured during inference on {"|".join(device_names)}! check {log_file} for traceback.'
+                f"an error {e} occured during inference on {'|'.join(device_names)}! check {log_file} for traceback."
             )
             sys.exit(1)
 
@@ -319,5 +319,5 @@ def run_core(**kwargs):
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
         logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
         logger.info(
-            f"memory usage : {current_process.memory_full_info().rss/1024**3:.2f}Gb ({current_process.memory_percent():.2f}%)"
+            f"memory usage : {current_process.memory_full_info().rss / 1024**3:.2f}Gb ({current_process.memory_percent():.2f}%)"
         )

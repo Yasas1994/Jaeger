@@ -191,7 +191,7 @@ class DynamicInferenceModelBuilder:
             case "translated":
                 x = tf.keras.layers.Dense(
                     embedding_size,
-                    name=f'{cfg.get('type')}_embedding',
+                    name=f"{cfg.get('type')}_embedding",
                     use_bias=False,
                     kernel_initializer=tf.keras.initializers.Orthogonal(),
                 )(masked_inputs)

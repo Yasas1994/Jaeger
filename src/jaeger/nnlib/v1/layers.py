@@ -119,14 +119,14 @@ def rc_resnet_block(
     for n, (k, d, f) in enumerate(zip(kernel_size[1:], dilation_rate[1:], filters[1:])):
         xx = rc_cnn(
             xx,
-            name=f"{name}{n+2}",
+            name=f"{name}{n + 2}",
             filters=f,
             kernel_size=k,
             padding="same",
             dilation_rate=d,
         )
         xx = rc_gelu(xx)
-        xx = rc_batchnorm(xx, name=f"{name}{n+2}")
+        xx = rc_batchnorm(xx, name=f"{name}{n + 2}")
 
     # scale up the skip connection output if the filter sizes are different
 
@@ -652,11 +652,13 @@ def resnet_block_g2(
             strides=1,
             dilation_rate=d,
             padding="same",
-            name=f"{name}_{n+2}",
+            name=f"{name}_{n + 2}",
             kernel_initializer=tf.keras.initializers.Orthogonal(gain=2),
         )(xx)
 
-        xx = tf.keras.layers.BatchNormalization(axis=-1, name=f"{name}_{n+2}_norm")(xx)
+        xx = tf.keras.layers.BatchNormalization(axis=-1, name=f"{name}_{n + 2}_norm")(
+            xx
+        )
         xx = tf.nn.leaky_relu(xx, alpha=0.1)
 
     # scale up the skip connection output if the filter sizes are different

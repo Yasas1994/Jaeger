@@ -107,12 +107,12 @@ def run_core(**kwargs):
     logger.info(f"stride: {kwargs.get('stride')}")
     logger.info(f"batch size: {kwargs.get('batch')}")
     logger.info(f"mode: {mode}")
-    logger.info(f"avail mem: {psutil.virtual_memory().available/(GB_BYTES):.2f}GB")
+    logger.info(f"avail mem: {psutil.virtual_memory().available / (GB_BYTES):.2f}GB")
     logger.info(f"avail cpus: {psutil.cpu_count()}")
     logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
     logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
     logger.info(
-        f"memory usage : {current_process.memory_full_info().rss/GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
+        f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
     )
 
     device = tf.config.list_logical_devices(mode)
@@ -169,7 +169,7 @@ def run_core(**kwargs):
         except Exception as e:
             logger.debug(traceback.format_exc())
             logger.error(
-                f'an error {e} occured during inference on {"|".join(device_names)}! check {log_file} for traceback.'
+                f"an error {e} occured during inference on {'|'.join(device_names)}! check {log_file} for traceback."
             )
             sys.exit(1)
 
@@ -196,5 +196,5 @@ def run_core(**kwargs):
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
         logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
         logger.info(
-            f"memory usage : {current_process.memory_full_info().rss/GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
+            f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
         )
