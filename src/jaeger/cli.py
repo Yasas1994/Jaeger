@@ -81,6 +81,7 @@ def test(**kwargs):
 @click.option(
     "-m",
     "--model",
+    default="default",
     help=(
         f"Select a deep-learning model to use. "
         f"Default: 'default'. "
@@ -507,13 +508,18 @@ def fragment(**kwargs):
 @utils.command(
     context_settings=dict(ignore_unknown_options=True),
     help="""
-            Gradually mask random positions in a given fasta record.
+            Gradually mask or mutate random positions in a given fasta file.
 
             usage                                                                      
             -----                                                                      
 
             jaeger utils mask [OPTIONS] -i contigs.fasta -o fragemented_contigs.fasta
+            
+            "CACTACACGTACG" -> "cACTacACGtacg"
 
+            jaeger utils mask [OPTIONS] -i contigs.fasta -o fragemented_contigs.fasta --mutate
+            
+            "CACTACACGTACG" -> "TACTGAACGTTGT"
         """,
 )
 @click.option(
@@ -544,6 +550,13 @@ def fragment(**kwargs):
     required=False,
     help="perc positions to mask in each iteration",
     default=0.01,
+)
+@click.option(
+    "--mutate",
+    is_flag=True,
+    required=False,
+    help="replace with random nucleotides without masking",
+    default=False,
 )
 def mask(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""

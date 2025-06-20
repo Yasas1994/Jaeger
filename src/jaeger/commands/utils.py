@@ -93,21 +93,66 @@ def split_core(**kwargs):
 def mask_core(**kwargs):
     import numpy as np
 
+    _rng = np.random.default_rng()
+
+    # Pre‐define your alt‐nuc_map once
+    _ALT = {
+        ord("A"): ("T", "G", "C"),
+        ord("T"): ("A", "G", "C"),
+        ord("G"): ("A", "T", "C"),
+        ord("C"): ("A", "T", "G"),
+    }
+    _DEFAULT_ALTS = ("N", "N", "N")
+
     input_path = kwargs.get("input")
     output_path = kwargs.get("output")
     min_perc = kwargs.get("minperc", 0.0)
     max_perc = kwargs.get("maxperc", 1.0)
     step = kwargs.get("step", 0.01)  # increment in mutation percentage
+    mutate = kwargs.get("mutate", False)  # replace with random nucleotides
 
     f = pyfastx.Fasta(input_path, build_index=False)
 
-    def lowercase_mutation(seq, indices):
-        # Convert sequence to list for mutation
-        seq = list(seq)
+    # def soft_mutation(seq: str, indices):
+    #     """
+    #     Turn seq[i]→lowercase for each i in indices, but leave other letters untouched.
+    #     Works in‐place on a bytearray.
+    #     """
+    #     ba = bytearray(seq, "ascii")        # O(N) once
+    #     mask = 0x20                         # bit to flip uppercase→lowercase
+    #     for i in indices:
+    #         # only flip if currently uppercase A–Z
+    #         c = ba[i]
+    #         if 0x41 <= c <= 0x5A:           # 'A'..'Z'
+    #             ba[i] = c | mask
+    #             # print(chr(c |  mask))
+    #     return ba.decode("ascii")
+
+    def hard_mask(seq: str, indices):
+        """
+        Turn seq[i]→N for each i in indices, but leave other letters untouched.
+        Works in‐place on a bytearray.
+        """
+        ba = bytearray(seq, "ascii")  # O(N) once
         for i in indices:
-            if seq[i].isupper():
-                seq[i] = seq[i].lower()
-        return "".join(seq)
+            ba[i] = 0x4E
+        return ba.decode("ascii")
+
+    def replacement_mutation(seq: str, indices):
+        """
+        For each i in indices, replace seq[i] with one of its 3 alternatives
+        uniformly at random. Other positions remain unchanged.
+        """
+        ba = bytearray(seq, "ascii")  # O(N)
+        choices = _rng.integers(0, 3, size=len(indices))  # vectorized integer sampling
+
+        for i, choice in zip(indices, choices):
+            alts = _ALT.get(ba[i], _DEFAULT_ALTS)
+            # ba[i] = ord(alts[choice])      # if you want to mutate the bytearray
+            # but since alts[...] is a str of length 1:
+            ba[i] = ord(alts[choice])
+
+        return ba.decode("ascii")
 
     with open(output_path, "w") as fh:
         for name, seq in track(f, description="Processing..."):
@@ -133,7 +178,10 @@ def mask_core(**kwargs):
                 used_indices.update(new_indices)
 
                 # Apply mutation
-                seq = lowercase_mutation(seq, new_indices)
+                if mutate is not True:
+                    seq = hard_mask(seq, new_indices)
+                else:
+                    seq = replacement_mutation(seq, new_indices)
 
                 current_perc += step
 
@@ -170,9 +218,9 @@ def dataset_core(**kwargs):
     outtype = kwargs.get("outtype", "CSV").upper()
 
     # sanity check
-    assert (
-        abs(trainperc + valperc + testperc - 1.0) < 1e-6
-    ), "train+val+test must sum to 1"
+    assert abs(trainperc + valperc + testperc - 1.0) < 1e-6, (
+        "train+val+test must sum to 1"
+    )
     if shutil.which("mmseqs") is None:
         sys.exit(
             "Error: MMseqs2 (`mmseqs`) not found in PATH. Please install MMseqs2 or add it to your PATH."
@@ -257,7 +305,7 @@ def dataset_core(**kwargs):
             outf = out_pref.with_name(f"{out_pref.name}_{subset_name}.txt")
             with open(outf, "w") as fh:
                 for header, seq in subset:
-                    fh.write(f"{class_},{seq},{header},class={class_}" "\n")
+                    fh.write(f"{class_},{seq},{header},class={class_}\n")
 
     print(
         f"{num_frags} frags →  {len(reps)} reps → "
