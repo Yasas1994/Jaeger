@@ -1,8 +1,10 @@
+import os
+os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 import json
 from pathlib import Path
 from importlib.resources import files
 import tensorflow as tf
-from jaeger.nnlib.cmodel import JaegerModel
+from jaeger.nnlib.inference import JaegerModel
 from jaeger.nnlib.v1.layers import WRes_model_embeddings
 from jaeger.preprocess.v1.convert import process_string
 from jaeger.preprocess.fasta import fragment_generator
@@ -122,19 +124,15 @@ def test_core(**kwargs) -> None:
         model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)
         model.summary()
-        logger.info(files("jaeger.data.models.default").joinpath("jaeger_graph"))
+        logger.info(files("jaeger.data.models.test").joinpath("jaeger_fragment_graph"))
         tf.saved_model.save(
-            tf.keras.Sequential([tf.keras.layers.Dense(10)]),
-            files("jaeger.data.models.default").joinpath("jaeger_graph"),
+            model,
+            files("jaeger.data.models.test").joinpath("jaeger_fragment_graph"),
         )
-        tf.saved_model.save(
-            model, files("jaeger.data.models.default").joinpath("jaeger_graph")
-        )
-        # ic(f"model computational graph is written to {path / f"{model_name}_graph"}")
 
         logger.info("loading the model")
         model = InferModel(
-            files("jaeger.data.models.default").joinpath("jaeger_fragment_graph")
+            files("jaeger.data.models.test").joinpath("jaeger_fragment_graph")
         )
         logger.info("starting model inference")
         _ = model.predict(idataset)
