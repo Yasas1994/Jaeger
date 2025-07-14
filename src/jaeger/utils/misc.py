@@ -2,7 +2,7 @@ import logging
 from decimal import Decimal
 import jinja2
 from pathlib import Path
-from typing import Dict
+from typing import Dict, DefaultDict
 import yaml
 import json
 import os
@@ -297,18 +297,46 @@ class AvailableModels:
             self.paths = [Path(i) for i in path]
         self.info = self._scan_for_models()
 
-    def _scan_for_models(self) -> defaultdict:
-        _tmp = defaultdict(dict)
-        for path in self.paths:
-            for model_graph in path.rglob("*_graph"):
-                if model_graph.is_dir():
-                    _tmp[model_graph.name.rstrip("_graph")]["graph"] = model_graph
-                for _match in ("classes", "project", "weights"):
-                    for _cfg in model_graph.parent.rglob(f"*_{_match}.yaml"):
-                        if _cfg.is_file():
-                            _tmp[model_graph.name.rstrip("_graph")][_match] = _cfg
+    def _scan_for_models(self) -> DefaultDict[str, dict]:
+        models: DefaultDict[str, dict] = defaultdict(dict)
 
-        return _tmp
+        for path in self.paths:
+            for model_dir in path.rglob("model"):
+                if not model_dir.is_dir():
+                    continue
+
+                entries = list(model_dir.iterdir())
+
+                # Find the graph dir
+                graph_dirs = [e for e in entries if e.is_dir() and e.name.endswith("_graph")]
+                for graph_dir in graph_dirs:
+                    model_name = graph_dir.name.removesuffix("_graph")
+                    models[model_name]["graph"] = graph_dir
+
+                # Find matching files
+                for f in entries:
+                    if not f.is_file():
+                        continue
+
+                    name = f.name
+                    if "_classes.yaml" in name:
+                        key = "classes"
+                    elif "_project.yaml" in name:
+                        key = "project"
+                    elif f.suffix == ".h5" and ".weights" in f.stem:
+                        key = "weights"
+                    else:
+                        continue
+
+                    # Remove suffix like "_classes.yaml" or ".weights.h5" to get base model name
+                    model_name = (
+                        name.replace("_classes.yaml", "")
+                            .replace("_project.yaml", "")
+                            .replace(".weights.h5", "")
+                    )
+                    models[model_name][key] = f
+
+        return models
 
 
 def get_model_id(model: str):
