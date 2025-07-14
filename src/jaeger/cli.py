@@ -26,6 +26,7 @@ if sys.platform == "darwin":
 elif sys.platform.startswith("linux"):
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
     os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
+os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 
 
 USER_MODEL_PATHS = json_to_dict(files("jaeger.data") / "config.json").get("model_paths")
@@ -151,6 +152,12 @@ def test(**kwargs):
     type=int,
     default=0,
     help="Set default GPU device ID for multi-GPU systems. Default: 0",
+)
+@click.option(
+    "--mem",
+    type=int,
+    default=4,
+    help="GPU memory limit: Default: 4G",
 )
 @click.option(
     "--getalllabels",
@@ -377,7 +384,7 @@ def register_models(**kwargs):
     default=1,
 )
 def download(path, model_name, list_models, **kwargs):
-    """Downloads model weights and appends to model path, or lists available models."""
+    """Downloads model weights and updated model paths, or lists available models."""
     from jaeger.commands.downloads import list_ckan_model_download_links, download_file
 
     # Enforce mutual exclusivity
@@ -404,7 +411,10 @@ def download(path, model_name, list_models, **kwargs):
             f"Model '{model_name}' not found. Use '--list' to see available models."
         )
 
-    model_path = Path(path).resolve()
+    # to avoid jaeger from scanning huge dirs for models
+    model_path = Path(path).resolve() / "jaeger_models"
+    model_path.mkdir(parents=True, exist_ok=True)
+
     download_file((model_name, model_links[model_name]), output_dir=model_path)
 
     if kwargs.get("config", False):
@@ -417,7 +427,8 @@ def download(path, model_name, list_models, **kwargs):
         add_data_to_json(config_path, str(model_path), list_key="model_paths")
     except Exception:
         logger.warning(
-            "failed to add model path to jaeger config. Seems like you are running jaeger inside a container. please explicitly define the model path `jaeger predict --modelpath`"
+            "failed to add model path to jaeger config. Seems like you are running jaeger inside a container. please explicitly define the model path in a config file `jaeger predict --config " \
+            "wget -O config.json https://raw.githubusercontent.com/Yasas1994/Jaeger/dev/src/jaeger/data/config.json"
         )
 
 
@@ -453,6 +464,7 @@ def utils(obj):
 )
 @click.option("-o", "--output", type=str, required=True, help="Path to output file")
 @click.option("--dinuc", is_flag=True, required=False, help="dinuc shuffle")
+@click.option("-k", type=int, default=1, required=False, help="kmer size" )
 @click.option(
     "--itype",
     type=click.Choice(["FASTA", "CSV"], case_sensitive=False),
@@ -561,6 +573,9 @@ def fragment(**kwargs):
 def mask(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import mask_core
+
+    if kwargs.get('maxperc') > kwargs.get('minperc'):
+        raise click.BadParameter("maxperc can not be lower than minperc")
 
     mask_core(**kwargs)
 
