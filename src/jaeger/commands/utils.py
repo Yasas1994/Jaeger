@@ -5,6 +5,7 @@ import random
 import subprocess
 import shutil
 import sys
+import numpy as np
 from pathlib import Path
 from rich.progress import track
 
@@ -15,12 +16,28 @@ def shuffle_dna(seq: str) -> str:
     random.shuffle(seq_list)
     return "".join(seq_list)
 
+def kmer_shuffle(seq: str, k: int) -> str:
+    """Randomly shuffles a DNA sequence at the non-overlapping k-mer level"""
+    # Trim sequence to nearest multiple of k
+    trimmed_len = len(seq) - (len(seq) % k)
+    trimmed_seq = seq[:trimmed_len]
+    
+    # Split into non-overlapping k-mers
+    kmers = [trimmed_seq[i:i+k] for i in range(0, trimmed_len, k)]
+    
+    # Shuffle
+    np.random.shuffle(kmers)
+    
+    # Join and return
+    return ''.join(kmers)
+
 
 def shuffle_core(**kwargs):
     if kwargs.get("dinuc"):
         shuffle_fn = dinuc_shuffle
     else:
-        shuffle_fn = shuffle_dna
+        def shuffle_fn(x):
+            return kmer_shuffle(seq=x, k=kwargs.get('k', 1))
 
     match kwargs.get("itype"):
         case "CSV":
