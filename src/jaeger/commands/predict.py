@@ -34,7 +34,8 @@ def run_core(**kwargs):
 
     USER_MODEL_PATHS = json_to_dict(CONFIG_PATH).get("model_paths")
     MODEL_INFO = AvailableModels(path=USER_MODEL_PATHS).info[MODEL]
-
+    MEMORY_LIMIT = 1024 * kwargs.get("mem", 4)
+    THREADS = kwargs.get("workers")
     input_file_path = Path(kwargs.get("input"))
     input_file = input_file_path.name
     file_base = input_file_path.stem
@@ -69,7 +70,8 @@ def run_core(**kwargs):
     if not MODEL_INFO["graph"].exists():
         logger.error(f"could not find model graph. please check {USER_MODEL_PATHS}")
         sys.exit(1)
-
+    tf.config.threading.set_inter_op_parallelism_threads(THREADS)
+    tf.config.threading.set_intra_op_parallelism_threads(THREADS)
     tf.config.set_soft_device_placement(True)
     gpus = tf.config.list_physical_devices("GPU")
     mode = None
@@ -86,7 +88,7 @@ def run_core(**kwargs):
                 gpus[kwargs.get("physicalid")],
                 [
                     tf.config.LogicalDeviceConfiguration(
-                        memory_limit=4096, experimental_device_ordinal=10
+                        memory_limit=MEMORY_LIMIT, experimental_device_ordinal=10
                     )
                 ],
             )
@@ -108,7 +110,8 @@ def run_core(**kwargs):
     logger.info(f"batch size: {kwargs.get('batch')}")
     logger.info(f"mode: {mode}")
     logger.info(f"avail mem: {psutil.virtual_memory().available / (GB_BYTES):.2f}GB")
-    logger.info(f"avail cpus: {psutil.cpu_count()}")
+    logger.info(f"intra threads: {tf.config.threading.get_intra_op_parallelism_threads()}")
+    logger.info(f"inter threads: {tf.config.threading.get_inter_op_parallelism_threads()}")
     logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
     logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
     logger.info(
@@ -128,7 +131,7 @@ def run_core(**kwargs):
     term_repeats = scan_for_terminal_repeats(
         file_path=str(input_file_path),
         num=num,
-        workers=kwargs.get("workers"),
+        workers=THREADS,
         fsize=kwargs.get("fsize"),
     )
 
