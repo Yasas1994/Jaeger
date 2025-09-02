@@ -193,8 +193,8 @@ class DynamicModelBuilder:
                 inputs=inputs, outputs=x_classifier, name="classification_head"
             )
             # combine with the representation learner
-            x = models["rep_model"].output[0]
-            x = models["classification_head"](x)
+            x_rep = models["rep_model"].output[0]
+            x = models["classification_head"](x_rep)
             models["jaeger_classifier"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_classifier"
             )
@@ -236,11 +236,11 @@ class DynamicModelBuilder:
                 )
         # ==== 5. COMBINED MODEL ====
         x1, x2 = models["rep_model"].output
-        reliability = models["reliability_head"](x2)
+        reliability = models["reliability_head"](x2) # NMD
         class_ = models["classification_head"](x1)
         models["jaeger_model"] = tf.keras.Model(
             inputs=models["rep_model"].input,
-            outputs={"prediction": class_, "reliability": reliability},
+            outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2 },
             name="Jaeger_model",
         )
 
@@ -274,6 +274,9 @@ class DynamicModelBuilder:
                     name=f"{cfg.get('type')}_embedding",
                     use_bias=False,
                     kernel_initializer=tf.keras.initializers.Orthogonal(),
+                    kernel_regularizer=self._regularizer.get(
+                cfg.get("embedding_regularizer"),
+            )(cfg.get("embedding_regularizer_w"))
                 )(masked_inputs)
 
             case "nucleotide":
@@ -724,53 +727,53 @@ def train_fragment_core(**kwargs):
     converged = checkpoint and checkpoint.get("classifier", {}).get(
         "is_converged", False
     )
-
-    if not converged and not kwargs.get("only_reliability_head", False):
-        train_args = {
-            "validation_data": train_data.get("validation").take(
-                builder.train_cfg.get("classifier_validation_steps")
-            ),
-            "epochs": builder.train_cfg.get("classifier_epochs"),
-            "callbacks": builder.get_callbacks(branch="classifier"),
-        }
-
-        if checkpoint:
-            train_args["initial_epoch"] = checkpoint.get("classifier", {}).get(
-                "epoch", 0
-            )
-
-        if kwargs.get("only_classification_head", False) or kwargs.get(
-            "only_heads", False
-        ):
-            models.get("rep_model").trainable = False
-
-        # ============ self-supervised pre-training =============================
-        if kwargs.get("self_supervised_pretraining", False):
-            builder.compile_model(models, train_branch="pretrain")
-            models.get("jaeger_projection").summary()
-            self_suoervised_train_args = {
+    if  kwargs.get("only_save", False) is False:
+        if (not converged and not kwargs.get("only_reliability_head", False)):
+            train_args = {
                 "validation_data": train_data.get("validation").take(
                     builder.train_cfg.get("classifier_validation_steps")
                 ),
-                "epochs": builder.train_cfg.get("projection_epochs"),
+                "epochs": builder.train_cfg.get("classifier_epochs"),
                 "callbacks": builder.get_callbacks(branch="classifier"),
             }
-            models.get("jaeger_projection").fit(
+
+            if checkpoint:
+                train_args["initial_epoch"] = checkpoint.get("classifier", {}).get(
+                    "epoch", 0
+                )
+
+            if kwargs.get("only_classification_head", False) or kwargs.get(
+                "only_heads", False
+            ):
+                models.get("rep_model").trainable = False
+
+            # ============ self-supervised pre-training =============================
+            if kwargs.get("self_supervised_pretraining", False):
+                builder.compile_model(models, train_branch="pretrain")
+                models.get("jaeger_projection").summary()
+                self_suoervised_train_args = {
+                    "validation_data": train_data.get("validation").take(
+                        builder.train_cfg.get("classifier_validation_steps")
+                    ),
+                    "epochs": builder.train_cfg.get("projection_epochs"),
+                    "callbacks": builder.get_callbacks(branch="classifier"),
+                }
+                models.get("jaeger_projection").fit(
+                    train_data.get("train").take(
+                        builder.train_cfg.get("classifier_train_steps")
+                    ),
+                    **self_suoervised_train_args,
+                )
+
+            # ============== train the classification model ==========================
+            models.get("jaeger_classifier").fit(
                 train_data.get("train").take(
                     builder.train_cfg.get("classifier_train_steps")
                 ),
-                **self_suoervised_train_args,
+                **train_args,
             )
-
-        # ============== train the classification model ==========================
-        models.get("jaeger_classifier").fit(
-            train_data.get("train").take(
-                builder.train_cfg.get("classifier_train_steps")
-            ),
-            **train_args,
-        )
-    else:
-        ic("Skipping training — classification model")
+        else:
+            ic("Skipping training — classification model")
 
     # ============== reliability model ========================
     builder.compile_model(models, train_branch="reliability")
@@ -830,46 +833,48 @@ def train_fragment_core(**kwargs):
     converged = checkpoint and checkpoint.get("reliability", {}).get(
         "is_converged", False
     )
+    if kwargs.get("only_save", False) is False:
+        ic(kwargs.get("only_save", False))
+        if (not converged and not kwargs.get("only_classification_head", False)):
+            train_args = {
+                "validation_data": rel_train_data.get("validation").take(
+                    builder.train_cfg.get("reliability_validation_steps")
+                ),
+                "epochs": builder.train_cfg.get("reliability_epochs"),
+                "callbacks": builder.get_callbacks(branch="reliability"),
+            }
 
-    if not converged and not kwargs.get("only_classification_head", False):
-        train_args = {
-            "validation_data": rel_train_data.get("validation").take(
-                builder.train_cfg.get("reliability_validation_steps")
-            ),
-            "epochs": builder.train_cfg.get("reliability_epochs"),
-            "callbacks": builder.get_callbacks(branch="reliability"),
-        }
+            if checkpoint:
+                train_args["initial_epoch"] = checkpoint.get("reliability", {}).get(
+                    "epoch", 0
+                )
 
-        if checkpoint:
-            train_args["initial_epoch"] = checkpoint.get("reliability", {}).get(
-                "epoch", 0
+            models.get("jaeger_reliability").fit(
+                rel_train_data.get("train").take(
+                    builder.train_cfg.get("reliability_train_steps")
+                ),
+                **train_args,
             )
-
-        models.get("jaeger_reliability").fit(
-            rel_train_data.get("train").take(
-                builder.train_cfg.get("reliability_train_steps")
-            ),
-            **train_args,
-        )
-    else:
-        ic("Skipping training — reliability model")
+        else:
+            ic("Skipping training — reliability model")
 
     # ============= test final model =========================
+    ic("testing the final model")
+
     models.get("jaeger_model").trainable = False
     models.get("jaeger_classifier").evaluate(
         train_data.get("validation").take(
-            builder.train_cfg.get("classifier_validation_steps")
+            100
         )
     )
 
-    predictions = evaluate(
-        models.get("jaeger_model"),
+    predictions = models.get("jaeger_model").predict(
         train_data.get("validation").take(
-            builder.train_cfg.get("classifier_validation_steps")
-        ),
+            100
+        )
     )
     ic(predictions)
-
+    ic(predictions.keys())
     # ============= saving ===================================
     builder.save_model(
         model=models.get("jaeger_model"), suffix=f"{model_num_params}_fragment"
@@ -877,17 +882,17 @@ def train_fragment_core(**kwargs):
     builder.save_config(suffix=f"{model_num_params}_fragment")
 
     # ============= load saved model and infer ===============================
-    model_paths = AvailableModels(path=builder._saving_config.get("path"))
-    ic(model_paths.info)
-    mname_ = list(model_paths.info.keys())[0]
-    model = InferModel(model_paths.info.get(mname_))
-    ic(
-        model.evaluate(
-            train_data.get("validation").take(
-                builder.train_cfg.get("classifier_validation_steps")
-            )
-        )
-    )
+    # model_paths = AvailableModels(path=builder._saving_config.get("path"))
+    # ic(model_paths.info)
+    # mname_ = list(model_paths.info.keys())[0]
+    # model = InferModel(model_paths.info.get(mname_))
+    # ic(
+    #     model.evaluate(
+    #         train_data.get("validation").take(
+    #             builder.train_cfg.get("classifier_validation_steps")
+    #         )
+    #     )
+    # )
 
 
 # def train_contig_core(**kwargs):

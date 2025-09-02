@@ -267,6 +267,12 @@ def tune(**kwargs):
     help="continue training from the last checkpoints",
 )
 @click.option(
+    "--only_save",
+    is_flag=True,
+    required=False,
+    help="save the model with weights from last checkpoints without training",
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
@@ -661,6 +667,13 @@ def mask(**kwargs):
     help="dereplication method",
     default="ANI",
 )
+@click.option(
+    "--ood",
+    is_flag=True,
+    required=False,
+    help="generate dataset for training ood model",
+    default=False,
+)
 def dataset(**kwargs):
     """Generate a non-redundant fragment database from fasta file for training/validating
     fragment models"""
@@ -669,6 +682,288 @@ def dataset(**kwargs):
     dataset_core(**kwargs)
     pass
 
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Convert training data between CSV and FASTA formats
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger utils convert -itype FASTA -i contigs.fasta -o fragemented_contigs.csv
+            
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input file",
+)
+@click.option("-o", "--output", type=str, required=True, help="Path to output file")
+@click.option(
+    "--itype",
+    type=click.Choice(["FASTA", "CSV"], case_sensitive=False),
+    required=True,
+    help="input file type",
+)
+def convert(**kwargs):
+    """convert CSV to FASTA and FASTA to CSV"""
+    from jaeger.commands.utils import convert_core
+
+    convert_core(**kwargs)
+    pass
+
+@click.group(context_settings=dict(help_option_names=["-h", "--help"]))
+@click.pass_context
+def taxonomy(obj):
+    """
+    exprimental taxonomy prediction pipeline
+    """
+    pass
+@taxonomy.command(context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Build a taxonomy database
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger taxonomy build [OPTIONS] -i contigs.fasta -o taxonomy_db
+
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input file",
+)
+@click.option(
+    "-t",
+    "--tax",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to taxdump",
+)
+@click.option(
+    "-a",
+    "--acc2tax",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to accession2taxid file",
+)
+@click.option(
+    "-o", "--output", type=str, required=True, help="Path to output directory"
+)
+@click.option(
+    "--fsize",
+    type=int,
+    default=2048,
+    help="Length of the sliding window (value must be 2^n). Default: 2048",
+)
+@click.option(
+    "--stride",
+    type=int,
+    default=2048,
+    help="Stride of the sliding window. Default: 2048 (stride==fsize)",
+)
+@click.option(
+    "-m",
+    "--model",
+    default="default",
+    help=(
+        f"Select a deep-learning model to use. "
+        f"Default: 'default'. "
+        f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
+    ),
+)
+@click.option(
+    "--config",
+    type=click.Path(exists=True),
+    help="Path to Jaeger config file (e.g., when using Apptainer or Docker)",
+)
+@click.option(
+    "--rc",
+    type=float,
+    default=0.1,
+    help="Minimum reliability score required to accept predictions. Default: 0.1",
+)
+@click.option(
+    "--batch",
+    type=int,
+    default=96,
+    help="Parallel batch size, lower if GPU runs out of memory. Default: 96",
+)
+@click.option(
+    "--workers", type=int, default=4, help="Number of threads to use. Default: 4"
+)
+@click.option(
+    "--cpu",
+    is_flag=True,
+    help="Ignore available GPUs and explicitly run on CPU. Default: False",
+)
+@click.option(
+    "--physicalid",
+    type=int,
+    default=0,
+    help="Set default GPU device ID for multi-GPU systems. Default: 0",
+)
+@click.option(
+    "--mem",
+    type=int,
+    default=4,
+    help="GPU memory limit: Default: 4G",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level: -vv debug, -v info (default: info)",
+    default=1,
+)
+@click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing database")
+def build(**kwargs):
+    model = kwargs.get("model")
+    if kwargs.get("config") is None:
+        if model is None:
+            model = "default"
+        elif model not in AVAIL_MODELS:
+            raise click.BadParameter(
+                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
+            )
+    else:
+        if model is None:
+            model = "default"
+
+    """Run jaeger taxonomy database generation pipeline"""
+    if model == "default":
+        raise click.BadParameter(
+            f"Model '{model}' is not supported"
+        )
+
+    else:
+        from jaeger.commands.taxonomy import build_taxdb
+        build_taxdb(**kwargs)
+
+@taxonomy.command('predict', context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Use exeperimental taxonomy prediction workflow
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger taxonomy predict [OPTIONS] -i contigs.fasta -d taxonomy_db -o output_dir
+
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input file",
+)
+@click.option(
+    "-d",
+    "--db",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to taxonomy database",
+)
+@click.option(
+    "-o", "--output", type=str, required=True, help="Path to output directory"
+)
+@click.option(
+    "--fsize",
+    type=int,
+    default=2048,
+    help="Length of the sliding window (value must be 2^n). Default: 2048",
+)
+@click.option(
+    "--stride",
+    type=int,
+    default=2048,
+    help="Stride of the sliding window. Default: 2048 (stride==fsize)",
+)
+@click.option(
+    "-m",
+    "--model",
+    default="default",
+    help=(
+        f"Select a deep-learning model to use. "
+        f"Default: 'default'. "
+        f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
+    ),
+)
+@click.option(
+    "--config",
+    type=click.Path(exists=True),
+    help="Path to Jaeger config file (e.g., when using Apptainer or Docker)",
+)
+@click.option(
+    "--rc",
+    type=float,
+    default=0.1,
+    help="Minimum reliability score required to accept predictions. Default: 0.1",
+)
+@click.option(
+    "--batch",
+    type=int,
+    default=96,
+    help="Parallel batch size, lower if GPU runs out of memory. Default: 96",
+)
+@click.option(
+    "--workers", type=int, default=4, help="Number of threads to use. Default: 4"
+)
+@click.option(
+    "--cpu",
+    is_flag=True,
+    help="Ignore available GPUs and explicitly run on CPU. Default: False",
+)
+@click.option(
+    "--physicalid",
+    type=int,
+    default=0,
+    help="Set default GPU device ID for multi-GPU systems. Default: 0",
+)
+@click.option(
+    "--mem",
+    type=int,
+    default=4,
+    help="GPU memory limit: Default: 4G",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level: -vv debug, -v info (default: info)",
+    default=1,
+)
+@click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing database")
+def predict_tax(**kwargs):  # noqa: F811
+    model = kwargs.get("model")
+    if kwargs.get("config") is None:
+        if model is None:
+            model = "default"
+        elif model not in AVAIL_MODELS:
+            raise click.BadParameter(
+                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
+            )
+    else:
+        if model is None:
+            model = "default"
+
+    """Run jaeger taxonomy database generation pipeline"""
+    if model == "default":
+        raise click.BadParameter(
+            f"Model '{model}' is not supported"
+        )
+
+    else:
+        from jaeger.commands.taxonomy import predict_taxonomy
+        predict_taxonomy(**kwargs)
 
 main.add_command(test)
 main.add_command(predict)
@@ -676,6 +971,7 @@ main.add_command(train)
 main.add_command(register_models)
 main.add_command(download)
 main.add_command(utils)
+main.add_command(taxonomy)
 
 
 if __name__ == "__main__":
