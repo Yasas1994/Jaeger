@@ -155,7 +155,7 @@ class DynamicModelBuilder:
             models["projection_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_projection, name="projection_head"
             )
-            num_class = self.model_cfg["classifier"]["output_units"]
+            num_class = self.model_cfg["classifier"]["output_layer"][0]['units']
             projection_dim = self.model_cfg["projection"]["hidden_layers"][-1]["units"]
 
             # combine with the representation learner
@@ -418,13 +418,17 @@ class DynamicModelBuilder:
                     layer_cfg.get("dropout_rate"),
                     name=f"{prefix}_dropout_{i}",
                 )(x)
-        if cfg.get("output_units"):
-            x = tf.keras.layers.Dense(
-                cfg.get("output_units"),
-                use_bias=layer_cfg.get("output_use_bias"),
-                name=prefix,
-                activation=cfg.get("output_activation"),
-            )(x)
+        if cfg.get("output_layer"):
+            for layer_cfg in cfg.get("output_layer"):
+                x = tf.keras.layers.Dense(
+                    layer_cfg.get("units"),
+                    use_bias=layer_cfg.get("use_bias"),
+                    name="dense_output",
+                    kernel_regularizer=self._regularizer.get(
+                        layer_cfg.get("kernel_regularizer"),
+                    )(layer_cfg.get("kernel_regularizer_w")),
+                    activation=layer_cfg.get("activation")
+                )(x)
         return x
 
     def _load_training_params(self):
@@ -437,7 +441,9 @@ class DynamicModelBuilder:
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
+        ic(self.optimizer)
         ic(opt_params)
+        ic(opt_name)
         loss_classifier_name = self.train_cfg.get(
             "loss_classifier", "categorical_crossentropy"
         ).lower()
@@ -701,7 +707,7 @@ def train_fragment_core(**kwargs):
                     masking=string_processor_config.get("masking"),
                     mutate=string_processor_config.get("mutate"),
                     mutation_rate=string_processor_config.get("mutation_rate"),
-                    num_classes=builder.model_cfg.get("classifier").get("output_units"),
+                    num_classes=builder.model_cfg.get("classifier").get("output_layer")[0]['units'],
                     class_label_onehot=True,
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
