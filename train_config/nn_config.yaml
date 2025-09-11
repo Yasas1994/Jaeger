@@ -5,7 +5,7 @@
 
 model:
   name: "jaeger" # the trained model will be saved under this name
-  experiment: "test_3_murphy_ss"
+  experiment: "test_26"
   seed: 57341
   base_dir: "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training"
   class_label_map:
@@ -29,23 +29,25 @@ model:
     strands: 2
     frames: 6
     length: null
-    input_shape: [ 6, null, 11 ] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
+    input_shape: [ 6, null, 64 ] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
     embedding_size: 128
     mutate: True
-    mutation_rate: 0.1
+    mutation_rate: 0.3
     use_positional_embeddings: True
     positional_embedding_length: 10000
+    embedding_regularizer: "l2"
+    embedding_regularizer_w: 0.0001
 
   string_processor:
     # only applicable when type:nucleotide
     codon: "CODON"
-    codon_id: "MURPHY10_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
+    codon_id: "CODON_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
     crop_size: 1024
     buffer_size: 20000 # -1 invokes dataset.cardinality()
     reshuffle_each_iteration: True
 
   representation_learner:
-    masked_conv1d_1_filters: 128
+    masked_conv1d_1_filters: 512
     masked_conv1d_1_kernel_size: 7
     masked_conv1d_1_strides: 1
     masked_conv1d_1_dilation_rate: 1
@@ -53,7 +55,7 @@ model:
     masked_conv1d_1_regularizer_w: 0.0001
 
     block_sizes: [ 2, 2, 2 ]
-    block_filters: [ 128, 128, 128 ]
+    block_filters: [ 512, 512, 512 ]
     block_kernel_size: [ 5, 5, 5 ]
     block_kernel_dilation: [ 3, 3, 3 ]
     block_kernel_strides: [ 1, 1, 1 ]
@@ -66,9 +68,9 @@ model:
     masked_conv1d_final_regularizer: "l2"
     masked_conv1d_final_regularizer_w: 0.0001
 
-    use_transformer_encoder: True
-    transformer_encoder_blocks: 1
-    attention_heads: 1
+    use_transformer_encoder: false
+    transformer_encoder_blocks: null
+    attention_heads: null
 
     pooling: "max"
 
@@ -86,27 +88,27 @@ model:
       dropout_rate: 0.5
       kernel_regularizer: "l2" # l2, l1
       kernel_regularizer_w: 0.0001
-    # - units: 64
-    #   activation: gelu
-    #   use_bias: false
-    #   dropout_rate: 0.3
-    #   kernel_regularizer: "l2" # l2, l1
-    #   kernel_regularizer_w: 0.00001
-    output_activation: null # or None for linear
-    output_use_bias: false
-    output_units: 6
+    output_layer:
+    - units: 6
+      activation: null
+      use_bias: false
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001
 
   reliability_model:
     hidden_layers:
-    - units: 128
+    - units: 8
       activation: gelu
       use_bias: false
-      dropout_rate: 0.2
+      dropout_rate: 0.5
       kernel_regularizer: "l2" # l2, l1
       kernel_regularizer_w: 0.00001
-    output_units: 1
-    output_activation: null
-    output_use_bias: false
+    output_layer:
+    - units: 1
+      activation: null
+      use_bias: false
+      kernel_regularizer: "l2" # l2, l1
+      kernel_regularizer_w: 0.00001
 
   projection:
     # for supervised contrastive learning
@@ -136,10 +138,11 @@ training:
   classifier_validation_steps: 2000
   reliability_validation_steps: 2000
   batch_size: 32
-  optimizer: "adam" # adam, rmsprop
+  optimizer: "sgd" # adam, rmsprop, sgd
   optimizer_params:
-    learning_rate: 0.0001
+    learning_rate: 0.001
     clipnorm: 20
+    momentum: 0.9
 
   loss_classifier: "categorical_crossentropy"
   loss_params_classifier:
@@ -189,7 +192,7 @@ training:
     - name: "EarlyStopping"
       params:
         monitor: "val_loss"
-        patience: 15
+        patience: 5
         mode: "min"
         restore_best_weights: true
     - name: "ModelCheckpoint"
