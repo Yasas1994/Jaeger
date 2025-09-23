@@ -68,6 +68,7 @@ def process_string_train(
     mutation_rate=0.1,
     masking=True,
     input_type="translated",  # "translated", "nucleotide", "both"
+    shuffle=False,
 ):
     """
     TensorFlow string processing function for sequence input.
@@ -117,6 +118,8 @@ def process_string_train(
             forward_strand = tf.where(
                 mask, tf.gather(alphabet, mutations), forward_strand
             )
+        if shuffle:
+            forward_strand = tf.random.shuffle(forward_strand)
 
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
