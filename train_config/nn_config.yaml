@@ -25,7 +25,7 @@ model:
   mode: "training" # or "tunning" -> freeze the representation learner and train the classifier
   embedding:
     masking: True # mask lower-case and N
-    type: "translated" # or "nucleotide"
+    input_type: "translated" # or "nucleotide"
     strands: 2
     frames: 6
     length: null
@@ -93,7 +93,7 @@ model:
       activation: null
       use_bias: false
       kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001
+      kernel_regularizer_w: 0.0001
 
   reliability_model:
     hidden_layers:
