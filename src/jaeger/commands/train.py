@@ -262,16 +262,16 @@ class DynamicModelBuilder:
         input_shape = cfg.get("input_shape", (6, None, 64))
         embedding_size = cfg.get("embedding_size", 4)
 
-        inputs = tf.keras.Input(shape=input_shape, name=cfg.get("type"))
+        inputs = tf.keras.Input(shape=input_shape, name=cfg.get("input_type"))
         masked_inputs = tf.keras.layers.Masking(name="input_mask", mask_value=0.0)(
             inputs
         )
 
-        match cfg.get("type"):
+        match cfg.get("input_type"):
             case "translated":
                 x = tf.keras.layers.Dense(
                     embedding_size,
-                    name=f"{cfg.get('type')}_embedding",
+                    name=f"{cfg.get('input_type')}_embedding",
                     use_bias=False,
                     kernel_initializer=tf.keras.initializers.Orthogonal(),
                     kernel_regularizer=self._regularizer.get(
@@ -282,7 +282,7 @@ class DynamicModelBuilder:
             case "nucleotide":
                 x = masked_inputs
             case _:
-                raise ValueError(f"{cfg.get('type')} is invalid")
+                raise ValueError(f"{cfg.get('input_type')} is invalid")
 
         if cfg.get("use_positional_embeddings", False):
             from jaeger.nnlib.v2.layers import SinusoidalPositionEmbedding
@@ -571,9 +571,9 @@ class DynamicModelBuilder:
         _config.update(self.model_cfg.get("string_processor"))
 
 
-        _config["codon"] = _map.get(_config.get("codon")),
-        _config["codon_id"] = _map.get(_config.get("codon_id")),
-        _config["codon_depth"] = max(_map.get(_config.get("codon_id"))) + 1,
+        _config["codon"] = _map.get(_config.get("codon"))
+        _config["codon_id"] = _map.get(_config.get("codon_id"))
+        _config["codon_depth"] = max(_config.get("codon_id")) + 1
 
         return _config
 
@@ -765,7 +765,6 @@ def train_fragment_core(**kwargs):
                     ),
                     **self_suoervised_train_args,
                 )
-
             # ============== train the classification model ==========================
             models.get("jaeger_classifier").fit(
                 train_data.get("train").take(
