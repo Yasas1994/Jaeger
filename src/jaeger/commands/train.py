@@ -567,19 +567,13 @@ class DynamicModelBuilder:
             "MURPHY10_ID": MURPHY10_ID,
             "PC5_ID": PC5_ID,
         }
-        emb_config = self.model_cfg.get("embedding")
-        sp_config = self.model_cfg.get("string_processor")
+        _config = self.model_cfg.get("embedding")
+        _config.update(self.model_cfg.get("string_processor"))
 
-        _config = {
-            "input_type": emb_config.get("type"),
-            "codon": _map.get(sp_config.get("codon")),
-            "codon_id": _map.get(sp_config.get("codon_id")),
-            "codon_depth": max(_map.get(sp_config.get("codon_id"))) + 1,
-            "crop_size": sp_config.get("crop_size"),
-            "buffer_size": sp_config.get("buffer_size"),
-            "masking": sp_config.get("masking"),
-            "reshuffle_each_iteration": sp_config.get("reshuffle_each_iteration"),
-        }
+
+        _config["codon"] = _map.get(_config.get("codon")),
+        _config["codon_id"] = _map.get(_config.get("codon_id")),
+        _config["codon_depth"] = max(_map.get(_config.get("codon_id"))) + 1,
 
         return _config
 
@@ -709,6 +703,7 @@ def train_fragment_core(**kwargs):
                     mutation_rate=string_processor_config.get("mutation_rate"),
                     num_classes=builder.model_cfg.get("classifier").get("output_layer")[0]['units'],
                     class_label_onehot=True,
+                    shuffle=string_processor_config.get("shuffle"),
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
             )
