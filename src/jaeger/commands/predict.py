@@ -5,6 +5,7 @@ os.environ["GLOG_minloglevel"] = "2"
 import traceback
 import sys
 import psutil
+import shutil
 import time
 from importlib.resources import files
 from importlib.metadata import version
@@ -18,7 +19,7 @@ from jaeger.utils.termini import scan_for_terminal_repeats
 from jaeger.utils.fs import validate_fasta_entries
 from jaeger.utils.misc import json_to_dict, AvailableModels, get_model_id
 from jaeger.utils.logging import description, get_logger
-
+from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
 GB_BYTES = 1024**3
 
 
@@ -39,9 +40,12 @@ def run_core(**kwargs):
     input_file_path = Path(kwargs.get("input"))
     input_file = input_file_path.name
     file_base = input_file_path.stem
+    # INPUT_FILE_MASKED = input_file_path.with_name(file_base + "_masked" + input_file_path.suffix)
 
     OUTPUT_DIR = Path(kwargs.get("output")) / MODEL_ID
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # CHUNKS_DIR = OUTPUT_DIR / "chunks"
+    # MAKSED_DIR = OUTPUT_DIR / "masked"
 
     log_file = Path(f"{file_base}_jaeger.log")
     logger = get_logger(OUTPUT_DIR, log_file, level=kwargs.get("verbose"))
@@ -127,8 +131,22 @@ def run_core(**kwargs):
     else:
         logger.info(f"Using OneDeviceStrategy {device_names}")
         strategy = tf.distribute.OneDeviceStrategy(device_names[0])
+    # # 1. Split the input FASTA
+    # chunk_files = split_fasta_with_pyfastx(input_file_path, CHUNKS_DIR, chunks=16)
+    # # Or: chunk_files = split_fasta_with_pyfastx(input_fasta, chunks_dir, chunks=10)
+
+    # # 2. Run TRF on chunks in parallel
+    # masked_files = run_batch(chunk_files, out_dir=MAKSED_DIR, n_threads=16)
+
+    # # 3. Merge all masked files into one
+    # merge_masked_files(masked_files, INPUT_FILE_MASKED)
+
+    # # 4. Cleanup temporary directories
+    # shutil.rmtree(CHUNKS_DIR)
+    # shutil.rmtree(MAKSED_DIR)
 
     term_repeats = scan_for_terminal_repeats(
+        # file_path=str(INPUT_FILE_MASKED),
         file_path=str(input_file_path),
         num=num,
         workers=THREADS,
@@ -139,7 +157,8 @@ def run_core(**kwargs):
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
         fragment_generator(
-            str(input_file_path),
+            #str(INPUT_FILE_MASKED),
+            file_path=str(input_file_path),
             no_progress=False,
             fragsize=kwargs.get("fsize"),
             stride=kwargs.get("stride"),
@@ -180,13 +199,13 @@ def run_core(**kwargs):
 
         if kwargs.get("getalllabels"):
             pass
-        data, data_full = pred_to_dict(
+        data, _ = pred_to_dict(
             y_pred,
             num_classes=model.class_map.get("num_classes"),
             fsize=kwargs.get("fsize"),
             term_repeats=term_repeats,
         )
-
+        print(len(data['headers']))
         num_written = write_output(
             data,
             labels=model.class_map.get("class"),
@@ -201,3 +220,9 @@ def run_core(**kwargs):
         logger.info(
             f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
         )
+        import numpy as np
+        if 'embedding' in y_pred:
+            np.savez(OUTPUT_DIR / f"{file_base}_embedding.npz", embedding=y_pred['embedding'], headers=y_pred["meta_0"])
+        if 'nmd' in y_pred:
+            np.savez(OUTPUT_DIR / f"{file_base}_nmd.npz", embedding=y_pred['nmd'], headers=y_pred["meta_0"])
+        # INPUT_FILE_MASKED.unlink() 
