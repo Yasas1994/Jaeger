@@ -402,7 +402,42 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
             input_shape[-1],
         )  # Output shape is (batch_size, num_channels)
 
+class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
+    """
+    Fame aware global max pooling with learned gates.
+    """
+    def __init__(self, units=1, return_gate=False,  **kwargs):
+        super().__init__()
+        self.name = kwargs.get('name')
+        kwargs['name'] = f'{kwargs["name"]}_gate'
+        self.gate = tf.keras.layers.Dense(units=units, **kwargs)
+        self.return_gate = return_gate
 
+    def build(self, input_shape):
+        if len(input_shape) != 4:
+            raise ValueError(f"expected rank-4 input (D, F, S, D), got {input_shape}")
+        super().build(input_shape)
+
+    def call(self, x):
+        shape = tf.shape(x)
+        b, f, s, d = shape[0], shape[1], shape[2], shape[3]
+        x = tf.reshape(x, shape=(b, f, s * d ))
+        g = tf.sigmoid(self.gate(x))
+        g = g / (tf.reduce_sum(g, axis=1, keepdims=True) + 1e-6)
+        h = tf.reshape(g * x, shape=shape)
+        h = tf.reduce_sum(h, axis=1)
+        # 1D maxpool
+        h = tf.reduce_max(h, axis=1)
+        if self.return_gate:
+            return h, g
+        return h
+    
+    def compute_output_shape(self, input_shape):
+         b, f, s, d = input_shape
+         if self.return_gate:
+             return (b,d), (b, f)
+         return (b, d)
+    
 class MaskedBatchNorm(tf.keras.layers.Layer):
     """
     Masked Batch Normalization that supports arbitrary input rank and optional return
