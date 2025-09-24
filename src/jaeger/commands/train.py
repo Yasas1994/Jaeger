@@ -25,6 +25,7 @@ from jaeger.nnlib.v2.layers import (
     MaskedConv1D,
     ResidualBlock,
     MetricModel,
+    GatedFrameGlobalMaxPooling
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss
 from jaeger.nnlib.inference import InferModel, evaluate
@@ -136,11 +137,11 @@ class DynamicModelBuilder:
 
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
-            r, r_lbn = self._build_representation_learner(
+            rep_out = self._build_representation_learner(
                 x, self.model_cfg["representation_learner"]
             )
             models["rep_model"] = tf.keras.Model(
-                inputs=self.inputs, outputs=[r, r_lbn], name="rep_model"
+                inputs=self.inputs, outputs=rep_out, name="rep_model"
             )
 
         # === 3. PRETRAINING ==
@@ -235,12 +236,16 @@ class DynamicModelBuilder:
                     f"Loaded reliability model weights from {self._checkpoints.get('reliability').get('path')}"
                 )
         # ==== 5. COMBINED MODEL ====
-        x1, x2 = models["rep_model"].output
+        rep_out = models["rep_model"].output
+        if len(rep_out) == 2:
+            x1, x2 = rep_out
+        else:
+            x1, x2, g = rep_out
         reliability = models["reliability_head"](x2) # NMD
         class_ = models["classification_head"](x1)
         models["jaeger_model"] = tf.keras.Model(
             inputs=models["rep_model"].input,
-            outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2 },
+            outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
             name="Jaeger_model",
         )
 
@@ -391,10 +396,17 @@ class DynamicModelBuilder:
                     # attention_axes=-2
                 )(x, x)
         # =========== Aggregation ==============
-        x = self._get_pooler(cfg.get("pooling"))(
-            name=f"global_{cfg.get('pooling')}pool"
-        )(x)
-        return x, nmd
+        if "gated" not in cfg.get("pooling"):
+            x = self._get_pooler(cfg.get("pooling"))(
+                name=f"global_{cfg.get('pooling')}pool"
+            )(x)
+            return x, nmd
+        else:
+            x, g = self._get_pooler(cfg.get("pooling"))(
+                return_gate=True,
+                name=f"global_{cfg.get('pooling')}pool"
+            )(x)
+            return x, nmd, g
 
     def _build_perceptron(self, x, cfg: Dict[str, Any], prefix: str):
         """
@@ -590,6 +602,7 @@ class DynamicModelBuilder:
         poolers = {
             "max": tf.keras.layers.GlobalMaxPooling2D,
             "average": tf.keras.layers.GlobalAveragePooling2D,
+            "gatedframe": GatedFrameGlobalMaxPooling
         }
         return poolers[name]
 
