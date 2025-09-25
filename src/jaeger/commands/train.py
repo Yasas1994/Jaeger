@@ -239,15 +239,22 @@ class DynamicModelBuilder:
         rep_out = models["rep_model"].output
         if len(rep_out) == 2:
             x1, x2 = rep_out
+            reliability = models["reliability_head"](x2) # NMD
+            class_ = models["classification_head"](x1)
+            models["jaeger_model"] = tf.keras.Model(
+                inputs=models["rep_model"].input,
+                outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2},
+                name="Jaeger_model",
+            )
         else:
             x1, x2, g = rep_out
-        reliability = models["reliability_head"](x2) # NMD
-        class_ = models["classification_head"](x1)
-        models["jaeger_model"] = tf.keras.Model(
-            inputs=models["rep_model"].input,
-            outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
-            name="Jaeger_model",
-        )
+            reliability = models["reliability_head"](x2) # NMD
+            class_ = models["classification_head"](x1)
+            models["jaeger_model"] = tf.keras.Model(
+                inputs=models["rep_model"].input,
+                outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
+                name="Jaeger_model",
+            )
 
         return models
 
