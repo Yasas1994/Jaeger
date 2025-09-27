@@ -406,12 +406,10 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
 class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
     """
     Frame-aware global max pooling.
-    Input:  x with shape (B, F, L, D)
-            mask (optional):
-                - length mask: (B, F, L) boolean, True = keep
-                - and/or frame mask: (B, F) boolean, True = keep
-    Output: y with shape (B, D)  [and optionally gate (B, F) if return_gate=True]
+    Input:  (B, F, L, D)
+    Output: (B, D)  [and optionally (B, F) if return_gate=True]
     """
+
     def __init__(
         self,
         return_gate: bool = False,
@@ -424,82 +422,71 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
     ):
         super().__init__(activity_regularizer=activity_regularizer, **kwargs)
         self.return_gate = return_gate
+        self.kernel_initializer = tf.keras.initializers.get(kernel_initializer)
+        self.bias_initializer = tf.keras.initializers.get(bias_initializer)
+        self.kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
+        self.bias_regularizer = tf.keras.regularizers.get(bias_regularizer)
 
-        # Dense over per-frame summary (D) -> 1 score per frame
+        # child layer will be created in build()
+        self.score_dense = None
+
+    def build(self, input_shape):
+        if len(input_shape) != 4:
+            raise ValueError(f"Expected rank-4 input (B,F,L,D), got {input_shape}")
+        d = int(input_shape[-1])
         self.score_dense = tf.keras.layers.Dense(
             units=1,
             use_bias=True,
-            kernel_initializer=kernel_initializer,
-            bias_initializer=bias_initializer,
-            kernel_regularizer=kernel_regularizer,
-            bias_regularizer=bias_regularizer,
-            name=f"{kwargs.get('name','gated_pool')}_gate"
+            kernel_initializer=self.kernel_initializer,
+            bias_initializer=self.bias_initializer,
+            kernel_regularizer=self.kernel_regularizer,
+            bias_regularizer=self.bias_regularizer,
+            name=f"{self.name}_gate"
         )
-
-    def build(self, input_shape):
-        # Expect (B, F, L, D)
-        if len(input_shape) != 4:
-            raise ValueError(f"Expected rank-4 input (B,F,L,D), got shape: {input_shape}")
+        self.score_dense.build((input_shape[0], input_shape[1], d))
         super().build(input_shape)
 
     def call(self, x, training=None):
-        """
-        x: (B, F, L, D)
-        mask (optional): (B, F, L) boolean
-        frame_mask (optional): (B, F) boolean
-        """
-        shape = tf.shape(x)
+        # (B,F,L,D) -> max over L
+        per_frame = tf.reduce_max(x, axis=2)   # (B,F,D)
 
-        # # Apply length mask before max over L
-        # if mask is not None:
-        #     # mask: True = keep; set dropped positions to very negative before max
-        #     mask = tf.cast(mask, x.dtype)
-        #     very_neg = tf.constant(-1e9, dtype=x.dtype)
-        #     x_masked = tf.where(tf.equal(mask[..., None], 1.0), x, very_neg)
-        # else:
-        #     x_masked = x
+        logits = self.score_dense(per_frame)   # (B,F,1)
 
-        x = tf.reshape(x, shape=(shape[0], shape[1], shape[2] * shape[3]))
-
-        # Frame scores from per-frame summary: (B, F, 1)
-        logits = self.score_dense(x)  # (B, F, 1)
-
-        # Apply frame mask (if provided): disallow masked frames
-        # if frame_mask is not None:
-        #     fm = tf.cast(frame_mask, x.dtype)  # (B, F)
-        #     very_neg = tf.constant(-1e9, dtype=x.dtype)
-        #     logits = tf.where(fm[..., None] > 0.5, logits, very_neg)
-
-
-        # Sigmoid + L1 normalization as fallback
         gates = tf.sigmoid(logits)
         gates = gates / (tf.reduce_sum(gates, axis=1, keepdims=True) + tf.keras.backend.epsilon())
 
-        # Weighted sum over frames -> (B, D)
-        h = tf.reshape(x * gates, shape=shape)  # broadcast (B,F,D)*(B,F,1)
-        pooled = tf.reduce_max(tf.reduce_sum(h, axis=1), axis=1)
+        pooled = tf.reduce_sum(per_frame * gates, axis=1)  # (B,D)
 
         if self.return_gate:
             return pooled, tf.squeeze(gates, axis=-1)  # (B,D), (B,F)
-        return pooled  # (B,D)
+        return pooled
 
     def compute_output_shape(self, input_shape):
-        # (B, D) or tuple if returning gate
-        B, F, L, D = input_shape
+        b, f, l, d = input_shape
         if self.return_gate:
-            return (B, D), (B, F)
-        return (B, D)
+            return (b, d), (b, f)
+        return (b, d)
+
+    # --- New Keras 3 APIs ---
 
     def get_config(self):
         config = super().get_config()
         config.update({
             "return_gate": self.return_gate,
-            "score_dense": tf.keras.layers.serialize(self.score_dense),
+            "kernel_initializer": tf.keras.initializers.serialize(self.kernel_initializer),
+            "bias_initializer": tf.keras.initializers.serialize(self.bias_initializer),
+            "kernel_regularizer": tf.keras.regularizers.serialize(self.kernel_regularizer),
+            "bias_regularizer": tf.keras.regularizers.serialize(self.bias_regularizer),
         })
-        # Keras can't deserialize nested layers via custom get_config reliably,
-        # but we still include hyperparams above; weights are handled by save().
         return config
 
+    def get_build_config(self):
+        # record anything needed to rebuild variables
+        return {"score_dense": self.score_dense.get_config()}
+
+    def build_from_config(self, config):
+        # re-create child layer from saved config
+        self.score_dense = tf.keras.layers.Dense.from_config(config["score_dense"])
     
 class MaskedBatchNorm(tf.keras.layers.Layer):
     """
