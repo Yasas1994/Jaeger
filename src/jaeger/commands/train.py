@@ -29,6 +29,7 @@ from jaeger.nnlib.v2.layers import (
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss
 from jaeger.nnlib.inference import InferModel, evaluate
+from jaeger.nnlib.metrics import PrecisionForClass, RecallForClass, SpecificityForClass
 import logging
 import re
 from jaeger.utils.misc import numerize, load_model_config, AvailableModels
@@ -67,9 +68,12 @@ class DynamicModelBuilder:
         self._saving_config = self._get_model_saving_configuration()
         ic(config.get("from_last_checkpoint"))
         self._from_last_checkpoint = config.get("from_last_checkpoint")
+        self.num_class = self.model_cfg.get("classifier").get("output_layer")[0]['units']
         self.optimizer = None
         self.loss_classifier = None
         self.loss_reliability = None
+        self.metrics_classifier = []
+        self.metrics_reliability = []
         self._checkpoints = dict()
         self._load_training_params()
         self._regularizer = {
@@ -156,7 +160,7 @@ class DynamicModelBuilder:
             models["projection_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_projection, name="projection_head"
             )
-            num_class = self.model_cfg["classifier"]["output_layer"][0]['units']
+            num_class = self.num_class
             projection_dim = self.model_cfg["projection"]["hidden_layers"][-1]["units"]
 
             # combine with the representation learner
@@ -449,6 +453,36 @@ class DynamicModelBuilder:
                     activation=layer_cfg.get("activation")
                 )(x)
         return x
+    
+    def _get_metrics(self, config):
+        metrics = []
+        _metrics = {
+            "categorical_accuracy": tf.keras.metrics.CategoricalAccuracy,
+            "binary_accuracy": tf.keras.metrics.BinaryAccuracy,
+            "sparse_categorical_accuracy": tf.keras.metrics.SparseCategoricalAccuracy,
+            "categorical_crossentropy": tf.keras.metrics.CategoricalCrossentropy,
+            "binary_crossentropy": tf.keras.metrics.BinaryCrossentropy,
+            "sparse_categorical_crossentropy": tf.keras.metrics.SparseCategoricalCrossentropy ,
+            "auc": tf.keras.metrics.AUC,
+            "precision": tf.keras.metrics.Precision,
+            "recall": tf.keras.metrics.Recall,
+            "per_class_precision": PrecisionForClass,
+            "per_class_recall": RecallForClass,
+            "per_class_specificity": SpecificityForClass
+
+        }
+        ic(config)
+        for c in config:
+            if "per_class_" not in c.get("name"):
+                if c.get("params") is not None:
+                    metrics.append(_metrics.get(c.get("name"))(**c.get("params")))
+                else:
+                    metrics.append(_metrics.get(c.get("name"))())
+            else:
+                for cls in range(self.num_class):
+                    metrics.append(_metrics.get(c.get("name"))(class_id=cls))
+
+        return metrics
 
     def _load_training_params(self):
         """
@@ -478,7 +512,29 @@ class DynamicModelBuilder:
         self.loss_reliability = self._get_loss(
             loss_reliability_name, loss_reliability_params
         )
+        # load metrics from configuration
+        if len(self.train_cfg.get("metrics_classifier", [])) > 0:
+            self.metrics_classifier = self._get_metrics(self.train_cfg.get("metrics_classifier"))
+        else:    
+            self.metrics_classifier = self._get_default_metrics(branch="classifier")
+        
+        if len(self.train_cfg.get("metrics_reliability", [])) > 0:
+            self.metrics_reliability = self._get_metrics(self.train_cfg.get("metrics_reliability"))
+        else:    
+            self.metrics_reliability = self._get_default_metrics(branch="reliability")
+        
         ic(self.loss_reliability)
+        ic(self.metrics_classifier)
+        ic(self.metrics_reliability)
+
+    def _get_default_metrics(self, branch):
+        match branch:
+            case "classifier":
+                return [tf.keras.metrics.CategoricalAccuracy(name="acc")]
+            case "reliability":
+                return [tf.keras.metrics.AUC(name="auc", from_logits=True),
+                        tf.keras.metrics.BinaryAccuracy(name="acc")]
+
 
     def compile_model(self, model, train_branch="classifier"):
         """
@@ -501,7 +557,7 @@ class DynamicModelBuilder:
             model.get("jaeger_classifier").compile(
                 optimizer=self.optimizer,
                 loss=self.loss_classifier,
-                metrics=[tf.keras.metrics.CategoricalAccuracy(name="acc")],
+                metrics=self.metrics_classifier,
             )
             ic(f"model compiled for {train_branch}")
 
@@ -511,10 +567,7 @@ class DynamicModelBuilder:
             model.get("jaeger_reliability").compile(
                 optimizer=self.optimizer,
                 loss=self.loss_reliability,
-                metrics=[
-                    tf.keras.metrics.AUC(name="auc", from_logits=True),
-                    tf.keras.metrics.BinaryAccuracy(name="acc"),
-                ],
+                metrics=self.metrics_reliability,
             )
 
         else:
@@ -721,7 +774,7 @@ def train_fragment_core(**kwargs):
                     masking=string_processor_config.get("masking"),
                     mutate=string_processor_config.get("mutate"),
                     mutation_rate=string_processor_config.get("mutation_rate"),
-                    num_classes=builder.model_cfg.get("classifier").get("output_layer")[0]['units'],
+                    num_classes=builder.num_class,
                     class_label_onehot=True,
                     shuffle=string_processor_config.get("shuffle"),
                 ),
@@ -735,7 +788,7 @@ def train_fragment_core(**kwargs):
                 batch_size=builder.train_cfg.get("batch_size"),
                 padded_shapes=(
                     padded_shape,
-                    [builder.model_cfg.get("classifier").get("output_units")],
+                    [builder.num_class],
                 ),
             )
             .prefetch(tf.data.AUTOTUNE)
@@ -788,8 +841,10 @@ def train_fragment_core(**kwargs):
             # ============== train the classification model ==========================
             models.get("jaeger_classifier").fit(
                 train_data.get("train").take(
-                    builder.train_cfg.get("classifier_train_steps")
+                    builder.train_cfg.get("classifier_train_steps"),
+                
                 ),
+                class_weight = builder.train_cfg.get("class_weights"),
                 **train_args,
             )
         else:
@@ -827,9 +882,7 @@ def train_fragment_core(**kwargs):
                     crop_size=string_processor_config.get("crop_size"),
                     input_type=string_processor_config.get("input_type"),
                     masking=string_processor_config.get("masking"),
-                    num_classes=builder.model_cfg.get("reliability_model").get(
-                        "output_units"
-                    ),
+                    num_classes=builder.model_cfg.get("reliability_model").get("output_layer")[-1]["units"],
                     class_label_onehot=False,
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
@@ -842,7 +895,7 @@ def train_fragment_core(**kwargs):
                 batch_size=builder.train_cfg.get("batch_size"),
                 padded_shapes=(
                     padded_shape,
-                    [builder.model_cfg.get("reliability_model").get("output_units")],
+                    [builder.model_cfg.get("reliability_model").get("output_layer")[-1]["units"]],
                 ),
             )
             .prefetch(tf.data.AUTOTUNE)
