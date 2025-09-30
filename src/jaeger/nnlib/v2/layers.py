@@ -782,51 +782,63 @@ class ResidualBlock(tf.keras.layers.Layer):
         activation="gelu",
         **kwargs,
     ):
+        
         super().__init__()
         self.supports_masking = True
+        self.filters = kwargs.get('filters')
+        self.padding = 'same'
         self.block_number = block_number
         self.conv1 = MaskedConv1D(
-            padding="same",
+            padding=self.padding,
             name=f"masked_batchnorm_blk{self.block_number}_1",
             **{k:v for k,v in kwargs.items() if k not in ["name"]}
         )
         self.conv2 = MaskedConv1D(
-            padding="same",
+            padding=self.padding,
             name=f"masked_batchnorm_blk{self.block_number}_2",
             **{k:v for k,v in kwargs.items() if k not in ["name"]}
         )
         self.conv3 = None
         if use_1x1conv or kwargs.get('strides') > 1:
             self.conv3 = MaskedConv1D(
+                 padding=self.padding,
                  kernel_size=1,
-                 name=f"masked_batchnorm_blk{self.block_number}_3",
+                 name=f"masked_batchnorm_blk{self.block_number}_bypass",
                  **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name"]}
             )
+        print(kwargs)
         self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1")
         self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2")
         self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
-
-        match activation:
-            case "gelu":
-                self.activation = GeLU
-            case "relu":
-                self.activation = ReLU 
+        self.activation = tf.keras.layers.Activation(activation, name=f"resblock_activation_blk{self.block_number}")
 
     def call(self, inputs, mask=None):
-        x = self.activation(name=f"resblock_activation_blk{self.block_number}_1")(
-            self.bn1(self.conv1(inputs))
-        )
+        x = self.activation(self.bn1(self.conv1(inputs)))
         x = self.bn2(self.conv2(x))
         if self.conv3 is not None:
-            inputs = self.conv3(inputs)
-        x = self.add([x, inputs])
-        return self.activation(name=f"resblock_activation_blk{self.block_number}_2")(x)
+            x = self.add([x, self.conv3(inputs)])
+        else:
+            x = self.add([x, inputs])
+        return self.activation(x)
 
     def compute_output_shape(self, input_shape):
         """
         compute the output shape only if the length dimention is not None.
         """
-        return input_shape
+        length = input_shape[2]
+        if length is not None:
+            if self.padding == "SAME":
+                out_length = (length + self.strides - 1) // self.strides
+            elif self.padding == "VALID":
+                out_length = (
+                    length - self.dilation_rate * (self.kernel_size - 1) - 1
+                ) // self.strides + 1
+            else:
+                raise ValueError("Invalid padding type.")
+            out_length = out_length
+            return (input_shape[0], input_shape[1], out_length, self.filters)
+        else:
+            return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
     # Todo: implement output mask computation -> return the mask computed by the last layer?
 
@@ -1057,11 +1069,18 @@ class TransformerEncoder(tf.keras.layers.Layer):
     
 def ResidualBlock_wrapper(block_size: int, **kwargs):
     name = kwargs.get("name", "resblock")
-    return tf.keras.Sequential([
-        ResidualBlock(
-            block_number=f"{name.split('_')[-1]}{i}",
-            name=f"{name}_{i}",
-            **{k: v for k, v in kwargs.items() if k != "name"}
-        )
-        for i in range(block_size)
-    ])
+    _model = tf.keras.Sequential(name=f'{name}')
+    
+    for i in range(block_size):
+        _omit = ["name"]
+        if i != 0 and 'use_1x1conv' in kwargs:
+            _omit.append("use_1x1conv")
+        _model.add(ResidualBlock(
+                block_number=f"{name.split('_')[-1]}{i}",
+                name=f"{name}_{i}",
+                **{k: v for k, v in kwargs.items() if k not in _omit}
+            
+            ))
+        
+    return _model
+        

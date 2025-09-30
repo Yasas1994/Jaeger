@@ -376,8 +376,9 @@ class DynamicModelBuilder:
                     x, nmd = layer_class(**cfg_layer)(x)
                 else:
                     x = layer_class(**cfg_layer)(x)
-            else:
-                x = layer_class(**cfg_layer)(x)
+                continue
+
+            x = layer_class(**cfg_layer)(x)
 
         # ===== Aggregation =====
         if "pooling" in cfg:
@@ -390,37 +391,6 @@ class DynamicModelBuilder:
             else:
                 x, g = pooler(return_gate=True, name=f"global_{pooling}pool")(x)
                 return (x, nmd, g) if nmd is not None else (x, g)
-        return x
-    
-    def _build_perceptron(self, x, cfg: Dict[str, Any], prefix: str):
-        """
-        Get an MLP for a given configuration
-        prefixes : reliability, projection, classifier
-        """
-        for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
-            layer_name = layer_cfg.get("name", "").lower()
-            cfg_layer = dict(layer_cfg.get("config", {}))
-            cfg_layer["name"] = f"{layer_name}_{i}"
-            x = tf.keras.layers.Dense(
-                **cfg_layer
-            )(x)
-            x = self.Activation(name=f"{prefix}_activation_{i}")(x)
-            if layer_cfg.get("dropout_rate", 0) > 0:
-                x = tf.keras.layers.Dropout(
-                    layer_cfg.get("dropout_rate"),
-                    name=f"{prefix}_dropout_{i}",
-                )(x)
-        if cfg.get("output_layer"):
-            for layer_cfg in cfg.get("output_layer"):
-                x = tf.keras.layers.Dense(
-                    layer_cfg.get("units"),
-                    use_bias=layer_cfg.get("use_bias"),
-                    name="dense_output",
-                    kernel_regularizer=self._regularizer.get(
-                        layer_cfg.get("kernel_regularizer"),
-                    )(layer_cfg.get("kernel_regularizer_w")),
-                    activation=layer_cfg.get("activation")
-                )(x)
         return x
     
     def _get_metrics(self, config):
