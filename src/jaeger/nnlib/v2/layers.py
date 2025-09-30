@@ -777,50 +777,40 @@ class ResidualBlock(tf.keras.layers.Layer):
 
     def __init__(
         self,
-        num_channels,
-        kernel_size=5,
-        dilation_rate=1,
         use_1x1conv=False,
-        strides=1,
         block_number=1,
+        activation="gelu",
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__()
         self.supports_masking = True
         self.block_number = block_number
         self.conv1 = MaskedConv1D(
-            num_channels,
             padding="same",
-            use_bias=False,
-            kernel_size=kernel_size,
-            dilation_rate=dilation_rate,
-            strides=strides,
-            name=f"masked_conv1d_blk_{self.block_number}_1",
-            kernel_initializer=tf.keras.initializers.HeUniform(),
+            name=f"masked_batchnorm_blk{self.block_number}_1",
+            **{k:v for k,v in kwargs.items() if k not in ["name"]}
         )
         self.conv2 = MaskedConv1D(
-            num_channels,
-            kernel_size=kernel_size,
-            dilation_rate=dilation_rate,
-            use_bias=False,
             padding="same",
-            name=f"masked_conv1d_blk{self.block_number}_2",
-            kernel_initializer=tf.keras.initializers.HeUniform(),
+            name=f"masked_batchnorm_blk{self.block_number}_2",
+            **{k:v for k,v in kwargs.items() if k not in ["name"]}
         )
         self.conv3 = None
-        if use_1x1conv or strides > 1:
+        if use_1x1conv or kwargs.get('strides') > 1:
             self.conv3 = MaskedConv1D(
-                num_channels, use_bias=False, kernel_size=1, strides=strides
+                 kernel_size=1,
+                 name=f"masked_batchnorm_blk{self.block_number}_3",
+                 **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name"]}
             )
         self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1")
         self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2")
-        self.add = MaskedAdd(name=f"resblock_batchnorm_blk{self.block_number}")
+        self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
 
-        match kwargs.get("activation", "gelu"):
+        match activation:
             case "gelu":
                 self.activation = GeLU
             case "relu":
-                self.activation = ReLU
+                self.activation = ReLU 
 
     def call(self, inputs, mask=None):
         x = self.activation(name=f"resblock_activation_blk{self.block_number}_1")(
@@ -830,7 +820,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         if self.conv3 is not None:
             inputs = self.conv3(inputs)
         x = self.add([x, inputs])
-        return self.activation(name=f"resblock_batchnorm_blk{self.block_number}_2")(x)
+        return self.activation(name=f"resblock_activation_blk{self.block_number}_2")(x)
 
     def compute_output_shape(self, input_shape):
         """
@@ -1064,3 +1054,14 @@ class TransformerEncoder(tf.keras.layers.Layer):
             }
         )
         return cfg
+    
+def ResidualBlock_wrapper(block_size: int, **kwargs):
+    name = kwargs.get("name", "resblock")
+    return tf.keras.Sequential([
+        ResidualBlock(
+            block_number=f"{name.split('_')[-1]}{i}",
+            name=f"{name}_{i}",
+            **{k: v for k, v in kwargs.items() if k != "name"}
+        )
+        for i in range(block_size)
+    ])

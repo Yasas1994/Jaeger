@@ -66,7 +66,7 @@ def process_string_train(
     fragsize=200,
     mutate=False,
     mutation_rate=0.1,
-    masking=True,
+    masking=False,
     input_type="translated",  # "translated", "nucleotide", "both"
     shuffle=False,
 ):

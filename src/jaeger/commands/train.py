@@ -23,9 +23,10 @@ from jaeger.nnlib.v2.layers import (
     ReLU,
     MaskedBatchNorm,
     MaskedConv1D,
-    ResidualBlock,
+    ResidualBlock_wrapper,
     MetricModel,
-    GatedFrameGlobalMaxPooling
+    GatedFrameGlobalMaxPooling,
+    TransformerEncoder
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss
 from jaeger.nnlib.inference import InferModel, evaluate
@@ -68,8 +69,8 @@ class DynamicModelBuilder:
         self._saving_config = self._get_model_saving_configuration()
         ic(config.get("from_last_checkpoint"))
         self._from_last_checkpoint = config.get("from_last_checkpoint")
-        self.num_class = self.model_cfg.get("classifier").get("output_layer")[0]['units']
-        self.optimizer = None
+        self.classifier_out_dim = self.model_cfg.get("classifier_out_dim")
+        self.reliability_out_dim = self.model_cfg.get("reliability_out_dim")
         self.loss_classifier = None
         self.loss_reliability = None
         self.metrics_classifier = []
@@ -80,7 +81,22 @@ class DynamicModelBuilder:
             "l2": tf.keras.regularizers.L2,
             "l1": tf.keras.regularizers.L1,
         }
+        self._layers = {
+            "masked_conv1d": MaskedConv1D,
+            "conv1d": tf.keras.layers.Conv1D,
+            "masked_batchnorm": MaskedBatchNorm,
+            "batchnorm": tf.keras.layers.BatchNormalization,
+            "transformer_encoder": TransformerEncoder,
+            "residual_block": ResidualBlock_wrapper,
+            "dense": tf.keras.layers.Dense,
+            "activation": tf.keras.layers.Activation,
+            "dropout": tf.keras.layers.Dropout
 
+        }
+        # self._activations = {
+        #     "gelu": GeLU,
+        #     "relu": ReLU,
+        # }
         cb_list = config["training"].get("callbacks", dict())
         for p in cb_list.get("directories"):
             p = Path(p)
@@ -96,11 +112,7 @@ class DynamicModelBuilder:
 
             p.mkdir(parents=True, exist_ok=True)
         ic(self._checkpoints)
-        match config.get("activation", "gelu"):
-            case "gelu":
-                self.Activation = GeLU
-            case "relu":
-                self.Activation = ReLU
+
 
     def get_latest_h5_with_metadata(
         self,
@@ -141,20 +153,22 @@ class DynamicModelBuilder:
 
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
-            rep_out = self._build_representation_learner(
-                x, self.model_cfg["representation_learner"]
+            rep_out = self._build_block(
+                x, 
+                self.model_cfg["representation_learner"],
+                prefix="rep"
             )
             models["rep_model"] = tf.keras.Model(
                 inputs=self.inputs, outputs=rep_out, name="rep_model"
             )
-
+            models["rep_model"].summary()
         # === 3. PRETRAINING ==
         if "projection" in self.model_cfg:
             input_shape = (
                 self.model_cfg["representation_learner"].get("block_filters")[-1],
             )
             inputs = tf.keras.Input(shape=input_shape, name="projection_input")
-            x_projection = self._build_perceptron(
+            x_projection = self._build_block(
                 inputs, self.model_cfg["projection"], prefix="projection"
             )
             models["projection_head"] = tf.keras.Model(
@@ -188,14 +202,19 @@ class DynamicModelBuilder:
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
             input_shape = (
-                self.model_cfg["representation_learner"].get("block_filters")[-1],
+                self.model_cfg["classifier"].get("input_shape"),
             )
             inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
-            x_classifier = self._build_perceptron(
-                inputs, self.model_cfg["classifier"], prefix="classifier"
+            ic(inputs)
+            x_classifier = self._build_block(
+                inputs, 
+                self.model_cfg["classifier"], 
+                prefix="classifier"
             )
             models["classification_head"] = tf.keras.Model(
-                inputs=inputs, outputs=x_classifier, name="classification_head"
+                inputs=inputs, 
+                outputs=x_classifier, 
+                name="classification_head"
             )
             # combine with the representation learner
             x_rep = models["rep_model"].output[0]
@@ -215,11 +234,13 @@ class DynamicModelBuilder:
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
             input_shape = (
-                self.model_cfg["representation_learner"].get("block_filters")[-1],
+                self.model_cfg["reliability_model"].get("input_shape"),
             )
             inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
-            x_reliability = self._build_perceptron(
-                inputs, self.model_cfg["reliability_model"], prefix="reliability"
+            x_reliability = self._build_block(
+                inputs, 
+                self.model_cfg["reliability_model"], 
+                prefix="reliability"
             )
             models["reliability_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_reliability, name="reliability_head"
@@ -241,24 +262,25 @@ class DynamicModelBuilder:
                 )
         # ==== 5. COMBINED MODEL ====
         rep_out = models["rep_model"].output
-        if len(rep_out) == 2:
-            x1, x2 = rep_out
-            reliability = models["reliability_head"](x2) # NMD
-            class_ = models["classification_head"](x1)
-            models["jaeger_model"] = tf.keras.Model(
-                inputs=models["rep_model"].input,
-                outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2},
-                name="Jaeger_model",
+        if isinstance(rep_out, List):
+            if len(rep_out) == 2:
+                x1, x2 = rep_out
+                reliability = models["reliability_head"](x2) # NMD
+                class_ = models["classification_head"](x1)
+                models["jaeger_model"] = tf.keras.Model(
+                    inputs=models["rep_model"].input,
+                    outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2},
+                    name="Jaeger_model",
             )
-        else:
-            x1, x2, g = rep_out
-            reliability = models["reliability_head"](x2) # NMD
-            class_ = models["classification_head"](x1)
-            models["jaeger_model"] = tf.keras.Model(
-                inputs=models["rep_model"].input,
-                outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
-                name="Jaeger_model",
-            )
+            else:
+                x1, x2, g = rep_out
+                reliability = models["reliability_head"](x2) # NMD
+                class_ = models["classification_head"](x1)
+                models["jaeger_model"] = tf.keras.Model(
+                    inputs=models["rep_model"].input,
+                    outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
+                    name="Jaeger_model",
+                )
 
         return models
 
@@ -285,15 +307,18 @@ class DynamicModelBuilder:
 
         match cfg.get("input_type"):
             case "translated":
-                x = tf.keras.layers.Dense(
-                    embedding_size,
-                    name=f"{cfg.get('input_type')}_embedding",
-                    use_bias=False,
-                    kernel_initializer=tf.keras.initializers.Orthogonal(),
-                    kernel_regularizer=self._regularizer.get(
-                cfg.get("embedding_regularizer"),
-            )(cfg.get("embedding_regularizer_w"))
-                )(masked_inputs)
+                if embedding_size > 0:
+                    x = tf.keras.layers.Dense(
+                        embedding_size,
+                        name=f"{cfg.get('input_type')}_embedding",
+                        use_bias=False,
+                        kernel_initializer=tf.keras.initializers.Orthogonal(),
+                        kernel_regularizer=self._regularizer.get(
+                    cfg.get("embedding_regularizer"),
+                )(cfg.get("embedding_regularizer_w"))
+                    )(masked_inputs)
+                else:
+                    x = masked_inputs
 
             case "nucleotide":
                 x = masked_inputs
@@ -310,130 +335,74 @@ class DynamicModelBuilder:
 
         return inputs, x
 
-    def _build_representation_learner(self, x, cfg: Dict[str, Any]):
+    def _build_block(self, x, cfg: Dict[str, Any], prefix:str):
         """
-        X -> [X'-1, X']
+        Build representation learner from configuration.
+        Input:  X
+        Output: [X'-1, X']
         """
-        x = MaskedConv1D(
-            filters=cfg.get("masked_conv1d_1_filters"),
-            kernel_size=cfg.get("masked_conv1d_1_kernel_size"),
-            strides=cfg.get("masked_conv1d_1_strides"),
-            dilation_rate=cfg.get("masked_conv1d_1_dilation_rate"),
-            use_bias=False,
-            name="masked_conv1d_1",
-            activation=None,
-            kernel_regularizer=self._regularizer.get(
-                cfg.get("masked_conv1d_1_regularizer"),
-            )(cfg.get("masked_conv1d_1_regularizer_w")),
-            kernel_initializer=tf.keras.initializers.HeUniform(),
-        )(x)
-        # using batchnorm here gives a big advantage. You get a model that can work well with different input size.
-        # infact the accuracy increase with the increasing input size.
+        nmd = None  # default in case no layer returns it
 
-        x = MaskedBatchNorm(name="masked_batchnorm_1")(x)
-        x = self.Activation(name="activation_1")(x)
+        for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
+            layer_name = layer_cfg.get("name", "").lower()
+            cfg_layer = dict(layer_cfg.get("config", {}))
+            cfg_layer["name"] = f"{prefix}_{layer_name}_{i}"
 
-        for block, (
-            block_size,
-            block_filter,
-            ksize,
-            kdilation,
-            kstride,
-            kreg,
-            kregw,
-        ) in enumerate(
-            zip(
-                cfg.get("block_sizes", [3, 3, 3]),
-                cfg.get("block_filters", [128, 256, 512]),
-                cfg.get("block_kernel_size", [5, 5, 5]),
-                cfg.get("block_kernel_dilation", [1, 1, 1]),
-                cfg.get("block_kernel_strides", [2, 2, 2]),
-                cfg.get("block_regularizer", ["l2", "l2", "l2"]),
-                cfg.get("block_regularizer_w", [1e-6, 1e-6, 1e-6]),
-            ),
-            start=1,
-        ):
-            # ========== blockn (compress -> res) =============
-            x = MaskedConv1D(
-                filters=block_filter,
-                kernel_size=ksize,
-                strides=kstride,
-                dilation_rate=kdilation,
-                use_bias=False,
-                name=f"ds_masked_conv1d_{block}",
-                kernel_regularizer=self._regularizer.get(kreg)(kregw),
-                activation=None,
-                kernel_initializer=tf.keras.initializers.HeUniform(),
-            )(x)
-            x = MaskedBatchNorm(name=f"ds_masked_batchnorm_{block}")(x)
-            x = self.Activation(name=f"ds_activation_{block}")(x)
+            layer_class = self._layers.get(layer_name)
+            if layer_class is None:
+                raise ValueError(f"Unknown layer type: {layer_name}")
 
-            for i in range(block_size):
-                x = ResidualBlock(
-                    block_filter,
-                    kernel_size=ksize,
-                    block_number=f"{block}{i}",
-                    name=f"masked_resblock_{block}{i}",
-                )(x)
+            # Handle kernel_regularizer
+            if "kernel_regularizer" in cfg_layer:
+                reg_name = cfg_layer.pop("kernel_regularizer")
+                reg_w = cfg_layer.pop("kernel_regularizer_w", None)
+                cfg_layer["kernel_regularizer"] = self._regularizer[reg_name](reg_w)
 
-        # ============ final block ============
-        x = MaskedConv1D(
-            filters=block_filter,
-            kernel_size=cfg.get("masked_conv1d_final_kernel_size"),
-            strides=cfg.get("masked_conv1d_final_strides"),
-            dilation_rate=cfg.get("masked_conv1d_final_dilation_rate"),
-            use_bias=False,
-            name="masked_conv1d_final",
-            kernel_regularizer=self._regularizer.get(
-                cfg.get("masked_conv1d_final_regularizer"),
-            )(cfg.get("masked_conv1d_final_regularizer_w")),
-            activation=None,
-            kernel_initializer=tf.keras.initializers.HeUniform(),
-        )(x)
-        # this layers mean vector is used as u[train] to calculate nmd u[example] - u[train]
-        x, nmd = MaskedBatchNorm(name="masked_batchnorm_final", return_nmd=True)(x)
-        x = self.Activation(name="activation_final")(x)
+            # Handle kernel_initializer (expand if needed later)
+            if "kernel_initializer" in cfg_layer:
+                init_name = cfg_layer["kernel_initializer"]
+                cfg_layer["kernel_initializer"] = tf.keras.initializers.get(init_name)
 
-        # =========== transformer encoder ================
-        if cfg.get("use_transformer_encoder", False):
-            from jaeger.nnlib.v2.layers import TransformerEncoder
+            # Handle residual blocks
+            if "block_size" in cfg_layer:
+                block_size = cfg_layer.pop("block_size")
+                if block_size > 0:
+                    x = layer_class(block_size, **cfg_layer)(x)
+                continue
 
-            for i in range(cfg.get("transformer_encoder_blocks")):
-                x = TransformerEncoder(
-                    embed_dim=128,
-                    num_heads=cfg.get("attention_heads"),
-                    feed_forward_dim=128,
-                    name=f"transformer_encoder_{i}",
-                    # attention_axes=-2
-                )(x, x)
-        # =========== Aggregation ==============
-        if "gated" not in cfg.get("pooling"):
-            x = self._get_pooler(cfg.get("pooling"))(
-                name=f"global_{cfg.get('pooling')}pool"
-            )(x)
-            return x, nmd
-        else:
-            x, g = self._get_pooler(cfg.get("pooling"))(
-                return_gate=True,
-                name=f"global_{cfg.get('pooling')}pool"
-            )(x)
-            return x, nmd, g
+            # Handle return_nmd case
+            if "return_nmd" in cfg_layer:
+                if cfg_layer.get("return_nmd"):
+                    x, nmd = layer_class(**cfg_layer)(x)
+                else:
+                    x = layer_class(**cfg_layer)(x)
+            else:
+                x = layer_class(**cfg_layer)(x)
 
+        # ===== Aggregation =====
+        if "pooling" in cfg:
+            pooling = cfg.get("pooling", "average").lower()
+            pooler = self._get_pooler(pooling)
+            print(pooler)
+            if "gated" not in pooling:
+                x = pooler(name=f"global_{pooling}pool")(x)
+                return (x, nmd) if nmd is not None else x
+            else:
+                x, g = pooler(return_gate=True, name=f"global_{pooling}pool")(x)
+                return (x, nmd, g) if nmd is not None else (x, g)
+        return x
+    
     def _build_perceptron(self, x, cfg: Dict[str, Any], prefix: str):
         """
         Get an MLP for a given configuration
         prefixes : reliability, projection, classifier
         """
-
-        for i, layer_cfg in enumerate(cfg.get("hidden_layers"), 1):
+        for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
+            layer_name = layer_cfg.get("name", "").lower()
+            cfg_layer = dict(layer_cfg.get("config", {}))
+            cfg_layer["name"] = f"{layer_name}_{i}"
             x = tf.keras.layers.Dense(
-                layer_cfg.get("units"),
-                use_bias=layer_cfg.get("use_bias"),
-                name=f"{prefix}_dense_{i}",
-                kernel_regularizer=self._regularizer.get(
-                    layer_cfg.get("kernel_regularizer"),
-                )(layer_cfg.get("kernel_regularizer_w")),
-                # activation=layer_cfg.get("activation")
+                **cfg_layer
             )(x)
             x = self.Activation(name=f"{prefix}_activation_{i}")(x)
             if layer_cfg.get("dropout_rate", 0) > 0:
@@ -479,7 +448,7 @@ class DynamicModelBuilder:
                 else:
                     metrics.append(_metrics.get(c.get("name"))())
             else:
-                for cls in range(self.num_class):
+                for cls in range(self.classifier_out_dim):
                     metrics.append(_metrics.get(c.get("name"))(class_id=cls))
 
         return metrics
@@ -774,7 +743,7 @@ def train_fragment_core(**kwargs):
                     masking=string_processor_config.get("masking"),
                     mutate=string_processor_config.get("mutate"),
                     mutation_rate=string_processor_config.get("mutation_rate"),
-                    num_classes=builder.num_class,
+                    num_classes=builder.classifier_out_dim,
                     class_label_onehot=True,
                     shuffle=string_processor_config.get("shuffle"),
                 ),
@@ -788,7 +757,7 @@ def train_fragment_core(**kwargs):
                 batch_size=builder.train_cfg.get("batch_size"),
                 padded_shapes=(
                     padded_shape,
-                    [builder.num_class],
+                    [builder.classifier_out_dim],
                 ),
             )
             .prefetch(tf.data.AUTOTUNE)
@@ -882,7 +851,7 @@ def train_fragment_core(**kwargs):
                     crop_size=string_processor_config.get("crop_size"),
                     input_type=string_processor_config.get("input_type"),
                     masking=string_processor_config.get("masking"),
-                    num_classes=builder.model_cfg.get("reliability_model").get("output_layer")[-1]["units"],
+                    num_classes=builder.reliability_out_dim,
                     class_label_onehot=False,
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
