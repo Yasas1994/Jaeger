@@ -262,7 +262,7 @@ class DynamicModelBuilder:
                 )
         # ==== 5. COMBINED MODEL ====
         rep_out = models["rep_model"].output
-        if isinstance(rep_out, List):
+        if isinstance(rep_out, tuple):
             if len(rep_out) == 2:
                 x1, x2 = rep_out
                 reliability = models["reliability_head"](x2) # NMD
@@ -272,7 +272,7 @@ class DynamicModelBuilder:
                     outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2},
                     name="Jaeger_model",
             )
-            else:
+            elif len(rep_out) == 3:
                 x1, x2, g = rep_out
                 reliability = models["reliability_head"](x2) # NMD
                 class_ = models["classification_head"](x1)
@@ -281,6 +281,7 @@ class DynamicModelBuilder:
                     outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
                     name="Jaeger_model",
                 )
+        ic(models)
 
         return models
 
@@ -334,6 +335,41 @@ class DynamicModelBuilder:
             x = tf.keras.layers.Add()([x, positional])
 
         return inputs, x
+    
+    def _get_bias(self, data_path: str, kind: str):
+        """
+        initialize final layer bias connsidering the
+        class frequencies of the training datasets
+        path to train file and kind[softmax, sigmoid]
+        """
+        import polars as pl
+        def _sigmoid(f:Dict):
+            n, p = f.values()
+            t = p / (p + n)
+            ic(np.log(t / (1-t)))
+            return np.log(t / (1-t))
+        
+        def _softmax(f:Dict):
+            f = np.array(list(f.values()))
+            ic(np.log(f/np.sum(f)))
+            return np.log(f/np.sum(f))
+
+
+        df = pl.read_csv(data_path, columns=[0], has_header=False)
+
+        counts_dict = (
+            df["column_1"]
+            .value_counts()
+            .to_dict(as_series=False)  # gives {column_name: [...], count: [...]}
+        )
+
+        counts_dict = dict(zip(counts_dict["column_1"], counts_dict["count"]))
+        counts_dict = {k:counts_dict[k] for k in  sorted(list(counts_dict.keys()))}
+        match kind:
+            case "softmax":
+                return _softmax(counts_dict)
+            case "sigmoid":
+                return _sigmoid(counts_dict)
 
     def _build_block(self, x, cfg: Dict[str, Any], prefix:str):
         """
@@ -363,6 +399,15 @@ class DynamicModelBuilder:
                 init_name = cfg_layer["kernel_initializer"]
                 cfg_layer["kernel_initializer"] = tf.keras.initializers.get(init_name)
 
+            if "bias_initializer" in cfg_layer:
+                if "calculate_from" in cfg_layer.get("bias_initializer"):
+                    if "relia" in prefix:
+                        path = self._get_reliability_fragment_paths().get('train').get('paths')[-1]
+                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, kind="sigmoid"))
+                    elif "classi" in prefix:
+                        path = self._get_fragment_paths().get('train').get('paths')[-1]
+                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, kind="softmax"))
+
             # Handle residual blocks
             if "block_size" in cfg_layer:
                 block_size = cfg_layer.pop("block_size")
@@ -384,7 +429,7 @@ class DynamicModelBuilder:
         if "pooling" in cfg:
             pooling = cfg.get("pooling", "average").lower()
             pooler = self._get_pooler(pooling)
-            print(pooler)
+
             if "gated" not in pooling:
                 x = pooler(name=f"global_{pooling}pool")(x)
                 return (x, nmd) if nmd is not None else x
@@ -834,7 +879,7 @@ def train_fragment_core(**kwargs):
                 batch_size=builder.train_cfg.get("batch_size"),
                 padded_shapes=(
                     padded_shape,
-                    [builder.model_cfg.get("reliability_model").get("output_layer")[-1]["units"]],
+                    [builder.reliability_out_dim],
                 ),
             )
             .prefetch(tf.data.AUTOTUNE)

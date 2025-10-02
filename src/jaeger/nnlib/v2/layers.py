@@ -587,7 +587,14 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
             return output, nmd
 
         return output
-
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "epsilon": self.epsilon,
+            "momentum": self.momentum,
+            "return_nmd": self.return_nmd,
+        })
+        return config
 
 class MaskedConv1D(tf.keras.layers.Layer):
     """
@@ -647,89 +654,57 @@ class MaskedConv1D(tf.keras.layers.Layer):
         else:
             self.bias = None
         super().build(input_shape)
+        
 
     def call(self, inputs, mask=None):
         input_shape = tf.shape(inputs)
-        # for reshaping after conv
         output_shape = self.compute_output_shape(input_shape)
-        # batch_size = input_shape[0]
-        # dim1 = input_shape[1]
-        dim2 = input_shape[2]
-        dim3 = input_shape[3]
 
+        output_mask = None
         if mask is not None:
-            # Expand mask dimensions to match inputs
-            # mask_dtype = mask.dtype
             mask = tf.cast(mask, dtype=inputs.dtype)
-            inputs = inputs * tf.expand_dims(mask, axis=-1)  # Zero out masked positions
-            # Compute reshape mask after convolution
-            reshaped_mask = tf.reshape(mask, (-1, dim2))
-            output_mask = self.compute_output_mask(reshaped_mask)
+            inputs = inputs * tf.expand_dims(mask, axis=-1)
 
-            # Set the mask for subsequent layers
-            output_mask = tf.reshape(
-                output_mask, shape=output_shape[:-1]
-            )  # bactch, 6, len
-            self._output_mask = output_mask
-        else:
-            output_mask = None
+            # compute output mask here (part of the graph, fine during training/inference)
+            reshaped_mask = tf.reshape(mask, (-1, input_shape[2]))
+            mask = tf.expand_dims(reshaped_mask, axis=-1)
+            mask_kernel = tf.ones((self.kernel_size, 1, 1), dtype=mask.dtype)
+            output_mask = tf.nn.conv1d(
+                input=mask,
+                filters=mask_kernel,
+                stride=self.strides,
+                padding=self.padding,
+                dilations=self.dilation_rate,
+                data_format="NWC",
+            )
+            output_mask = tf.equal(output_mask, self.kernel_size)
+            output_mask = tf.squeeze(output_mask, axis=-1)
+            output_mask = tf.reshape(output_mask, shape=output_shape[:-1])
 
-        # Reshape for Conv1D
-
-        reshaped_inputs = tf.reshape(inputs, (-1, dim2, dim3))  # batch*6, len, features
-        # Perform convolution
+        # conv1d on actual data
+        reshaped_inputs = tf.reshape(inputs, (-1, input_shape[2], input_shape[3]))
         outputs = tf.nn.conv1d(
             input=reshaped_inputs,
             filters=self.kernel,
             stride=self.strides,
             padding=self.padding,
             dilations=self.dilation_rate,
-            data_format="NWC",  # (batch, width, channels)
+            data_format="NWC",
         )
-
         if self.use_bias:
             outputs = tf.nn.bias_add(outputs, self.bias, data_format="NWC")
-
         if self.activation is not None:
             outputs = self.activation(outputs)
 
-        outputs = tf.reshape(outputs, output_shape)  # bactch, 6, len, features
+        outputs = tf.reshape(outputs, output_shape)
 
+        # stash mask so compute_mask() can forward it
+        self._output_mask = output_mask
         return outputs
 
-    def compute_output_mask(self, input_mask):
-        """
-        masked positions   == 0
-        unmasked positions == 1
-        """
-        # Compute the mask for the outputs
-        kernel_size = self.kernel_size
-        strides = self.strides
-
-        # Convolve the mask with a kernel of ones
-        mask = tf.expand_dims(input_mask, axis=-1)
-
-        mask_kernel = tf.ones((kernel_size, 1, 1), dtype=mask.dtype)
-        output_mask = tf.nn.conv1d(
-            input=mask,
-            filters=mask_kernel,
-            stride=strides,
-            padding=self.padding,
-            dilations=self.dilation_rate,
-            data_format="NWC",
-        )
-
-        # If all positions covered by the kernel are valid (sum equals kernel_size), output is valid
-        output_mask = tf.equal(output_mask, kernel_size)
-        output_mask = tf.squeeze(output_mask, axis=-1)
-        return output_mask
-
     def compute_mask(self, inputs, mask=None):
-        # Return the output mask computed in call()
-        if hasattr(self, "_output_mask"):
-            return self._output_mask
-        else:
-            return None
+        # never recompute, just return the cached mask
+        return getattr(self, "_output_mask", None)
 
     def get_config(self):
         config = super(MaskedConv1D, self).get_config()
@@ -790,12 +765,12 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.block_number = block_number
         self.conv1 = MaskedConv1D(
             padding=self.padding,
-            name=f"masked_batchnorm_blk{self.block_number}_1",
+            name=f"masked_conv1d_blk{self.block_number}_1",
             **{k:v for k,v in kwargs.items() if k not in ["name"]}
         )
         self.conv2 = MaskedConv1D(
             padding=self.padding,
-            name=f"masked_batchnorm_blk{self.block_number}_2",
+            name=f"masked_conv1d_blk{self.block_number}_2",
             **{k:v for k,v in kwargs.items() if k not in ["name"]}
         )
         self.conv3 = None
@@ -803,7 +778,7 @@ class ResidualBlock(tf.keras.layers.Layer):
             self.conv3 = MaskedConv1D(
                  padding=self.padding,
                  kernel_size=1,
-                 name=f"masked_batchnorm_blk{self.block_number}_bypass",
+                 name=f"masked_conv1d_blk{self.block_number}_bypass",
                  **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name"]}
             )
         print(kwargs)
@@ -813,7 +788,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.activation = tf.keras.layers.Activation(activation, name=f"resblock_activation_blk{self.block_number}")
 
     def call(self, inputs, mask=None):
-        x = self.activation(self.bn1(self.conv1(inputs)))
+        x = self.activation(self.bn1(self.conv1(inputs, mask=mask)))
         x = self.bn2(self.conv2(x))
         if self.conv3 is not None:
             x = self.add([x, self.conv3(inputs)])
