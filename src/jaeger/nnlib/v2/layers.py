@@ -654,7 +654,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         else:
             self.bias = None
         super().build(input_shape)
-        
+
 
     def call(self, inputs, mask=None):
         input_shape = tf.shape(inputs)
@@ -755,14 +755,17 @@ class ResidualBlock(tf.keras.layers.Layer):
         use_1x1conv=False,
         block_number=1,
         activation="gelu",
+        return_nmd=False,
         **kwargs,
     ):
         
         super().__init__()
         self.supports_masking = True
         self.filters = kwargs.get('filters')
-        self.padding = 'same'
+        self.padding = kwargs.get('padding', 'same').upper()
+        self.strides = kwargs.get('strides', 1)
         self.block_number = block_number
+        self.return_nmd = return_nmd
         self.conv1 = MaskedConv1D(
             padding=self.padding,
             name=f"masked_conv1d_blk{self.block_number}_1",
@@ -782,18 +785,27 @@ class ResidualBlock(tf.keras.layers.Layer):
                  **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name"]}
             )
         print(kwargs)
-        self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1")
-        self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2")
+        self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1",)
+        self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2", return_nmd=return_nmd)
         self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
         self.activation = tf.keras.layers.Activation(activation, name=f"resblock_activation_blk{self.block_number}")
 
     def call(self, inputs, mask=None):
-        x = self.activation(self.bn1(self.conv1(inputs, mask=mask)))
-        x = self.bn2(self.conv2(x))
+        x = self.conv1(inputs, mask=mask)
+        x = self.bn1(x)
+        x = self.activation(x)
+        x = self.conv2(x)
+        if self.return_nmd:
+            x, x_nmd = self.bn2(x)
+        else:
+            x = self.bn2(x)
+        
         if self.conv3 is not None:
             x = self.add([x, self.conv3(inputs)])
-        else:
+        else:       
             x = self.add([x, inputs])
+        if self.return_nmd:
+            return self.activation(x), x_nmd
         return self.activation(x)
 
     def compute_output_shape(self, input_shape):
@@ -811,9 +823,14 @@ class ResidualBlock(tf.keras.layers.Layer):
             else:
                 raise ValueError("Invalid padding type.")
             out_length = out_length
+            if self.return_nmd:
+                return (input_shape[0], input_shape[1], out_length, self.filters), (input_shape[0], self.filters)
             return (input_shape[0], input_shape[1], out_length, self.filters)
         else:
+            if self.return_nmd:
+                return (input_shape[0], input_shape[1], input_shape[2], self.filters), (input_shape[0], self.filters)
             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
+
 
     # Todo: implement output mask computation -> return the mask computed by the last layer?
 
@@ -1042,20 +1059,36 @@ class TransformerEncoder(tf.keras.layers.Layer):
         )
         return cfg
     
-def ResidualBlock_wrapper(block_size: int, **kwargs):
+def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
+    """
+    Build a sequential stack of ResidualBlock layers as a Keras functional submodel.
+    If return_nmd=True, the final block outputs both (x, nmd).
+    """
     name = kwargs.get("name", "resblock")
-    _model = tf.keras.Sequential(name=f'{name}')
-    
+    return_nmd = kwargs.get("return_nmd", False)
+    inputs = tf.keras.Input(shape=in_shape)
+
+    x = inputs
+    nmd = None
+
     for i in range(block_size):
-        _omit = ["name"]
-        if i != 0 and 'use_1x1conv' in kwargs:
-            _omit.append("use_1x1conv")
-        _model.add(ResidualBlock(
-                block_number=f"{name.split('_')[-1]}{i}",
-                name=f"{name}_{i}",
-                **{k: v for k, v in kwargs.items() if k not in _omit}
-            
-            ))
-        
-    return _model
+        # Skip certain kwargs for intermediate blocks
+        omit_keys = {"name"}
+        if i != 0 and "use_1x1conv" in kwargs:
+            omit_keys.add("use_1x1conv")
+
+        block_kwargs = {k: v for k, v in kwargs.items() if k not in omit_keys}
+
+        block_name = f"{name}_{i}"
+        block_number = f"{name.split('_')[-1]}{i}"
+
+        block = ResidualBlock(block_number=block_number, name=block_name, **block_kwargs)
+
+        if return_nmd:
+            x, nmd = block(x)
+        else:
+            x = block(x)
+
+    outputs = [x, nmd] if return_nmd else x
+    return tf.keras.Model(inputs=inputs, outputs=outputs, name=name)
         

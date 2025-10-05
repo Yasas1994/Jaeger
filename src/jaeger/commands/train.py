@@ -60,6 +60,7 @@ class DynamicModelBuilder:
         np.random.seed(self.model_cfg.get("seed"))
         self.inputs = None
         self.outputs = list()
+        self.input_shape = self.model_cfg["embedding"].get("input_shape")
         self._fragment_paths = self._get_fragment_paths()
         self._contig_paths = self._get_contig_paths()
         self._reliability_fragment_paths = self._get_reliability_fragment_paths()
@@ -378,7 +379,7 @@ class DynamicModelBuilder:
         Output: [X'-1, X']
         """
         nmd = None  # default in case no layer returns it
-
+        previous_channels = None
         for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
             layer_name = layer_cfg.get("name", "").lower()
             cfg_layer = dict(layer_cfg.get("config", {}))
@@ -411,8 +412,16 @@ class DynamicModelBuilder:
             # Handle residual blocks
             if "block_size" in cfg_layer:
                 block_size = cfg_layer.pop("block_size")
+                shape = (self.input_shape[0], None, previous_channels)
                 if block_size > 0:
-                    x = layer_class(block_size, **cfg_layer)(x)
+                    if cfg_layer.get("return_nmd", False):
+                        x, nmd = layer_class(block_size, shape, **cfg_layer)(x)
+                    else:
+                        x = layer_class(block_size, shape, **cfg_layer)(x)
+                    if 'filters' in cfg_layer:
+                        previous_channels = cfg_layer.get('filters')
+                    elif 'units' in cfg_layer:
+                        previous_channels = cfg_layer.get('units')
                 continue
 
             # Handle return_nmd case
@@ -421,9 +430,18 @@ class DynamicModelBuilder:
                     x, nmd = layer_class(**cfg_layer)(x)
                 else:
                     x = layer_class(**cfg_layer)(x)
+                if 'filters' in cfg_layer:
+                    previous_channels = cfg_layer.get('filters')
+                elif 'units' in cfg_layer:
+                    previous_channels = cfg_layer.get('units')
                 continue
 
             x = layer_class(**cfg_layer)(x)
+
+            if 'filters' in cfg_layer:
+                previous_channels = cfg_layer.get('filters')
+            elif 'units' in cfg_layer:
+                previous_channels = cfg_layer.get('units')
 
         # ===== Aggregation =====
         if "pooling" in cfg:
