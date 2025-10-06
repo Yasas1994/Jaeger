@@ -110,7 +110,7 @@ def scan_for_terminal_repeats(
 
     def helper(record):
         seq_len = len(record[1])
-        headder = record[0].replace(",", "__")
+        headder = record[0].replace(",", "___")
         logger.debug(f"{headder}, {seq_len}")
         scan_length = min(max(int(seq_len * 0.04), 400), 4000)
 
