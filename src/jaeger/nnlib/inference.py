@@ -463,7 +463,7 @@ class InferModel:
             }
 
             return {
-                "input_type": cfg.get("model").get("embedding").get("type"),
+                "input_type": cfg.get("model").get("embedding").get("input_type"),
                 "codon_depth": cfg.get("model").get("embedding").get("input_shape")[-1],
                 "codon": _map.get(
                     cfg.get("model").get("string_processor").get("codon")
