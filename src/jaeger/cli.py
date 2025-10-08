@@ -715,6 +715,34 @@ def convert(**kwargs):
     convert_core(**kwargs)
     pass
 
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True),
+    help="""
+            Calculate stats from Jaeger output
+
+            usage                                                                      
+            -----                                                                      
+
+            jaeger utils stats -i jaeger_output.tsv -o jaeger_output_stats
+            
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input .tsv file",
+)
+@click.option("-o", "--output", type=str, required=True, help="Path to output dir")
+
+def stats(**kwargs):
+    """Calculate stats from Jaeger output"""
+    from jaeger.commands.utils import stats_core
+
+    stats_core(**kwargs)
+    pass
+
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
 def taxonomy(obj):

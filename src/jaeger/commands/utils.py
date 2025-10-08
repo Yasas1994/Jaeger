@@ -7,7 +7,100 @@ import shutil
 import sys
 import numpy as np
 from pathlib import Path
+from typing import List
 from rich.progress import track
+import random
+from math import log2, sqrt
+from scipy import stats
+
+
+
+def shannon_entropy(seq: str) -> float:
+    """
+    Calculate Shannon entropy for a sequence.
+    """
+    counts = {}
+    for base in seq:
+        counts[base] = counts.get(base, 0) + 1
+    entropy = 0.0
+    length = len(seq)
+    for count in counts.values():
+        p = count / length
+        entropy -= p * log2(p)
+    return entropy
+
+def generate_homopolymer(length: int, base: str = 'A') -> str:
+    """
+    Generate a homopolymer (single-base repeat) of given length.
+    """
+    return base * length
+
+def generate_tandem_repeat(motif: str, copies: int) -> str:
+    """
+    Generate a tandem repeat sequence by repeating a given motif a specified number of times.
+    """
+    return motif * copies
+
+def generate_random_tandem_repeats(
+    num_sequences: int,
+    motif_length_range: tuple = (3, 30),
+    copy_number: int = 2000,
+    alphabet: List[str] = ['A', 'C', 'G', 'T']
+) -> List[str]:
+    """
+    Automatically generate a list of random tandem repeat sequences.
+    
+    Parameters
+    ----------
+    num_sequences : int
+        Number of sequences to generate.
+    motif_length_range : tuple (min_len, max_len)
+        Range of lengths for randomly generated motifs.
+    copy_number_range : tuple (min_copies, max_copies)
+        Range of copy counts to repeat the motif.
+    alphabet : list of str
+        List of nucleotide characters to sample motifs from.
+    
+    Returns
+    -------
+    List[str]
+        Generated tandem repeat sequences.
+    """
+    sequences = []
+    for _ in range(num_sequences):
+        motif_len = random.randint(*motif_length_range)
+        motif = ''.join(random.choices(alphabet, k=motif_len))
+        seq = generate_tandem_repeat(motif, copy_number)
+        sequences.append(seq[:2048])
+    return sequences
+
+def generate_biased_sequence(length: int, freqs: dict = None) -> str:
+    """
+    Generate a sequence of given length with biased nucleotide frequencies.
+    freqs should be a dict like {'A':0.7, 'C':0.1, 'G':0.1, 'T':0.1}.
+    """
+    if freqs is None:
+        freqs = {'A': 0.7, 'C': 0.1, 'G': 0.1, 'T': 0.1}
+    bases = list(freqs.keys())
+    weights = list(freqs.values())
+    return ''.join(random.choices(bases, weights=weights, k=length))
+
+def generate_low_entropy_sequence(length: int, window_size: int, threshold: float,
+                                  max_attempts: int = 10000) -> str:
+    """
+    Generate a random sequence and ensure all sliding windows have entropy below threshold.
+    """
+    for attempt in range(max_attempts):
+        seq = generate_biased_sequence(length)
+        # check all windows
+        valid = True
+        for i in range(length - window_size + 1):
+            if shannon_entropy(seq[i:i+window_size]) >= threshold:
+                valid = False
+                break
+        if valid:
+            return seq
+    raise ValueError(f"Failed to generate low-entropy sequence after {max_attempts} attempts")
 
 
 def shuffle_dna(seq: str) -> str:
@@ -31,6 +124,11 @@ def kmer_shuffle(seq: str, k: int) -> str:
     # Join and return
     return ''.join(kmers)
 
+def kmer_mix_shuffle(seq1: str, seq2: str, k: int):
+    """
+    Shuffle kmers from 2 sequences from 2 different classes to generate 
+    """
+    pass
 
 def shuffle_core(**kwargs):
     if kwargs.get("dinuc"):
@@ -44,27 +142,96 @@ def shuffle_core(**kwargs):
             f = pl.read_csv(
                 kwargs.get("input"), truncate_ragged_lines=True, has_header=False
             )
-            f = f.with_columns(pl.lit(1).alias("column_1"))
+            f = f.select(['column_1', 'column_2', 'column_3'])
+            
+            f = f.with_columns(
+                pl.when((pl.col('column_2').str.count_matches("N")  / pl.col('column_2').str.len_chars()) > 0.3)
+                    .then(pl.lit(0).alias("column_1"))
+                    .otherwise(pl.lit(1).alias("column_1"))
+            )
             fs = f.with_columns(
                 pl.col("column_2").map_elements(
                     lambda x: shuffle_fn(x), return_dtype=pl.String
                 ),
                 pl.lit(0).alias("column_1"),
             )
-            f = pl.concat([f, fs]).sample(
+            ft = pl.from_dict(dict(column_1=np.array([0 for _ in range(10_000)], dtype=np.int32),
+                 column_2=generate_random_tandem_repeats(num_sequences=10_000),
+                 column_3=[f'tandem_repeat_{i}' for i in range(10_000)]))
+            print(f)
+            print(ft)
+            print(fs)
+            f = pl.concat([f, fs, ft], how='vertical').sample(
                 fraction=1.0, shuffle=True, with_replacement=False
             )
-            f.write_csv(kwargs.get("output"), include_header=False)
+
+            match kwargs.get("otype"):
+                case "CSV":
+                    f.select(['column_1', 'column_2', 'column_3']).write_csv(kwargs.get("output"), include_header=False)
+                case "FASTA":
+                    with open(kwargs.get("output"), "w") as fh:
+                        for row in f.iter_rows(named=True):
+                            label = row["col1"]
+                            seq = row["col2"]
+                            seq_id = row["col3"].split("__class=")[0]
+                            # use the 3rd column as header
+                            fh.write(f">{seq_id}__class={label}\n")
+                            for i in range(0, len(seq), 70):
+                                fh.write(seq[i:i+70] + "\n")
+
         case "FASTA":
-            f = pyfastx.Fasta(kwargs.get("input"), build_index=False)
+            input_path  = kwargs.get("input")
+            output_path = kwargs.get("output")
+            otype       = kwargs.get("otype")  # "FASTA" or "CSV"
+            fasta_iter  = pyfastx.Fasta(input_path, build_index=False)
 
-            with open(kwargs.get("output"), "w") as fh:
-                for name, seq in f:
-                    fh.write(f">{name}\n")
-                    shuffled = shuffle_fn(seq)
-                    for i in range(0, len(shuffled), 70):
-                        fh.write(shuffled[i : i + 70] + "\n")
+            # 1) pre‑generate your tandem dict
+            tandem = dict(
+                column_1=[0 for _ in range(10_000)],
+                column_2=generate_random_tandem_repeats(num_sequences=10_000),
+                column_3=[f"tandem_repeat_{i}" for i in range(10_000)]
+            )
 
+            # 2) collect ALL entries into a list
+            entries = []
+
+            # 2a) from your input FASTA
+            for name, seq in fasta_iter:
+                ncount     = seq.count("N")
+                lowcomplex = (len(seq) > 0 and (ncount / len(seq)) > 0.3)
+                shuffled   = shuffle_fn(seq)
+                id_        = name.split("__class=")[0]
+                orig_label = 0 if lowcomplex else 1
+
+                # store tuples of (id, sequence, label)
+                entries.append((id_, seq,       orig_label))
+                entries.append((id_, shuffled,  0))
+
+            # 2b) from your tandem dict
+            for label, tandem_seq, tandem_id in zip(
+                tandem["column_1"],
+                tandem["column_2"],
+                tandem["column_3"]
+            ):
+                entries.append((tandem_id, tandem_seq, label))
+
+            # 3) shuffle the entire pool
+            random.shuffle(entries)
+
+            # 4) write them out in the new order
+            with open(output_path, "w") as fh:
+                for seq_id, sequence, label in entries:
+                    if otype == "FASTA":
+                        write_fasta_entry(fh, seq_id, sequence, label)
+                    else:  # CSV
+                        fh.write(f"{label},{sequence},{seq_id}\n")
+
+
+
+def write_fasta_entry(fh, header, seq, label):
+    fh.write(f">{header}class={label}\n")
+    for i in range(0, len(seq), 70):
+        fh.write(seq[i:i+70] + "\n")
 
 def split_core(**kwargs):
     # split records in f into fragments of varying sizes
@@ -328,3 +495,267 @@ def dataset_core(**kwargs):
         f"{num_frags} frags →  {len(reps)} reps → "
         f"{len(train)} train, {len(val)} val, {len(test)} test"
     )
+
+
+def convert_core(**kwargs):
+    import pandas as pd
+    """
+    Convert between CSV and FASTA using pandas and pyfastx.
+
+    Parameters
+    ----------
+    input_path : str
+        Path to the input file (CSV or FASTA).
+    output_path : str
+        Path to the output file (FASTA or CSV).
+    input_type : str
+        Type of the input file: 'csv' or 'fasta'.
+    """
+    input_path = Path(kwargs.get('input'))
+    output_path = Path(kwargs.get('output'))
+    input_type = kwargs.get('itype')
+    if input_type == "CSV":
+        # CSV -> FASTA
+        df = pd.read_csv(input_path, usecols=[0,1,2], names=['class', 'sequence', 'id'], dtype=str)
+        with open(output_path, 'w') as fasta_out:
+            for idx, row in df.iterrows():
+                seq_id = row['id'].strip()
+                cls_id = row['class'].strip()
+                seq = row['sequence'].strip()
+                fasta_out.write(f">{seq_id}__class={cls_id}\n{seq}\n")
+        print(f"[✓] Converted CSV to FASTA: {output_path}")
+
+    elif input_type == "FASTA":
+        # FASTA -> CSV
+        fasta = pyfastx.Fasta(str(input_path), build_index=False)
+        records = []
+        for name, seq in fasta:
+            seq_id, cls_id = name.split('__class=')
+            records.append((cls_id, seq, seq_id))
+        df = pd.DataFrame(records, columns=['class', 'sequence', 'id'])
+        df.to_csv(output_path, index=False, header=False)
+        print(f"[✓] Converted FASTA to CSV: {output_path}")
+
+    else:
+        raise ValueError("input_type must be 'CSV' or 'FASTA'")
+
+def significant_top_class(logits_class1, logits_class2, alpha=0.05):
+    """
+    One-tailed paired t-test to check if top 1 class logits are significantly higher than top 2 class 
+    logits.
+    """
+    # Differences per window
+    diffs = np.array(logits_class1) - np.array(logits_class2)
+
+    # Compute t-statistic and p-value
+    t_stat, p_two_tailed = stats.ttest_1samp(diffs, 0)
+    # Convert to one-tailed (greater-than)
+    p_one_tailed = p_two_tailed / 2 if t_stat > 0 else 1 - (p_two_tailed / 2)
+
+    # Decision
+    significant = (p_one_tailed < alpha)
+
+    return {
+        "t_stat": t_stat,
+        "p_value": p_one_tailed,
+        "significant": significant
+    }
+
+def welch_t_one_tailed(mean1, var1, n1, mean2, var2, n2, alternative="greater"):
+    """
+    One-tailed Welch's t-test using summary statistics.
+    alternative: "greater" tests mean1 > mean2,
+                 "less" tests mean1 < mean2.
+    """
+    # Standard error
+    se = sqrt(var1/n1 + var2/n2)
+
+    # t-statistic
+    t_stat = (mean1 - mean2) / se
+
+    # Welch–Satterthwaite degrees of freedom
+    df_num = (var1/n1 + var2/n2)**2
+    df_denom = ((var1/n1)**2 / (n1 - 1)) + ((var2/n2)**2 / (n2 - 1))
+    df = df_num / df_denom
+
+    # One-tailed p-value
+    if alternative == "greater":
+        p = 1 - stats.t.cdf(t_stat, df)
+    elif alternative == "less":
+        p = stats.t.cdf(t_stat, df)
+    else:
+        raise ValueError("alternative must be 'greater' or 'less'")
+
+    return t_stat, df, p
+
+def stats_core(**kwargs):
+    import matplotlib.pyplot as plt
+    import logging
+    logger = logging.getLogger("Jaeger")
+
+    import seaborn as sns
+    import pandas as pd
+    """
+    Calculate stats and create plots from jaeger output/s
+    
+    1. percentage of each class
+    2. reliability score distribution
+    3. class score distributions
+
+    """
+    input_path = Path(kwargs.get('input'))
+    output_path = Path(kwargs.get('output'))
+    output_path.mkdir(exist_ok=True, parents=True)
+    pct_class = output_path / "class_percentages.png"
+    pct_class_pval = output_path / "class_percentages_pval.png"
+    relscore = output_path / "reliability_scores.png"
+    relscore_len = output_path / "reliability_scores_by_length.png"
+    ent = output_path / "entropy.png"
+    eng = output_path / "energy.png"
+    clscores = output_path / "class_scores.png"
+    tsv_with_pvals = output_path / "jaeger_output_with_pvals.tsv"
+
+    df = pd.read_table(input_path)
+    sns.set_context("paper", font_scale=1.2)
+    if len(df) > 1:
+        # Create the count plot
+        df["above_threshold"] = df["reliability_score"].apply(lambda x : "passed" if x >= 0.8 else "failed")
+        ax = sns.countplot(data=df, x="prediction", hue="above_threshold", palette="pastel", stat="percent")
+        # Annotate bars with percentage values (already in percent)
+        for p in ax.patches:
+            percentage = p.get_height()
+            if percentage > 0:
+                ax.text(
+                    p.get_x() + p.get_width() / 2,
+                    p.get_height(),
+                    f"{percentage:.1f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,
+                )
+        # Style tweaks
+        ax.set_ylabel("Percentage")
+        ax.set_xlabel("Prediction")
+        ax.set_title("Class Distribution (%)")
+        sns.despine()
+        plt.tight_layout()
+        plt.savefig(pct_class, dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # Calculate per-class distribution of reliability scores
+        ax = sns.violinplot(df, x='prediction', y='reliability_score')
+        sns.stripplot(df, x='prediction', y='reliability_score', s=1, alpha=0.1, color='gray', ax=ax)
+        ax.set_ylabel("Reliability score")
+        ax.set_xlabel("Class")
+        ax.set_title("Per-class distribution of reliability scores")
+        sns.despine()
+        plt.tight_layout()
+        plt.savefig(relscore, dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # Calculate per-class distribution of entropy
+        ax = sns.violinplot(df, x='prediction', y='entropy')
+        sns.stripplot(df, x='prediction', y='entropy', s=1, alpha=0.1, color='gray', ax=ax)
+        ax.set_ylabel("Entropy")
+        ax.set_xlabel("Class")
+        ax.set_title("Per-class distribution of entropy")
+        sns.despine()
+        plt.tight_layout()
+        plt.savefig(ent, dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # Calculate per-class distribution of energy
+        if "energy" in df.columns:
+            ax = sns.violinplot(df, x='prediction', y='energy')
+            sns.stripplot(df, x='prediction', y='energy', s=1, alpha=0.1, color='gray', ax=ax)
+            ax.set_ylabel("Energy")
+            ax.set_xlabel("Class")
+            ax.set_title("Per-class distribution of Energy")
+            sns.despine()
+            plt.tight_layout()
+            plt.savefig(eng, dpi=150, bbox_inches="tight")
+            plt.close()
+
+        # Calculate perclass score distributions
+        # Create the grid
+        df_long = pd.melt(df[['contig_id', 'length', 'prediction'] + [i for i in df.columns if i.endswith("_score") and i != "reliability_score"]], 
+                        id_vars=['contig_id', 'length', 'prediction'],
+                        var_name="score_class",
+                        value_name="scores")
+        g = sns.FacetGrid(df_long, row="prediction",hue="score_class", margin_titles=False, height=2, aspect=3.5)
+        g.map(sns.kdeplot, "scores",fill=True, common_norm=False, alpha=0.2, linewidth=0.5)
+        g.add_legend()
+        # Add titles and adjust layout
+        g.set_axis_labels("Score", "Density")
+        #g.set_titles("Per-class score distributions")
+        g.savefig(clscores, dpi=150, bbox_inches="tight")
+        plt.close()
+        try:
+            # quantile bins 
+            bins = pd.qcut(df["length"], q=5)
+
+            # Extract bin edges
+            bin_edges = bins.cat.categories
+
+            # Create labels with numeric min–max
+            labels = [f"{int(interval.left):,}–{int(interval.right):,}" for interval in bin_edges]
+
+            # Recreate qcut with readable labels
+            df["length_bin"] = pd.qcut(df["length"], q=5, labels=labels)
+            # Calculate per-class distribution of reliability scores
+            ax = sns.violinplot(df, x='length_bin', y='reliability_score')
+            sns.stripplot(df, x='length_bin', y='reliability_score', s=1, alpha=0.1, color='red', ax=ax)
+            ax.set_ylabel("Reliability score")
+            ax.set_xlabel("Length range")
+            ax.set_title("Legth-wise (quantile) distribution of reliability scores")
+            plt.xticks(rotation=45)
+            sns.despine()
+            plt.tight_layout()
+            plt.savefig(relscore_len, dpi=150, bbox_inches="tight")
+            plt.close()
+        except Exception as e:
+            logging.warning(e)
+            logging.warning("Legth-wise (quantile) plot was not created")
+            
+
+    # perform welch t-tests to check if there is a statistically significant difference
+    # between the top-k classes 
+    mean_scores = df[[i for i in df.columns if i.endswith("_score") and "reliability" not in i]].to_numpy()
+    var_scores = df[[i for i in df.columns if i.endswith("_var")]].to_numpy()
+    windows = df[[i for i in df.columns if i.endswith("_windows") and "reliability" not in i]].to_numpy().sum(axis=-1)
+    rows = np.arange(mean_scores.shape[0])[:, None]
+    sorted_indices = np.flip(np.argsort(mean_scores, axis=-1), axis=-1)
+    sorted_means = mean_scores[rows, sorted_indices[:, :2]]
+    sorted_vars = var_scores[rows, sorted_indices[:, :2]]
+    pvals = []
+    for means,vars,n in zip(sorted_means, sorted_vars, windows):
+        _,_, p = welch_t_one_tailed(mean1=means[0], var1=vars[0], mean2=means[1], var2=vars[1], n1=n, n2=n)
+        pvals.append(p)
+    df["pval"] = pvals
+
+    df.to_csv(tsv_with_pvals, index=None, sep="\t", float_format="%.3f" )
+        # Create the count plot
+
+    if len(df) > 1:
+        df["above_pval_threshold"] = df["pval"].apply(lambda x : "passed" if x <= 0.05 else "failed")
+        ax = sns.countplot(data=df, x="prediction", hue="above_pval_threshold", palette="pastel", stat="percent")
+        # Annotate bars with percentage values (already in percent)
+        for p in ax.patches:
+            percentage = p.get_height()
+            if percentage > 0:
+                ax.text(
+                    p.get_x() + p.get_width() / 2,
+                    p.get_height(),
+                    f"{percentage:.1f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,
+                )
+        # Style tweaks
+        ax.set_ylabel("Percentage")
+        ax.set_xlabel("Prediction")
+        ax.set_title("Class Distribution (%)")
+        sns.despine()
+        plt.tight_layout()
+        plt.savefig(pct_class_pval, dpi=150, bbox_inches="tight")
+        plt.close()
