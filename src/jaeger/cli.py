@@ -717,6 +717,43 @@ def convert(**kwargs):
 
 @utils.command(
     context_settings=dict(ignore_unknown_options=True),
+    help="""Combine multiple model graphs into an ensemble model. Outputs can be summarized with majority voting,
+            sum or mean of logits of each model
+
+            usage\n
+            -----
+
+            jaeger utils combine_models -i path/to/model1 -i path/to/model2 -i path/to/model3 -c mv
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to saved model",
+    multiple=True
+)
+@click.option("-o", "--output", type=str, required=True, help="Path to save the ensemble model")
+@click.option(
+    "-c",
+    "--comb",
+    type=click.Choice(["MV", "SUM", "MEAN", "NONE"], case_sensitive=False),
+    required=True,
+    help="how to summarize the model outputs " \
+    "MV: majority voting" \
+    "SUM: sum of logits" \
+    "MEAN: Mean of logits" \
+    "NONE: Do not aggregate",
+)
+def combine_models(**kwargs):
+
+    from jaeger.commands.utils_models import combine_models_core
+
+    combine_models_core(**kwargs)
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True),
     help="""
             Calculate stats from Jaeger output
 
