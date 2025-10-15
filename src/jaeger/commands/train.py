@@ -28,7 +28,7 @@ from jaeger.nnlib.v2.layers import (
     GatedFrameGlobalMaxPooling,
     TransformerEncoder
 )
-from jaeger.nnlib.v2.losses import ArcFaceLoss
+from jaeger.nnlib.v2.losses import ArcFaceLoss, HierarchicalLoss
 from jaeger.nnlib.inference import InferModel, evaluate
 from jaeger.nnlib.metrics import PrecisionForClass, RecallForClass, SpecificityForClass
 import logging
@@ -674,7 +674,9 @@ class DynamicModelBuilder:
             "sparse_categorical_crossentropy": tf.keras.losses.SparseCategoricalCrossentropy,
             "binary_crossentropy": tf.keras.losses.BinaryCrossentropy,
             "mse": tf.keras.losses.MeanSquaredError,
+            "hierachical_loss" : HierarchicalLoss
         }
+        ic(kwargs)
         return losses[name](**kwargs)
 
     def _get_paths(self, key: str) -> Dict:
