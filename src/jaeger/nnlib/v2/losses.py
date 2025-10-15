@@ -102,3 +102,36 @@ class ArcFaceLoss(tf.keras.layers.Layer):
         )
 
         return tf.reduce_mean(loss)
+
+class HierarchicalLoss(tf.keras.losses.Loss):
+    def __init__(self, parent_of, groups, l_fine=1.0, l_coarse=1.5, name="hier_loss"):
+        super().__init__(name=name, reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE)
+        self.parent_of = tf.constant(parent_of, tf.int32)          # (6,)
+        self.groups = [tf.constant(g, tf.int32) for g in groups]   # list of tensors
+        self.l_fine = float(l_fine)
+        self.l_coarse = float(l_coarse)
+        self.ce = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction="none")
+
+    def call(self, y_true, fine_logits):
+        # accept sparse ids (N,) or one-hot (N,6)
+        y_true = tf.convert_to_tensor(y_true)
+        if y_true.shape.rank == 2:
+            y_true = tf.argmax(y_true, axis=-1, output_type=tf.int32)
+        else:
+            y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+
+        # Fine-level CE (per-sample)
+        loss_fine = self.ce(y_true, fine_logits)  # (N,)
+
+        # Coarse logits via logsumexp over each group's fine logits
+        coarse_logits = tf.stack(
+            [tf.reduce_logsumexp(tf.gather(fine_logits, idxs, axis=1), axis=1)
+             for idxs in self.groups],
+            axis=1
+        )  # (N, 3)
+
+        y_coarse = tf.gather(self.parent_of, y_true)  # (N,)
+        loss_coarse = self.ce(y_coarse, coarse_logits)  # (N,)
+
+        per_ex = self.l_fine * loss_fine + self.l_coarse * loss_coarse  # (N,)
+        return tf.reduce_mean(per_ex)  # scalar
