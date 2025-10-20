@@ -1,3 +1,5 @@
+from itertools import product
+
 CODONS = [
     "TTT",
     "TTC",
@@ -539,3 +541,8 @@ PC5_ID = [
 ]
 
 CODON_ID = [i for i in range(0, len(CODONS))]
+
+
+DICODONS = list(map("".join, list(product(CODONS, CODONS))))
+
+DICODON_ID = [i for i in range(0, len(DICODONS))]

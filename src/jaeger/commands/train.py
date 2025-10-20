@@ -12,9 +12,10 @@ import os
 # temporary fix
 os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 from jaeger.preprocess.latest.convert import process_string_train
-from jaeger.preprocess.latest.maps import CODONS, CODON_ID, MURPHY10_ID, AA_ID, PC5_ID
+from jaeger.preprocess.latest.maps import CODONS, CODON_ID, MURPHY10_ID, AA_ID, PC5_ID, DICODONS, DICODON_ID
 import yaml
 import shutil
+import math
 import tensorflow as tf
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -640,6 +641,8 @@ class DynamicModelBuilder:
             "AA_ID": AA_ID,
             "MURPHY10_ID": MURPHY10_ID,
             "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID
         }
         _config = self.model_cfg.get("embedding")
         _config.update(self.model_cfg.get("string_processor"))
@@ -648,6 +651,7 @@ class DynamicModelBuilder:
         _config["codon"] = _map.get(_config.get("codon"))
         _config["codon_id"] = _map.get(_config.get("codon_id"))
         _config["codon_depth"] = max(_config.get("codon_id")) + 1
+        _config["ngram_width"] = int(math.log( _config["codon_depth"] , 4))
 
         return _config
 
@@ -773,6 +777,7 @@ def train_fragment_core(**kwargs):
                     codons=string_processor_config.get("codon"),
                     codon_num=string_processor_config.get("codon_id"),
                     codon_depth=string_processor_config.get("codon_depth"),
+                    ngram_width=string_processor_config.get("ngram_width"),
                     crop_size=string_processor_config.get("crop_size"),
                     input_type=string_processor_config.get("input_type"),
                     masking=string_processor_config.get("masking"),
@@ -883,6 +888,7 @@ def train_fragment_core(**kwargs):
                     codons=string_processor_config.get("codon"),
                     codon_num=string_processor_config.get("codon_id"),
                     codon_depth=string_processor_config.get("codon_depth"),
+                    ngram_width=string_processor_config.get("ngram_width"),
                     crop_size=string_processor_config.get("crop_size"),
                     input_type=string_processor_config.get("input_type"),
                     masking=string_processor_config.get("masking"),

@@ -67,6 +67,7 @@ def process_string_train(
     mutate=False,
     mutation_rate=0.1,
     masking=False,
+    ngram_width = 3,
     input_type="translated",  # "translated", "nucleotide", "both"
     shuffle=False,
 ):
@@ -136,15 +137,15 @@ def process_string_train(
 
         # Translated representation
         if input_type in ["translated", "both"]:
-            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
-            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
+            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=ngram_width, separator="")
+            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=ngram_width, separator="")
 
-            f1 = map_codon.lookup(tri_forward[0 : -3 + offset : 3])
-            f2 = map_codon.lookup(tri_forward[1 : -2 + offset : 3])
-            f3 = map_codon.lookup(tri_forward[2 : -1 + offset : 3])
-            r1 = map_codon.lookup(tri_reverse[0 : -3 + offset : 3])
-            r2 = map_codon.lookup(tri_reverse[1 : -2 + offset : 3])
-            r3 = map_codon.lookup(tri_reverse[2 : -1 + offset : 3])
+            f1 = map_codon.lookup(tri_forward[0 : -3 + offset : ngram_width])
+            f2 = map_codon.lookup(tri_forward[1 : -2 + offset : ngram_width])
+            f3 = map_codon.lookup(tri_forward[2 : -1 + offset : ngram_width])
+            r1 = map_codon.lookup(tri_reverse[0 : -3 + offset : ngram_width])
+            r2 = map_codon.lookup(tri_reverse[1 : -2 + offset : ngram_width])
+            r3 = map_codon.lookup(tri_reverse[2 : -1 + offset : ngram_width])
 
             if timesteps:
                 f1 = tf.reshape(f1, (num_time, fragsize))
@@ -186,6 +187,7 @@ def process_string_inference(
     fragsize=200,
     mutate=False,
     mutation_rate=0.1,
+    ngram_width = 3,
     input_type="translated",  # "translated", "nucleotide", "both"
 ):
     """
@@ -235,15 +237,15 @@ def process_string_inference(
 
         # Translated representation
         if input_type in ["translated", "both"]:
-            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=3, separator="")
-            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=3, separator="")
+            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=ngram_width, separator="")
+            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=ngram_width, separator="")
 
-            f1 = map_codon.lookup(tri_forward[0 : -3 + offset : 3])
-            f2 = map_codon.lookup(tri_forward[1 : -2 + offset : 3])
-            f3 = map_codon.lookup(tri_forward[2 : -1 + offset : 3])
-            r1 = map_codon.lookup(tri_reverse[0 : -3 + offset : 3])
-            r2 = map_codon.lookup(tri_reverse[1 : -2 + offset : 3])
-            r3 = map_codon.lookup(tri_reverse[2 : -1 + offset : 3])
+            f1 = map_codon.lookup(tri_forward[0 : -3 + offset : ngram_width])
+            f2 = map_codon.lookup(tri_forward[1 : -2 + offset : ngram_width])
+            f3 = map_codon.lookup(tri_forward[2 : -1 + offset : ngram_width])
+            r1 = map_codon.lookup(tri_reverse[0 : -3 + offset : ngram_width])
+            r2 = map_codon.lookup(tri_reverse[1 : -2 + offset : ngram_width])
+            r3 = map_codon.lookup(tri_reverse[2 : -1 + offset : ngram_width])
 
             if timesteps:
                 f1 = tf.reshape(f1, (num_time, fragsize))
