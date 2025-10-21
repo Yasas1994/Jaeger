@@ -148,7 +148,7 @@ class DynamicModelBuilder:
         models = {}
         # === 1. EMBEDDING ===
         if "embedding" in self.model_cfg:
-            inputs, x = self._build_embedding(self.model_cfg["embedding"])
+            inputs, x = self._build_embedding(self._get_string_processor_config())
             self.inputs = inputs
         else:
             raise ValueError("Missing 'embedding' section in config")
@@ -311,15 +311,26 @@ class DynamicModelBuilder:
         match cfg.get("input_type"):
             case "translated":
                 if embedding_size > 0:
-                    x = tf.keras.layers.Dense(
-                        embedding_size,
-                        name=f"{cfg.get('input_type')}_embedding",
-                        use_bias=False,
-                        kernel_initializer=tf.keras.initializers.Orthogonal(),
-                        kernel_regularizer=self._regularizer.get(
-                    cfg.get("embedding_regularizer"),
-                )(cfg.get("embedding_regularizer_w"))
-                    )(masked_inputs)
+                    if cfg.get("use_embedding_layer", False):
+                        x = tf.keras.layers.Embedding(
+                            input_dim=cfg.get("vocab_size"),
+                            output_dim=embedding_size,
+                            mask_zero=True,
+                            embeddings_regularizer=self._regularizer.get(
+                        cfg.get("embedding_regularizer"),
+                    )(cfg.get("embedding_regularizer_w"))
+                        )(inputs)
+                    else:
+                        x = tf.keras.layers.Dense(
+                            embedding_size,
+                            name=f"{cfg.get('input_type')}_embedding",
+                            use_bias=False,
+                            kernel_initializer=tf.keras.initializers.Orthogonal(),
+                            kernel_regularizer=self._regularizer.get(
+                        cfg.get("embedding_regularizer"),
+                    )(cfg.get("embedding_regularizer_w"))
+                        )(masked_inputs)
+
                 else:
                     x = masked_inputs
 
@@ -651,8 +662,11 @@ class DynamicModelBuilder:
         _config["codon"] = _map.get(_config.get("codon"))
         _config["codon_id"] = _map.get(_config.get("codon_id"))
         _config["codon_depth"] = max(_config.get("codon_id")) + 1
+        _config["vocab_size"]  = max(_config.get("codon_id")) + 1
         _config["ngram_width"] = int(math.log( _config["codon_depth"] , 4))
-
+        _config["seq_onehot"] = _config.get("seq_onehot", False)
+        if _config["seq_onehot"] is False:
+             _config["codon_depth"] = 1
         return _config
 
     def _get_optimizer(self, name, kwargs) -> Any:
@@ -763,6 +777,10 @@ def train_fragment_core(**kwargs):
             padded_shape = {
                 "translated": [
                     6,
+                    None
+                ] if string_processor_config.get("use_embedding_layer") is True else
+                [
+                    6,
                     string_processor_config.get("crop_size") // 3 - 1,
                     string_processor_config.get("codon_depth"),
                 ]
@@ -771,6 +789,7 @@ def train_fragment_core(**kwargs):
             padded_shape = {
                 "nucleotide": [2, string_processor_config.get("crop_size"), 4]
             }
+        ic(padded_shape)
         train_data[k] = (
             _data.map(
                 process_string_train(
@@ -778,6 +797,7 @@ def train_fragment_core(**kwargs):
                     codon_num=string_processor_config.get("codon_id"),
                     codon_depth=string_processor_config.get("codon_depth"),
                     ngram_width=string_processor_config.get("ngram_width"),
+                    seq_onehot=string_processor_config.get("seq_onehot"),
                     crop_size=string_processor_config.get("crop_size"),
                     input_type=string_processor_config.get("input_type"),
                     masking=string_processor_config.get("masking"),
@@ -804,6 +824,8 @@ def train_fragment_core(**kwargs):
         )
     ic(builder.train_cfg.get("classifier_train_steps"))
     ic(builder.train_cfg.get("classifier_epochs"))
+    # for i in train_data["train"].take(1):
+    #     ic(i)
 
     # ============ check if the model has converged ===========
     checkpoint = builder._checkpoints
@@ -874,6 +896,12 @@ def train_fragment_core(**kwargs):
             padded_shape = {
                 "translated": [
                     6,
+                    # string_processor_config.get("crop_size") // 3 - 1,
+                    # string_processor_config.get("codon_depth"),
+                    None
+                ] if string_processor_config.get("use_embedding_layer") is True else
+                [
+                    6,
                     string_processor_config.get("crop_size") // 3 - 1,
                     string_processor_config.get("codon_depth"),
                 ]
@@ -889,6 +917,7 @@ def train_fragment_core(**kwargs):
                     codon_num=string_processor_config.get("codon_id"),
                     codon_depth=string_processor_config.get("codon_depth"),
                     ngram_width=string_processor_config.get("ngram_width"),
+                    seq_onehot=string_processor_config.get("seq_onehot"),
                     crop_size=string_processor_config.get("crop_size"),
                     input_type=string_processor_config.get("input_type"),
                     masking=string_processor_config.get("masking"),

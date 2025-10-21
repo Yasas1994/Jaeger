@@ -59,6 +59,7 @@ def process_string_train(
     label_original=None,
     label_alternative=None,
     class_label_onehot=True,
+    seq_onehot=True,
     num_classes=5,
     crop_size=1024,
     timesteps=False,
@@ -125,7 +126,7 @@ def process_string_train(
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
         outputs = {}
-        if not masking:
+        if masking is False:
             forward_strand = tf.strings.upper(forward_strand)
             reverse_strand = tf.strings.upper(reverse_strand)
         # Nucleotide representation
@@ -157,10 +158,12 @@ def process_string_train(
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=1)
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
-
-            outputs["translated"] = tf.one_hot(
-                seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
-            )
+            if seq_onehot:
+                outputs["translated"] = tf.one_hot(
+                    seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
+                )
+            else:
+                outputs["translated"] = seq + 1
 
         if class_label_onehot:
             label = tf.one_hot(
@@ -182,6 +185,7 @@ def process_string_inference(
     codon_num=CODON_ID,
     codon_depth=64,
     crop_size=1024,
+    seq_onehot=True,
     timesteps=False,
     num_time=None,
     fragsize=200,
@@ -258,9 +262,12 @@ def process_string_inference(
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
 
-            outputs["translated"] = tf.one_hot(
-                seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
-            )
+            if seq_onehot:
+                outputs["translated"] = tf.one_hot(
+                    seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
+                )
+            else:
+                outputs["translated"] = seq + 1
 
         # return outputs, {'classifier': label,
         #                  'reliability': reliability

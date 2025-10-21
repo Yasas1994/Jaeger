@@ -176,6 +176,8 @@ def run_core(**kwargs):
                 codons=string_processor_config.get("codon"),
                 codon_num=string_processor_config.get("codon_id"),
                 codon_depth=string_processor_config.get("codon_depth"),
+                seq_onehot=string_processor_config.get("seq_onehot", True),
+                ngram_width=string_processor_config.get("ngram_width", 3), #for backwards compatability
                 input_type=string_processor_config.get("input_type"),
             ),
             num_parallel_calls=tf.data.AUTOTUNE,
@@ -205,7 +207,7 @@ def run_core(**kwargs):
             fsize=kwargs.get("fsize"),
             term_repeats=term_repeats,
         )
-        print(len(data['headers']))
+        #print(len(data['headers']))
         num_written = write_output(
             data,
             labels=model.class_map.get("class"),
