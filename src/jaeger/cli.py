@@ -607,7 +607,7 @@ def mask(**kwargs):
     help="Path to input file",
 )
 @click.option("-o", "--output", type=str, required=True, help="Path to output file")
-@click.option("--class", type=int, required=True, help="class label")
+@click.option("--class", type=int, required=False, help="class label")
 @click.option(
     "--valperc",
     type=float,
@@ -654,9 +654,29 @@ def mask(**kwargs):
     default=1024,
 )
 @click.option(
+    "--intype",
+    type=click.Choice(["CSV", "FASTA"], 
+    case_sensitive=False),
+    required=True,
+    help="input type",
+    default="CSV",
+)
+@click.option(
+    "--class_col",
+    type=int,
+    required=False,
+    help="csv col with class id",
+)
+@click.option(
+    "--seq_col",
+    type=int, 
+    required=True,
+    help="csv col with sequence",
+)
+@click.option(
     "--outtype",
     type=click.Choice(["CSV", "FASTA"], case_sensitive=False),
-    required=False,
+    required=True,
     help="output type",
     default="CSV",
 )
@@ -678,6 +698,18 @@ def dataset(**kwargs):
     """Generate a non-redundant fragment database from fasta file for training/validating
     fragment models"""
     from jaeger.commands.utils import dataset_core
+
+    intype = kwargs.get("intype", "").upper()
+
+    match intype:
+        case "CSV":
+            if not (kwargs.get("class_col") is not None and kwargs.get("seq_col") is not None):
+                raise click.UsageError("For CSV input, you must specify both --seq_col and --class_col.")
+        case "FASTA":
+            if kwargs.get("class") is None:
+                raise click.UsageError("For FASTA input, you must specify --class.")
+        case _:
+            raise click.UsageError("Invalid input type: must be 'CSV' or 'FASTA'.")
 
     dataset_core(**kwargs)
     pass
