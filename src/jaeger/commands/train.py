@@ -775,13 +775,14 @@ def train_fragment_core(**kwargs):
         _buffer_size = string_processor_config.get("buffer_size")
         if string_processor_config.get("input_type") == "translated":
             padded_shape = {
+                # "translated" : (6, None,string_processor_config.get("codon_depth"))
                 "translated": [
                     6,
                     None
                 ] if string_processor_config.get("use_embedding_layer") is True else
                 [
                     6,
-                    string_processor_config.get("crop_size") // 3 - 1,
+                    None,
                     string_processor_config.get("codon_depth"),
                 ]
             }
