@@ -14,14 +14,15 @@ os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 from jaeger.preprocess.latest.convert import process_string_train
 from jaeger.preprocess.latest.maps import CODONS, CODON_ID, MURPHY10_ID, AA_ID, PC5_ID, DICODONS, DICODON_ID
 import yaml
+import json
 import shutil
 import math
+import random
+from uuid import uuid4
 import tensorflow as tf
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from jaeger.nnlib.v2.layers import (
-    GeLU,
-    ReLU,
     MaskedBatchNorm,
     MaskedConv1D,
     ResidualBlock_wrapper,
@@ -30,11 +31,10 @@ from jaeger.nnlib.v2.layers import (
     TransformerEncoder
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss, HierarchicalLoss
-from jaeger.nnlib.inference import InferModel, evaluate
+from jaeger.utils.logging import get_logger
 from jaeger.nnlib.metrics import PrecisionForClass, RecallForClass, SpecificityForClass
-import logging
 import re
-from jaeger.utils.misc import numerize, load_model_config, AvailableModels
+from jaeger.utils.misc import numerize, load_model_config, clear_directory
 
 # dev
 import numpy as np
@@ -44,45 +44,73 @@ from icecream import ic
 # prevent over writing existing experiments
 # train from last checkpoint
 
-logger = logging.getLogger("Jaeger")
+logger = get_logger(log_file=None, log_path=None, level=3)
 ic.configureOutput(prefix="Jaeger |")
 
+def set_global_seed(seed: int = 42):
+    # 1. Python built-in RNG
+    random.seed(seed)
+
+    # 2. NumPy RNG
+    np.random.seed(seed)
+
+    # 3. TensorFlow RNG (covers TF & Keras)
+    tf.random.set_seed(seed)
+
+    # 4. (Optional) Make some TF behavior more deterministic
+    os.environ["TF_DETERMINISTIC_OPS"] = "1"   # for some GPU ops
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 class DynamicModelBuilder:
     """
     to do: implement feature correlation based out-of-distribution detection
     """
 
-    def __init__(self, config: Dict[str, Any]):
-        self.cfg = config
-        self.model_cfg = config.get("model")
-        self.train_cfg = config.get("training")
-        tf.random.set_seed(self.model_cfg.get("seed"))
-        np.random.seed(self.model_cfg.get("seed"))
-        self.inputs = None
-        self.outputs = list()
-        self.input_shape = self.model_cfg["embedding"].get("input_shape")
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """
+        Orchestrates model building and training from a configuration dict.
+        """
+        # --- core config references ---
+        self.uid: str = uuid4().hex[:8]
+        self.cfg: Dict[str, Any] = config
+        self.model_cfg: Dict[str, Any] = config.get("model", {}) or {}
+        self.train_cfg: Dict[str, Any] = config.get("training", {}) or {}
+
+        # --- model input / output bookkeeping ---
+        self.inputs: Optional[tf.Tensor] = None
+        self.outputs: list[tf.Tensor] = []
+
+        embedding_cfg = self.model_cfg.get("embedding", {}) or {}
+        self.input_shape = embedding_cfg.get("input_shape")
+
+        # --- data paths ---
         self._fragment_paths = self._get_fragment_paths()
         self._contig_paths = self._get_contig_paths()
         self._reliability_fragment_paths = self._get_reliability_fragment_paths()
         self._reliability_contig_paths = self._get_reliability_contig_paths()
-        ic(self._fragment_paths)
-        # ic(self._reliability_fragment_paths)
+
+        # --- saving / checkpoints / run control ---
         self._saving_config = self._get_model_saving_configuration()
-        ic(config.get("from_last_checkpoint"))
-        self._from_last_checkpoint = config.get("from_last_checkpoint")
-        self.classifier_out_dim = self.model_cfg.get("classifier_out_dim")
-        self.reliability_out_dim = self.model_cfg.get("reliability_out_dim")
+        self._from_last_checkpoint: bool = bool(config.get("from_last_checkpoint", False))
+        self._force: bool = bool(config.get("force", False))
+        self._checkpoints: Dict[str, Path] = {}
+
+        # --- output dimensions ---
+        self.classifier_out_dim: int = int(self.model_cfg.get("classifier_out_dim", 0))
+        self.reliability_out_dim: int = int(self.model_cfg.get("reliability_out_dim", 0))
+
+        # --- losses & metrics (populated later) ---
         self.loss_classifier = None
         self.loss_reliability = None
-        self.metrics_classifier = []
-        self.metrics_reliability = []
-        self._checkpoints = dict()
-        self._load_training_params()
+        self.metrics_classifier: list[Any] = []
+        self.metrics_reliability: list[Any] = []
+
+        # --- registries for regularizers and layers ---
         self._regularizer = {
             "l2": tf.keras.regularizers.L2,
             "l1": tf.keras.regularizers.L1,
         }
+
         self._layers = {
             "masked_conv1d": MaskedConv1D,
             "conv1d": tf.keras.layers.Conv1D,
@@ -92,30 +120,55 @@ class DynamicModelBuilder:
             "residual_block": ResidualBlock_wrapper,
             "dense": tf.keras.layers.Dense,
             "activation": tf.keras.layers.Activation,
-            "dropout": tf.keras.layers.Dropout
-
+            "dropout": tf.keras.layers.Dropout,
+            "crop": tf.keras.layers.Cropping2D,
         }
-        # self._activations = {
-        #     "gelu": GeLU,
-        #     "relu": ReLU,
-        # }
-        cb_list = config["training"].get("callbacks", dict())
-        for p in cb_list.get("directories"):
-            p = Path(p)
-            if p.exists() and not self._from_last_checkpoint:
-                ic(f"removing the old found checkpoint at {p}")
-                ic(
-                    "set --from_last_checkpoint flag to continue training from the last checkpoint"
-                )
-                shutil.rmtree(p)
-            elif p.exists() and self._from_last_checkpoint:
-                # None is not available
-                self._checkpoints[p.name] = self.get_latest_h5_with_metadata(p)
 
-            p.mkdir(parents=True, exist_ok=True)
-        ic(self._checkpoints)
+        # --- training-specific initialization ---
+        self._load_training_params()
+        self._prepare_checkpoint_dirs()
+       
+    def _prepare_checkpoint_dirs(self, config: dict = None) -> None:
+        if not config:
+            config = self.cfg
+        callbacks_cfg = config.get("training", {}).get("callbacks", {})
+        directories = callbacks_cfg.get("directories", []) or []
 
+        should_exit = False
 
+        for dir_str in directories:
+            path = Path(dir_str)
+
+            if path.exists():
+                if self._from_last_checkpoint:
+                    # load from last checkpoint
+                    self._checkpoints[path.name] = self.get_latest_h5_with_metadata(path)
+
+                elif self._force:
+                    # delete existing checkpoints and start fresh
+                    shutil.rmtree(path)
+
+                else:
+                    # existing checkpoints, but user didn't ask to resume or force
+                    logger.warning(
+                        "Checkpoint(s) exist at %s. "
+                        "Use --force to delete the existing checkpoints and continue!",
+                        path,
+                    )
+                    logger.info(
+                        "Or set --from_last_checkpoint to continue training "
+                        "from the last checkpoint."
+                    )
+                    should_exit = True
+                    # don't mkdir yet; user must decide what to do
+                    continue
+
+            # ensure directory exists (fresh or after delete, or for new paths)
+            path.mkdir(parents=True, exist_ok=True)
+
+        if should_exit:
+            exit(1)
+    
     def get_latest_h5_with_metadata(
         self,
         path: str | Path,
@@ -167,7 +220,7 @@ class DynamicModelBuilder:
         # === 3. PRETRAINING ==
         if "projection" in self.model_cfg:
             input_shape = (
-                self.model_cfg["representation_learner"].get("block_filters")[-1],
+                self.model_cfg["projection"].get("input_shape"),
             )
             inputs = tf.keras.Input(shape=input_shape, name="projection_input")
             x_projection = self._build_block(
@@ -176,8 +229,8 @@ class DynamicModelBuilder:
             models["projection_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_projection, name="projection_head"
             )
-            num_class = self.num_class
-            projection_dim = self.model_cfg["projection"]["hidden_layers"][-1]["units"]
+
+            projection_dim = self.model_cfg["projection"]["hidden_layers"][-2]["config"].get("units")
 
             # combine with the representation learner
             x = models["rep_model"].output[0]
@@ -186,12 +239,12 @@ class DynamicModelBuilder:
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_projection"
             )
             # define arcface loss model
-            labels = tf.keras.Input(shape=(num_class,), name="labels")
+            labels = tf.keras.Input(shape=(self.classifier_out_dim,), name="labels")
             embeddings = tf.keras.Input(
                 shape=(projection_dim,), name="embedding"
             )  # output of the projection head
             loss = ArcFaceLoss(
-                num_classes=num_class,
+                num_classes=self.classifier_out_dim,
                 embedding_dim=projection_dim,
                 margin=self.model_cfg["projection"]["margin"],
                 scale=self.model_cfg["projection"]["scale"],
@@ -207,7 +260,6 @@ class DynamicModelBuilder:
                 self.model_cfg["classifier"].get("input_shape"),
             )
             inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
-            ic(inputs)
             x_classifier = self._build_block(
                 inputs, 
                 self.model_cfg["classifier"], 
@@ -229,7 +281,7 @@ class DynamicModelBuilder:
                 models["jaeger_classifier"].load_weights(
                     self._checkpoints.get("classifier").get("path")
                 )
-                ic(
+                logger.info(
                     f"Loaded classification model weights from {self._checkpoints.get('classifier').get('path')}"
                 )
 
@@ -253,15 +305,23 @@ class DynamicModelBuilder:
             models["jaeger_reliability"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_reliability"
             )
-
-            if self._checkpoints.get("reliability", {}).get("path", False):
-                # loads weights from the last checkpoint
+            try:
+                if self._checkpoints.get("reliability", {}).get("path", False):
+                    # loads weights from the last checkpoint
+                    models["jaeger_reliability"].load_weights(
+                        self._checkpoints.get("reliability").get("path")
+                    )
+                    logger.info(
+                        f"Loaded reliability model weights from {self._checkpoints.get('reliability').get('path')}"
+                    )
+            except Exception:
+                logger.warning("cound not load the weights to reliability model from checkpoint. trying to load weights partially")
                 models["jaeger_reliability"].load_weights(
-                    self._checkpoints.get("reliability").get("path")
-                )
-                ic(
-                    f"Loaded reliability model weights from {self._checkpoints.get('reliability').get('path')}"
-                )
+                        self._checkpoints.get("reliability").get("path"),
+                        skip_mismatch = True,
+                    )
+                self._checkpoints["reliability"] = {"path": None, "epoch": 0, "loss": None, "is_converged": False}
+
         # ==== 5. COMBINED MODEL ====
         rep_out = models["rep_model"].output
         if isinstance(rep_out, tuple):
@@ -283,7 +343,7 @@ class DynamicModelBuilder:
                     outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
                     name="Jaeger_model",
                 )
-        ic(models)
+        #ic(models)
 
         return models
 
@@ -316,6 +376,7 @@ class DynamicModelBuilder:
                             input_dim=cfg.get("vocab_size"),
                             output_dim=embedding_size,
                             mask_zero=True,
+                            embeddings_initializer=tf.keras.initializers.Orthogonal(),
                             embeddings_regularizer=self._regularizer.get(
                         cfg.get("embedding_regularizer"),
                     )(cfg.get("embedding_regularizer_w"))
@@ -359,12 +420,10 @@ class DynamicModelBuilder:
         def _sigmoid(f:Dict):
             n, p = f.values()
             t = p / (p + n)
-            ic(np.log(t / (1-t)))
             return np.log(t / (1-t))
         
         def _softmax(f:Dict):
             f = np.array(list(f.values()))
-            ic(np.log(f/np.sum(f)))
             return np.log(f/np.sum(f))
 
 
@@ -485,7 +544,7 @@ class DynamicModelBuilder:
             "per_class_specificity": SpecificityForClass
 
         }
-        ic(config)
+
         for c in config:
             if "per_class_" not in c.get("name"):
                 if c.get("params") is not None:
@@ -508,9 +567,6 @@ class DynamicModelBuilder:
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
-        ic(self.optimizer)
-        ic(opt_params)
-        ic(opt_name)
         loss_classifier_name = self.train_cfg.get(
             "loss_classifier", "categorical_crossentropy"
         ).lower()
@@ -537,9 +593,6 @@ class DynamicModelBuilder:
         else:    
             self.metrics_reliability = self._get_default_metrics(branch="reliability")
         
-        ic(self.loss_reliability)
-        ic(self.metrics_classifier)
-        ic(self.metrics_reliability)
 
     def _get_default_metrics(self, branch):
         match branch:
@@ -548,7 +601,6 @@ class DynamicModelBuilder:
             case "reliability":
                 return [tf.keras.metrics.AUC(name="auc", from_logits=True),
                         tf.keras.metrics.BinaryAccuracy(name="acc")]
-
 
     def compile_model(self, model, train_branch="classifier"):
         """
@@ -564,7 +616,7 @@ class DynamicModelBuilder:
                 loss_fn=model.get("arcface_loss"),
                 run_eagerly=True,
             )
-            ic(f"model compiled for {train_branch}")
+            logger.info(f"model compiled for {train_branch}")
 
         elif train_branch == "classifier":
             model.get("rep_model").trainable = True
@@ -573,7 +625,7 @@ class DynamicModelBuilder:
                 loss=self.loss_classifier,
                 metrics=self.metrics_classifier,
             )
-            ic(f"model compiled for {train_branch}")
+            logger.info(f"model compiled for {train_branch}")
 
         elif train_branch == "reliability":
             # Freeze classifier and representation learner
@@ -589,48 +641,52 @@ class DynamicModelBuilder:
                 "train_branch must be 'pretrain', 'classifier' or 'reliability'"
             )
 
-    def save_model(self, model, suffix=None):
+    def save_model(self, model, num_params=None, suffix=None, metadata=None):
         """
-        saves models (graph, weights or both) to the output directory
+        saves models (graph, weights, classes and project configh) to the model directory of the train output.
         """
+
+
         path = Path(self._saving_config.get("path"))
         path.mkdir(parents=True, exist_ok=True)
+        metadata = Path(metadata).resolve()
+        if metadata:
+            metadata.write_text(json.dumps({"model_path" : str(path),
+                                            'experiment_path': str(path.parent),
+                                            } , 
+                                           indent=2))
+        if any(path.iterdir()):
+            logger.warning(f"{path} is not empty. deleting existing files!")
+            clear_directory(path=path)
+
         model_name = self.model_cfg.get("name")
-        if suffix:
-            model_name += f"_{suffix}"
+
+        model_name += f"{'_' + self.uid}{'_' + num_params if num_params else ''}{'_' + suffix if suffix else ''}"
+
+        # with open(path / f"{model_name}_project.yaml", "w+") as yaml_file:
+        #     ic("saving project config")
+        #     yaml.dump(self.cfg, yaml_file, default_flow_style=False)
 
         if self._saving_config.get("save_weights"):
             model.save_weights(path / f"{model_name}.weights.h5")
-            ic(f"model weights are written to {path / f'{model_name}.weights.h5'}")
+            logger.info(f"model weights are written to {path / f'{model_name}.weights.h5'}")
 
         if self._saving_config.get("save_exec_graph"):
             # this way, you don't need the model configuration to rebuild the model
             tf.saved_model.save(model, path / f"{model_name}_graph")
-            ic(
+            logger.info(
                 f"model computational graph is written to {path / f'{model_name}_graph'}"
             )
         # save output indices -> class mapping in the same directory
         with open(path / f"{model_name}_classes.yaml", "w") as yaml_file:
-            ic("writing class_labels_map")
+            logger.info("writing class_labels_map")
             yaml.dump(
                 dict(classes=self.model_cfg.get("class_label_map")),
                 yaml_file,
                 default_flow_style=False,
             )
 
-    def save_config(self, suffix=None):
-        """
-        saves project config to the model output directory
-        """
-        path = Path(self._saving_config.get("path"))
-        model_name = self.model_cfg.get("name")
-
-        if suffix:
-            model_name += f"_{suffix}"
-
-        with open(path / f"{model_name}_project.yaml", "w+") as yaml_file:
-            ic("saving project config")
-            yaml.dump(self.cfg, yaml_file, default_flow_style=False)
+        shutil.copy(self.cfg.get('config_path'), path /  f"{model_name}_project.yaml")
 
     def get_callbacks(self, branch="classifier") -> List:
         cb_list = self.train_cfg.get("callbacks", dict())
@@ -663,7 +719,7 @@ class DynamicModelBuilder:
         _config["codon_id"] = _map.get(_config.get("codon_id"))
         _config["codon_depth"] = max(_config.get("codon_id")) + 1
         _config["vocab_size"]  = max(_config.get("codon_id")) + 1
-        _config["ngram_width"] = int(math.log( _config["codon_depth"] , 4))
+        _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
         _config["seq_onehot"] = _config.get("seq_onehot", False)
         if _config["seq_onehot"] is False:
              _config["codon_depth"] = 1
@@ -694,7 +750,7 @@ class DynamicModelBuilder:
             "mse": tf.keras.losses.MeanSquaredError,
             "hierachical_loss" : HierarchicalLoss
         }
-        ic(kwargs)
+
         return losses[name](**kwargs)
 
     def _get_paths(self, key: str) -> Dict:
@@ -732,7 +788,6 @@ class DynamicModelBuilder:
     def _get_reliability_contig_paths(self) -> Dict:
         return self._get_paths("contig_reliability_data")
 
-
 def train_fragment_core(**kwargs):
     """
     trains fragment classification model and reliability prediction model.
@@ -742,22 +797,23 @@ def train_fragment_core(**kwargs):
 
     # with strategy.scope():
 
-    ic(kwargs.get("config"))
-    ic(kwargs.get("from_last_checkpoint"))
+    #ic(kwargs.get("config"))
+    #ic(kwargs.get("from_last_checkpoint"))
     config = load_model_config(Path(kwargs.get("config")))
     config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
+    config["force"] = kwargs.get("force")
+    
     # Initialize the model
     builder = DynamicModelBuilder(config)
     models = builder.build_fragment_classifier()
     models.get("rep_model").summary()
     model_num_params = numerize(models.get("rep_model").count_params(), decimal=1)
-    ic(model_num_params)
 
     # =================train classifier ======================
     builder.compile_model(models, train_branch="classifier")
 
-    for i in models.get("jaeger_classifier").layers:
-        ic(i.name, i.trainable)
+    # for i in models.get("jaeger_classifier").layers:
+    #     ic(i.name, i.trainable)
 
     # =================load train data ======================
     string_processor_config = builder._get_string_processor_config()
@@ -768,7 +824,6 @@ def train_fragment_core(**kwargs):
     # reliability_train_steps: -1 # -1 to run till the generator exhausts
 
     for k, v in _train_data.items():
-        ic(k, v)
         _data = tf.data.TextLineDataset(
             v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
         )
@@ -790,7 +845,6 @@ def train_fragment_core(**kwargs):
             padded_shape = {
                 "nucleotide": [2, string_processor_config.get("crop_size"), 4]
             }
-        ic(padded_shape)
         train_data[k] = (
             _data.map(
                 process_string_train(
@@ -823,8 +877,6 @@ def train_fragment_core(**kwargs):
             )
             .prefetch(tf.data.AUTOTUNE)
         )
-    ic(builder.train_cfg.get("classifier_train_steps"))
-    ic(builder.train_cfg.get("classifier_epochs"))
     # for i in train_data["train"].take(1):
     #     ic(i)
 
@@ -857,7 +909,7 @@ def train_fragment_core(**kwargs):
             if kwargs.get("self_supervised_pretraining", False):
                 builder.compile_model(models, train_branch="pretrain")
                 models.get("jaeger_projection").summary()
-                self_suoervised_train_args = {
+                self_supervised_train_args = {
                     "validation_data": train_data.get("validation").take(
                         builder.train_cfg.get("classifier_validation_steps")
                     ),
@@ -868,7 +920,7 @@ def train_fragment_core(**kwargs):
                     train_data.get("train").take(
                         builder.train_cfg.get("classifier_train_steps")
                     ),
-                    **self_suoervised_train_args,
+                    **self_supervised_train_args,
                 )
             # ============== train the classification model ==========================
             models.get("jaeger_classifier").fit(
@@ -876,16 +928,16 @@ def train_fragment_core(**kwargs):
                     builder.train_cfg.get("classifier_train_steps"),
                 
                 ),
-                class_weight = builder.train_cfg.get("class_weights"),
+                class_weight = builder.train_cfg.get("classifier_class_weights"),
                 **train_args,
             )
         else:
-            ic("Skipping training — classification model")
+            logger.info("Skipping training — classification model")
 
     # ============== reliability model ========================
     builder.compile_model(models, train_branch="reliability")
-    for i in models.get("jaeger_reliability").layers:
-        ic(i.name, i.trainable)
+    # for i in models.get("jaeger_reliability").layers:
+    #     ic(i.name, i.trainable)
 
     _rel_train_data = builder._get_reliability_fragment_paths()
     rel_train_data = {"train": None, "validation": None}
@@ -947,7 +999,7 @@ def train_fragment_core(**kwargs):
         "is_converged", False
     )
     if kwargs.get("only_save", False) is False:
-        ic(kwargs.get("only_save", False))
+        #ic(kwargs.get("only_save", False))
         if (not converged and not kwargs.get("only_classification_head", False)):
             train_args = {
                 "validation_data": rel_train_data.get("validation").take(
@@ -966,13 +1018,14 @@ def train_fragment_core(**kwargs):
                 rel_train_data.get("train").take(
                     builder.train_cfg.get("reliability_train_steps")
                 ),
+                class_weight = builder.train_cfg.get("reliability_class_weights"),
                 **train_args,
             )
         else:
-            ic("Skipping training — reliability model")
+            logger.info("Skipping training — reliability model")
 
     # ============= test final model =========================
-    ic("testing the final model")
+    logger.info("testing the final model")
 
     models.get("jaeger_model").trainable = False
     models.get("jaeger_classifier").evaluate(
@@ -981,32 +1034,20 @@ def train_fragment_core(**kwargs):
         )
     )
 
-    predictions = models.get("jaeger_model").predict(
+    models.get("jaeger_model").predict(
         train_data.get("validation").take(
             100
         )
     )
-    ic(predictions)
-    ic(predictions.keys())
+
     # ============= saving ===================================
+    # saving model graph, weights, class map and train config
     builder.save_model(
-        model=models.get("jaeger_model"), suffix=f"{model_num_params}_fragment"
+        model=models.get("jaeger_model"), 
+        num_params=model_num_params,
+        suffix="fragment", # use _fragment or contig
+        metadata=kwargs.get("meta", None)
     )
-    builder.save_config(suffix=f"{model_num_params}_fragment")
-
-    # ============= load saved model and infer ===============================
-    # model_paths = AvailableModels(path=builder._saving_config.get("path"))
-    # ic(model_paths.info)
-    # mname_ = list(model_paths.info.keys())[0]
-    # model = InferModel(model_paths.info.get(mname_))
-    # ic(
-    #     model.evaluate(
-    #         train_data.get("validation").take(
-    #             builder.train_cfg.get("classifier_validation_steps")
-    #         )
-    #     )
-    # )
-
 
 # def train_contig_core(**kwargs):
 #     """
