@@ -19,22 +19,33 @@ from jaeger.utils.termini import scan_for_terminal_repeats
 from jaeger.utils.fs import validate_fasta_entries
 from jaeger.utils.misc import json_to_dict, AvailableModels, get_model_id
 from jaeger.utils.logging import description, get_logger
-from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
+# from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
 GB_BYTES = 1024**3
 
 
 def run_core(**kwargs):
     current_process = psutil.Process()
-    MODEL = kwargs.get("model")
-    MODEL_ID = get_model_id(MODEL)
-    DATA_PATH = files("jaeger.data")
-    if kwargs.get("config") is None:
-        CONFIG_PATH = DATA_PATH / "config.json"
-    else:
-        CONFIG_PATH = kwargs.get("config")
+    
+    USER_MODEL_PATH = kwargs.get("model_path")
+    CONFIG_PATH = kwargs.get("config") or files("jaeger.data") / "config.json"
 
-    USER_MODEL_PATHS = json_to_dict(CONFIG_PATH).get("model_paths")
-    MODEL_INFO = AvailableModels(path=USER_MODEL_PATHS).info[MODEL]
+    if not USER_MODEL_PATH:
+        # Use default model from config
+        model_name = kwargs.get("model")
+        model_id = get_model_id(model_name)
+
+        model_paths = json_to_dict(CONFIG_PATH).get("model_paths")
+        info = AvailableModels(path=model_paths).info
+
+        model_info = info[model_name]
+    else:
+        # Use provided model path
+        info = AvailableModels(path=USER_MODEL_PATH).info
+        model_paths = USER_MODEL_PATH
+        model_name = next(iter(info))
+        model_id = get_model_id(model_name)
+        model_info = info[model_name]
+
     MEMORY_LIMIT = 1024 * kwargs.get("mem", 4)
     THREADS = kwargs.get("workers")
     input_file_path = Path(kwargs.get("input"))
@@ -42,7 +53,7 @@ def run_core(**kwargs):
     file_base = input_file_path.stem
     # INPUT_FILE_MASKED = input_file_path.with_name(file_base + "_masked" + input_file_path.suffix)
 
-    OUTPUT_DIR = Path(kwargs.get("output")) / MODEL_ID
+    OUTPUT_DIR = Path(kwargs.get("output")) / model_id
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     # CHUNKS_DIR = OUTPUT_DIR / "chunks"
     # MAKSED_DIR = OUTPUT_DIR / "masked"
@@ -52,9 +63,8 @@ def run_core(**kwargs):
     logger.info(
         description(version("jaeger-bio")) + "\n{:-^80}".format("validating parameters")
     )
-    logger.debug(DATA_PATH)
-    logger.debug(AvailableModels(path=USER_MODEL_PATHS).info)
-    logger.debug(MODEL_INFO)
+    logger.debug(info)
+    logger.debug(model_info)
     try:
         num = validate_fasta_entries(str(input_file_path), min_len=kwargs.get("fsize"))
     except Exception as e:
@@ -71,8 +81,8 @@ def run_core(**kwargs):
         )
         sys.exit(1)
 
-    if not MODEL_INFO["graph"].exists():
-        logger.error(f"could not find model graph. please check {USER_MODEL_PATHS}")
+    if not model_info["graph"].exists():
+        logger.error(f"could not find model graph. please check {model_paths}")
         sys.exit(1)
     tf.config.threading.set_inter_op_parallelism_threads(THREADS)
     tf.config.threading.set_intra_op_parallelism_threads(THREADS)
@@ -113,6 +123,7 @@ def run_core(**kwargs):
     logger.info(f"stride: {kwargs.get('stride')}")
     logger.info(f"batch size: {kwargs.get('batch')}")
     logger.info(f"mode: {mode}")
+    logger.info(f"model: {model_id}")
     logger.info(f"avail mem: {psutil.virtual_memory().available / (GB_BYTES):.2f}GB")
     logger.info(f"intra threads: {tf.config.threading.get_intra_op_parallelism_threads()}")
     logger.info(f"inter threads: {tf.config.threading.get_inter_op_parallelism_threads()}")
@@ -153,7 +164,7 @@ def run_core(**kwargs):
         fsize=kwargs.get("fsize"),
     )
 
-    model = InferModel(MODEL_INFO)
+    model = InferModel(model_info)
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
         fragment_generator(
@@ -168,17 +179,22 @@ def run_core(**kwargs):
     )
 
     from jaeger.preprocess.latest.convert import process_string_inference
-
+    #from icecream import ic
+    #ic(string_processor_config)
     idataset = (
         input_dataset.map(
             process_string_inference(
-                crop_size=kwargs.get("fsize"),
-                codons=string_processor_config.get("codon"),
-                codon_num=string_processor_config.get("codon_id"),
-                codon_depth=string_processor_config.get("codon_depth"),
-                seq_onehot=string_processor_config.get("seq_onehot", True),
-                ngram_width=string_processor_config.get("ngram_width", 3), #for backwards compatability
-                input_type=string_processor_config.get("input_type"),
+                    codons=string_processor_config.get("codon"),
+                    codon_num=string_processor_config.get("codon_id"),
+                    codon_depth=string_processor_config.get("codon_depth"),
+                    ngram_width=string_processor_config.get("ngram_width"),
+                    seq_onehot=string_processor_config.get("seq_onehot"),
+                    crop_size=string_processor_config.get("crop_size"),
+                    input_type=string_processor_config.get("input_type"),
+                    masking=string_processor_config.get("masking"),
+                    mutate=string_processor_config.get("mutate"),
+                    mutation_rate=string_processor_config.get("mutation_rate"),
+                    shuffle=string_processor_config.get("shuffle"),
             ),
             num_parallel_calls=tf.data.AUTOTUNE,
         )
