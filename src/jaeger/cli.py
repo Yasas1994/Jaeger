@@ -56,7 +56,7 @@ def test(**kwargs):
     test_core(**kwargs)
 
 
-@click.command()
+@click.command(context_settings={'show_default': True})
 @click.option(
     "-i",
     "--input",
@@ -70,14 +70,14 @@ def test(**kwargs):
 @click.option(
     "--fsize",
     type=int,
-    default=2048,
-    help="Length of the sliding window (value must be 2^n). Default: 2048",
+    default=2000,
+    help="Length of the sliding window",
 )
 @click.option(
     "--stride",
     type=int,
-    default=2048,
-    help="Stride of the sliding window. Default: 2048 (stride==fsize)",
+    default=2000,
+    help="The gap between two the sliding windows (stride==fsize)",
 )
 @click.option(
     "-m",
@@ -85,8 +85,14 @@ def test(**kwargs):
     default="default",
     help=(
         f"Select a deep-learning model to use. "
-        f"Default: 'default'. "
         f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
+    ),
+)
+@click.option(
+    "--model_path",
+    default=None,
+    help=(
+        "Give the path to a model. overrides --model"
     ),
 )
 @click.option(
@@ -98,41 +104,41 @@ def test(**kwargs):
     "-p",
     "--prophage",
     is_flag=True,
-    help="Extract and report prophage-like regions. Default: False",
+    help="Extract and report prophage-like regions",
 )
 @click.option(
     "-s",
     "--sensitivity",
     type=float,
     default=1.5,
-    help="Sensitivity of the prophage extraction algorithm (0-4). Default: 1.5",
+    help="Sensitivity of the prophage extraction algorithm (0-4)",
 )
 @click.option(
     "--lc",
     type=int,
     default=500_000,
-    help="Minimum contig length for prophage extraction. Default: 500000 bp",
+    help="Minimum contig length for prophage extraction",
 )
 @click.option(
     "--rc",
     type=float,
     default=0.1,
-    help="Minimum reliability score required to accept predictions. Default: 0.1",
+    help="Minimum reliability score required to accept predictions",
 )
 @click.option(
     "--pc",
     type=int,
     default=3,
-    help="Minimum phage score required to accept predictions. Default: 3",
+    help="Minimum phage score required to accept predictions",
 )
 @click.option(
     "--batch",
     type=int,
     default=96,
-    help="Parallel batch size, lower if GPU runs out of memory. Default: 96",
+    help="Parallel batch size, lower if GPU runs out of memory",
 )
 @click.option(
-    "--workers", type=int, default=4, help="Number of threads to use. Default: 4"
+    "--workers", type=int, default=4, help="Number of threads to use"
 )
 @click.option(
     "--getalllogits", is_flag=True, help="Writes window-wise scores to a .npy file"
@@ -145,45 +151,47 @@ def test(**kwargs):
 @click.option(
     "--cpu",
     is_flag=True,
-    help="Ignore available GPUs and explicitly run on CPU. Default: False",
+    help="Ignore available GPUs and explicitly run on CPU",
 )
 @click.option(
     "--physicalid",
     type=int,
     default=0,
-    help="Set default GPU device ID for multi-GPU systems. Default: 0",
+    help="Set default GPU device ID for multi-GPU systems",
 )
 @click.option(
     "--mem",
     type=int,
     default=4,
-    help="GPU memory limit: Default: 4G",
+    help="GPU memory limit",
 )
 @click.option(
     "--getalllabels",
     is_flag=True,
-    help="Get predicted labels for Non-Viral contigs. Default: False",
+    help="Get predicted labels for Non-Viral contigs",
 )
 @click.option(
     "-v",
     "--verbose",
     count=True,
-    help="Verbosity level: -vv debug, -v info (default: info)",
+    help="Verbosity level: -vv debug, -v info",
     default=1,
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing files")
 def predict(**kwargs):
     model = kwargs.get("model")
-    if kwargs.get("config") is None:
-        if model is None:
-            model = "default"
-        elif model not in AVAIL_MODELS:
-            raise click.BadParameter(
-                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
-            )
+    model_path = kwargs.get("model_path")
+    config = kwargs.get("config")
+
+    if model_path:
+        model = "from_path"
     else:
         if model is None:
             model = "default"
+        elif config is None and model not in AVAIL_MODELS:
+            raise click.BadParameter(
+                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
+            )
 
     """Run jaeger inference pipeline."""
     if model == "default":
@@ -196,7 +204,7 @@ def predict(**kwargs):
         run_core(**kwargs)
 
 
-@click.command()
+@click.command(context_settings={'show_default': True})
 @click.option(
     "-c",
     "--config",
@@ -225,7 +233,7 @@ def tune(**kwargs):
     tune_core(**kwargs)
 
 
-@click.command()
+@click.command(context_settings={'show_default': True})
 @click.option(
     "-c",
     "--config",
@@ -267,16 +275,31 @@ def tune(**kwargs):
     help="continue training from the last checkpoints",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    required=False,
+    help="delete existing checkpoints and continue",
+)
+@click.option(
     "--only_save",
     is_flag=True,
     required=False,
     help="save the model with weights from last checkpoints without training",
 )
 @click.option(
+    "--meta",
+    type=click.Path(
+        exists=False,
+        file_okay=False,
+    ),
+    required=False,
+    help="Path to write metadata from the container",
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
-    help="Verbosity level: -vv debug, -v info (default: info)",
+    help="Verbosity level: -vv debug, -v info",
     default=1,
 )
 def train(**kwargs):
@@ -314,14 +337,20 @@ def train(**kwargs):
     # Check mutual exclusivity
     if len(selected) > 1:
         raise click.UsageError(
-            f"Options {', '.join('--' + flag for flag in selected)} are mutually exclusive. Please specify only one."
+            f"{', '.join('--' + flag for flag in selected)} are mutually exclusive. Please specify only one."
         )
+    
+    if kwargs.get("from_last_checkpoint") and kwargs.get("force"):
+        raise click.UsageError(
+            "--from_last_checkpoint and --force are mutually exclusive. Please specify only one."
+        )
+
     from jaeger.commands.train import train_fragment_core
 
     train_fragment_core(**kwargs)
 
 
-@click.command()
+@click.command(context_settings={'show_default': True})
 @click.option(
     "-p",
     "--path",
@@ -334,13 +363,13 @@ def train(**kwargs):
     "--config",
     type=str,
     required=False,
-    help="Path to jager config file (Apptainer or Docker)",
+    help="Path to jager config file (usefule when using Apptainer or Docker)",
 )
 @click.option(
     "-v",
     "--verbose",
     count=True,
-    help="Verbosity level: -vv debug, -v info (default: info)",
+    help="Verbosity level: -vv debug, -v info",
     default=1,
 )
 def register_models(**kwargs):
@@ -356,7 +385,7 @@ def register_models(**kwargs):
     add_data_to_json(path, str(model_path), list_key="model_paths")
 
 
-@click.command()
+@click.command(context_settings={'show_default': True})
 @click.option(
     "-p",
     "--path",
@@ -369,10 +398,12 @@ def register_models(**kwargs):
     "--config",
     type=str,
     required=False,
-    help="Path to jager config file (Apptainer or Docker)",
+    help="Path to jager config file (useful when using Apptainer or Docker)",
 )
 @click.option(
-    "-m", "--model", "model_name", required=False, help="Name of the model to download"
+    "-m", "--model",
+    required=False,
+    help="identifier of the model to download"
 )
 @click.option(
     "-l",
@@ -386,7 +417,7 @@ def register_models(**kwargs):
     "-v",
     "--verbose",
     count=True,
-    help="Verbosity level: -vv debug, -v info (default: info)",
+    help="Verbosity level: -vv debug, -v info",
     default=1,
 )
 def download(path, model_name, list_models, **kwargs):
@@ -448,7 +479,7 @@ def utils(obj):
 
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
             Shuffles input DNA sequences in .fasta or .txt files to generate
             negative train (validation or train) sets for training (testing)
@@ -491,7 +522,7 @@ def shuffle(**kwargs):
 
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
             Simulate a metagenome assembly from contigs/genomes given fragment size range.
 
@@ -524,7 +555,7 @@ def fragment(**kwargs):
 
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
             Gradually mask or mutate random positions in a given fasta file.
 
@@ -552,14 +583,14 @@ def fragment(**kwargs):
     "--minperc",
     type=float,
     required=False,
-    help="min percentage of positions to mask",
+    help="min percentage of positions to mask (0.0)",
     default=0.0,
 )
 @click.option(
     "--maxperc",
     type=float,
     required=False,
-    help="maxp percentage of positions to mask",
+    help="max percentage of positions to mask (1.0)",
     default=1.0,
 )
 @click.option(
@@ -580,14 +611,14 @@ def mask(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import mask_core
 
-    if kwargs.get('maxperc') > kwargs.get('minperc'):
+    if kwargs.get('maxperc') < kwargs.get('minperc'):
         raise click.BadParameter("maxperc can not be lower than minperc")
 
     mask_core(**kwargs)
 
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
             Generate a non-redundant fragment database from fasta file for training/validating
             fragment models
@@ -715,7 +746,7 @@ def dataset(**kwargs):
     pass
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
             Convert training data between CSV and FASTA formats
 
@@ -748,7 +779,7 @@ def convert(**kwargs):
     pass
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""Combine multiple model graphs into an ensemble model. Outputs can be summarized with majority voting,
             sum or mean of logits of each model
 
@@ -785,7 +816,7 @@ def combine_models(**kwargs):
     combine_models_core(**kwargs)
 
 @utils.command(
-    context_settings=dict(ignore_unknown_options=True),
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
             Calculate stats from Jaeger output
 
@@ -858,13 +889,13 @@ def taxonomy(obj):
     "--fsize",
     type=int,
     default=2048,
-    help="Length of the sliding window (value must be 2^n). Default: 2048",
+    help="Length of the sliding window",
 )
 @click.option(
     "--stride",
     type=int,
     default=2048,
-    help="Stride of the sliding window. Default: 2048 (stride==fsize)",
+    help="The length of the gap between two sliding windows (stride==fsize)",
 )
 @click.option(
     "-m",
@@ -872,52 +903,58 @@ def taxonomy(obj):
     default="default",
     help=(
         f"Select a deep-learning model to use. "
-        f"Default: 'default'. "
         f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
+    ),
+)
+@click.option(
+    "--model_path",
+    default=None,
+    help=(
+        "Give the path to a model. overrides --model"
     ),
 )
 @click.option(
     "--config",
     type=click.Path(exists=True),
-    help="Path to Jaeger config file (e.g., when using Apptainer or Docker)",
+    help="Path to Jaeger config file (useful when using Apptainer or Docker)",
 )
 @click.option(
     "--rc",
     type=float,
     default=0.1,
-    help="Minimum reliability score required to accept predictions. Default: 0.1",
+    help="Minimum reliability score required to accept predictions",
 )
 @click.option(
     "--batch",
     type=int,
     default=96,
-    help="Parallel batch size, lower if GPU runs out of memory. Default: 96",
+    help="Parallel batch size, lower if GPU runs out of memory",
 )
 @click.option(
-    "--workers", type=int, default=4, help="Number of threads to use. Default: 4"
+    "--workers", type=int, default=4, help="Number of threads to use"
 )
 @click.option(
     "--cpu",
     is_flag=True,
-    help="Ignore available GPUs and explicitly run on CPU. Default: False",
+    help="Ignore available GPUs and explicitly run on CPU",
 )
 @click.option(
     "--physicalid",
     type=int,
     default=0,
-    help="Set default GPU device ID for multi-GPU systems. Default: 0",
+    help="Set default GPU device ID for multi-GPU systems",
 )
 @click.option(
     "--mem",
     type=int,
     default=4,
-    help="GPU memory limit: Default: 4G",
+    help="GPU memory limit",
 )
 @click.option(
     "-v",
     "--verbose",
     count=True,
-    help="Verbosity level: -vv debug, -v info (default: info)",
+    help="Verbosity level: -vv debug, -v info",
     default=1,
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing database")
@@ -976,13 +1013,13 @@ def build(**kwargs):
     "--fsize",
     type=int,
     default=2048,
-    help="Length of the sliding window (value must be 2^n). Default: 2048",
+    help="Length of the sliding window",
 )
 @click.option(
     "--stride",
     type=int,
     default=2048,
-    help="Stride of the sliding window. Default: 2048 (stride==fsize)",
+    help="The gap between two sliding of the sliding window (fsize = stride)",
 )
 @click.option(
     "-m",
@@ -990,8 +1027,7 @@ def build(**kwargs):
     default="default",
     help=(
         f"Select a deep-learning model to use. "
-        f"Default: 'default'. "
-        f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
+        f"Available models: (when --config is not set): {', '.join(AVAIL_MODELS)}"
     ),
 )
 @click.option(
@@ -1003,39 +1039,39 @@ def build(**kwargs):
     "--rc",
     type=float,
     default=0.1,
-    help="Minimum reliability score required to accept predictions. Default: 0.1",
+    help="Minimum reliability score required to accept predictions",
 )
 @click.option(
     "--batch",
     type=int,
     default=96,
-    help="Parallel batch size, lower if GPU runs out of memory. Default: 96",
+    help="Parallel batch size, lower if GPU runs out of memory",
 )
 @click.option(
-    "--workers", type=int, default=4, help="Number of threads to use. Default: 4"
+    "--workers", type=int, default=4, help="Number of threads to use"
 )
 @click.option(
     "--cpu",
     is_flag=True,
-    help="Ignore available GPUs and explicitly run on CPU. Default: False",
+    help="Ignore available GPUs and explicitly run on CPU",
 )
 @click.option(
     "--physicalid",
     type=int,
     default=0,
-    help="Set default GPU device ID for multi-GPU systems. Default: 0",
+    help="Set default GPU device ID for multi-GPU systems",
 )
 @click.option(
     "--mem",
     type=int,
     default=4,
-    help="GPU memory limit: Default: 4G",
+    help="GPU memory limit",
 )
 @click.option(
     "-v",
     "--verbose",
     count=True,
-    help="Verbosity level: -vv debug, -v info (default: info)",
+    help="Verbosity level: -vv debug, -v info",
     default=1,
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing database")
