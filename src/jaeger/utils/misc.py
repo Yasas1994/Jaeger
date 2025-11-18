@@ -1,11 +1,13 @@
 import logging
+import shutil
 from decimal import Decimal
-import jinja2
+from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
-from typing import Dict, DefaultDict
+from typing import Dict, DefaultDict, Any
 import yaml
 import json
 import os
+import random
 from collections import defaultdict
 from rich.progress import ProgressColumn
 from rich.text import Text
@@ -51,21 +53,61 @@ def track_ms(iterable, description="Working...", disable=False):
             yield item
             progress.update(task, advance=1)
 
+def clear_directory(path: Path):
+    if path.exists() and path.is_dir():
+        for item in path.iterdir():
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
 
-def load_model_config(path: Path) -> Dict:
+def load_model_config(path: Path) -> Dict[str, Any]:
     """
-    loads the configuration file from the template
+    Load a YAML config that uses Jinja2 templating, with two-pass rendering.
+
+    Pass 1:
+      - Parse YAML to build an initial context (so you can refer to keys
+        like {{ model.experiment }}).
+      - Render the template once with that context.
+
+    Pass 2:
+      - Parse the rendered YAML to get a more complete config.
+      - Render again using this config so nested references like
+        {{ training.experiment_root }} inside paths also resolve.
+
+    Returns the final parsed config dict with an extra 'config_path' key.
     """
+    # Read the raw text
+    raw_text = path.read_text()
 
-    with open(path) as fp:
-        _data = yaml.safe_load(fp)
+    # ---- PASS 1: parse raw YAML as initial context ----
+    context = yaml.safe_load(raw_text) or {}
 
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(searchpath=path.parent))
-    template = env.get_template(path.name)
+    # Replace 'random' seed with actual random integer
+    seed_value = context.get("model", {}).get("seed")
+    if isinstance(seed_value, str):
+        if seed_value.lower() == "random":
+            context["model"]["seed"] = random.randint(0, 2**32 - 1)
+        else:
+            raise ValueError(f'"{seed_value}" is not a valid seed. Did you mean "random"?')
 
-    data = yaml.safe_load(template.render(_data))
+    # Setup Jinja2 environment
+    env = Environment()
+    template = env.from_string(yaml.dump(context))
+    # Render template (1st pass)
+    rendered_1 = template.render(**context)
 
-    return data
+    # Parse rendered YAML
+    cfg = yaml.safe_load(rendered_1) or {}
+
+    # ---- PASS 2: resolve nested references with full cfg ----
+    nested_template = env.from_string(rendered_1)
+    rendered_2 = nested_template.render(**cfg)
+
+    final_cfg = yaml.safe_load(rendered_2) or {}
+    final_cfg["config_path"] = str(path)
+
+    return final_cfg
 
 
 def safe_divide(numerator, denominator):

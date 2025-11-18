@@ -1,7 +1,9 @@
-import sys
+from __future__ import annotations
 import logging
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
 from rich.logging import RichHandler
 
 
@@ -26,42 +28,50 @@ def description(version):
     """
 
 
+
+
+
 def get_logger(log_path: Path, log_file: str, level: int) -> logging.Logger:
     # Create a custom logger
     current_datetime = datetime.now()
     current_date_time = current_datetime.strftime("%m%d%Y_%H%M%S")
     logger = logging.getLogger("jaeger")
     levels = {1: logging.INFO, 2: logging.DEBUG}
-    loglevel = levels[level]
-    logger.setLevel(
-        loglevel
-    )  # Set minimum level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    loglevel = levels.get(level, logging.INFO)
+    logger.setLevel(loglevel)
 
-    # Create handlers
-    console_handler = logging.StreamHandler(sys.stderr)  # Logs to console
-    file_handler = logging.FileHandler(
-        log_path / Path(f"{current_date_time}_{log_file}")
-    )  # Logs to a file
+    # Prevent duplicate handlers if this is called multiple times
+    logger.propagate = False
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
 
-    console_handler.setLevel(loglevel)  # Console shows INFO and above
-    file_handler.setLevel(logging.DEBUG)  # File logs DEBUG and above
-
+    # Formatter (used for file; Rich renders console nicely on its own)
     formatter = logging.Formatter(
-        "[%(name)s] %(asctime)s | %(levelname)7s | %(filename)8s:%(lineno)3d| %(message)s",
+        "[%(name)s] %(filename)8s:%(lineno)3d| %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # Console handler (Rich)
     console_handler = RichHandler(
-        show_time=False,
+        show_time=True,
         omit_repeated_times=False,
-        show_level=False,
+        show_level=True,
         show_path=False,
         enable_link_path=False,
     )
+    # Keep console simple; RichHandler formats its own output
     console_handler.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
-
-    # Add handlers to the logger
+    console_handler.setLevel(loglevel)
     logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+
+    # Optional file handler — only add if log_file is truthy (non-empty string)
+    if log_file:
+        # Ensure directory exists
+        if log_path is not None:
+            log_path.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path / Path(f"{current_date_time}_{log_file}"))
+        file_handler.setLevel(logging.DEBUG)  # file logs DEBUG and above
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger
