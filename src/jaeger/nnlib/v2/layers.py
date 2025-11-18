@@ -488,6 +488,7 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
         # re-create child layer from saved config
         self.score_dense = tf.keras.layers.Dense.from_config(config["score_dense"])
     
+
 class MaskedBatchNorm(tf.keras.layers.Layer):
     """
     Masked Batch Normalization that supports arbitrary input rank and optional return
@@ -503,6 +504,8 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
 
     def build(self, input_shape):
         channel_dim = input_shape[-1]
+        if channel_dim is None:
+            raise ValueError("The last (channel) dimension must be defined.")
         self.gamma = self.add_weight(
             shape=(channel_dim,), initializer="ones", trainable=True, name="gamma"
         )
@@ -510,53 +513,59 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
             shape=(channel_dim,), initializer="zeros", trainable=True, name="beta"
         )
         self.moving_mean = self.add_weight(
-            shape=(channel_dim,),
-            initializer="zeros",
-            trainable=False,
-            name="moving_mean",
+            shape=(channel_dim,), initializer="zeros", trainable=False, name="moving_mean"
         )
         self.moving_variance = self.add_weight(
-            shape=(channel_dim,),
-            initializer="ones",
-            trainable=False,
-            name="moving_variance",
+            shape=(channel_dim,), initializer="ones", trainable=False, name="moving_variance"
         )
+        super().build(input_shape)
+
+    def _vec_broadcast_shape(self, ndims_int, vec):
+        """Return [1, 1, ..., C] to reshape a (C,) vector for broadcasting."""
+        c = tf.shape(vec)[0]
+        ones = tf.ones([ndims_int - 1], dtype=tf.int32)  # [1]*(ndims-1) as a Tensor
+        return tf.concat([ones, [c]], axis=0)
 
     def call(self, inputs, mask=None, training=False):
-        # input_shape = tf.shape(inputs)
+        # Use STATIC rank for axes so Keras can infer shapes
         ndims = inputs.shape.rank
+        if ndims is None:
+            # Fallback: require known rank for this layer
+            raise ValueError("Input rank must be statically known for MaskedBatchNorm.")
 
-        reduce_axes = list(range(ndims - 1))  # all except channel dim
-        broadcast_shape = [1] * (ndims - 1) + [inputs.shape[-1]]
+        # Axes as Python lists (not Tensors!)
+        reduce_axes = list(range(0, max(ndims - 1, 0)))   # batch stats: all except channel
+        example_axes = list(range(1, max(ndims - 1, 1)))  # per-example: skip batch & channel
 
-        if mask is not None:
+        # Prepare mask (once) and masked inputs (once)
+        use_mask = mask is not None
+        if use_mask:
             mask = tf.cast(mask, inputs.dtype)
-            if mask.shape.rank < inputs.shape.rank:
-                # Broadcast mask over the channel dimension
-                mask = tf.expand_dims(mask, axis=-1)
-
-            valid_elements = tf.reduce_sum(mask, axis=reduce_axes) + self.epsilon
+            if mask.shape.rank is None or mask.shape.rank < ndims:
+                mask = tf.expand_dims(mask, axis=-1)  # broadcast over channels
             masked_inputs = inputs * mask
 
+            valid_elements = tf.reduce_sum(mask, axis=reduce_axes) + self.epsilon
             mean_batch = tf.reduce_sum(masked_inputs, axis=reduce_axes) / valid_elements
-            mean_broadcast = tf.reshape(mean_batch, broadcast_shape)
 
+            mean_broadcast_batch = tf.reshape(
+                mean_batch, self._vec_broadcast_shape(ndims, mean_batch)
+            )
             variance_batch = (
-                tf.reduce_sum(
-                    mask * tf.square(inputs - mean_broadcast), axis=reduce_axes
-                )
+                tf.reduce_sum(mask * tf.square(inputs - mean_broadcast_batch), axis=reduce_axes)
                 / valid_elements
             )
         else:
+            # axes are Python lists → safe for Keras shape inference
             mean_batch, variance_batch = tf.nn.moments(inputs, axes=reduce_axes)
 
+        # Pick stats (update EMA during training)
         if training:
             self.moving_mean.assign(
-                self.momentum * self.moving_mean + (1 - self.momentum) * mean_batch
+                self.momentum * self.moving_mean + (1.0 - self.momentum) * mean_batch
             )
             self.moving_variance.assign(
-                self.momentum * self.moving_variance
-                + (1 - self.momentum) * variance_batch
+                self.momentum * self.moving_variance + (1.0 - self.momentum) * variance_batch
             )
             mean_to_use = mean_batch
             var_to_use = variance_batch
@@ -564,29 +573,29 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
             mean_to_use = self.moving_mean
             var_to_use = self.moving_variance
 
-        # Normalize
-        mean_broadcast = tf.reshape(mean_to_use, broadcast_shape)
-        var_broadcast = tf.reshape(var_to_use, broadcast_shape)
-        normalized_inputs = (inputs - mean_broadcast) / tf.sqrt(
-            var_broadcast + self.epsilon
-        )
-        output = self.gamma * normalized_inputs + self.beta
+        # Normalize (build broadcast shapes once)
+        mean_broadcast = tf.reshape(mean_to_use, self._vec_broadcast_shape(ndims, mean_to_use))
+        var_broadcast  = tf.reshape(var_to_use,  self._vec_broadcast_shape(ndims, var_to_use))
+        inv_std = tf.math.rsqrt(var_broadcast + self.epsilon)
 
-        if self.return_nmd:
-            # Compute per-example mean (excluding channel dim)
-            example_axes = list(range(1, ndims - 1))  # skip batch and channel dims
-            if mask is not None:
-                masked_inputs = inputs * mask
-            else:
-                masked_inputs = inputs
+        normalized = (inputs - mean_broadcast) * inv_std
+        output = self.gamma * normalized + self.beta
 
-            mean_channel = tf.reduce_mean(
-                masked_inputs, axis=example_axes
-            )  # shape (batch, channels)
-            nmd = mean_channel - mean_to_use  # broadcast mean
-            return output, nmd
+        if not self.return_nmd:
+            return output
 
-        return output
+        # NMD: per-example channel mean (mask-aware) minus reference mean
+        if use_mask:
+            per_ex_sum   = tf.reduce_sum(masked_inputs, axis=example_axes)             # (B, C)
+            per_ex_count = tf.reduce_sum(mask,         axis=example_axes) + self.epsilon  # (B, 1)
+            mean_channel = per_ex_sum / per_ex_count                                   # (B, C)
+        else:
+            # If ndims==2, example_axes == [], reduce_mean returns inputs (OK)
+            mean_channel = tf.reduce_mean(inputs, axis=example_axes)                   # (B, C)
+
+        nmd = mean_channel - mean_to_use  # (B, C) - (C,) via broadcasting
+        return output, nmd
+
     def get_config(self):
         config = super().get_config()
         config.update({
@@ -769,12 +778,12 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.conv1 = MaskedConv1D(
             padding=self.padding,
             name=f"masked_conv1d_blk{self.block_number}_1",
-            **{k:v for k,v in kwargs.items() if k not in ["name"]}
+            **{k:v for k,v in kwargs.items() if k not in ["name", "padding"]}
         )
         self.conv2 = MaskedConv1D(
             padding=self.padding,
             name=f"masked_conv1d_blk{self.block_number}_2",
-            **{k:v for k,v in kwargs.items() if k not in ["name"]}
+            **{k:v for k,v in kwargs.items() if k not in ["name", "padding"]}
         )
         self.conv3 = None
         if use_1x1conv or kwargs.get('strides') > 1:
@@ -782,9 +791,9 @@ class ResidualBlock(tf.keras.layers.Layer):
                  padding=self.padding,
                  kernel_size=1,
                  name=f"masked_conv1d_blk{self.block_number}_bypass",
-                 **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name"]}
+                 **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name", "padding"]}
             )
-        print(kwargs)
+
         self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1",)
         self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2", return_nmd=return_nmd)
         self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
