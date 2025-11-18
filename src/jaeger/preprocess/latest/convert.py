@@ -1,7 +1,6 @@
 import tensorflow as tf
 from jaeger.preprocess.latest.maps import CODON_ID, CODONS
 
-
 # map codons to amino acids
 def _map_codon(codons, codon_num):
     trimers = tf.constant(codons)
@@ -55,20 +54,20 @@ def _map_nucleotide_type():
 def process_string_train(
     codons=CODONS,
     codon_num=CODON_ID,
-    codon_depth=64,
+    codon_depth=None,
     label_original=None,
     label_alternative=None,
     class_label_onehot=True,
     seq_onehot=True,
-    num_classes=5,
-    crop_size=1024,
+    num_classes=None,
+    crop_size=None,
     timesteps=False,
     num_time=None,
     fragsize=200,
     mutate=False,
     mutation_rate=0.1,
     masking=False,
-    ngram_width = 3,
+    ngram_width = None,
     input_type="translated",  # "translated", "nucleotide", "both"
     shuffle=False,
 ):
@@ -107,8 +106,20 @@ def process_string_train(
         label = tf.cast(lookup_label(x[0]), dtype=tf.int32)
 
         # Determine offset for codon splitting
-        offset = {0: -2, 1: -1, 2: 0}[crop_size % 3]
-        forward_strand = tf.strings.bytes_split(x[1])[:crop_size]
+        if crop_size:
+            mod3 = tf.math.floormod(crop_size, 3)             # Tensor, not a Python int
+            forward_strand = tf.strings.bytes_split(x[1])[:crop_size]
+            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+        else:
+            # Lengths as a Tensor
+            string_length = tf.strings.length(x[1])                 # shape: [...] (same as x1)
+            mod3 = tf.math.floormod(string_length, 3)             # Tensor, not a Python int
+
+            # Map {0: -2, 1: -1, 2: 0} using a lookup tensor + gather (works batched)
+            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+            forward_strand = tf.strings.bytes_split(x[1])
 
         # Apply mutations if requested
         if mutate:
@@ -192,6 +203,8 @@ def process_string_inference(
     mutate=False,
     mutation_rate=0.1,
     ngram_width = 3,
+    shuffle=False,
+    masking=False, # mask lowercase nucleotides
     input_type="translated",  # "translated", "nucleotide", "both"
 ):
     """
@@ -213,9 +226,22 @@ def process_string_inference(
     @tf.function
     def p(string):
         x = tf.strings.split(string, sep=",")
+
         # Determine offset for codon splitting
-        offset = {0: -2, 1: -1, 2: 0}[crop_size % 3]
-        forward_strand = tf.strings.bytes_split(x[0])[:crop_size]
+        if crop_size:
+            mod3 = tf.math.floormod(crop_size, 3)             # Tensor, not a Python int
+            forward_strand = tf.strings.bytes_split(x[0])[:crop_size]
+            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+        else:
+            # Lengths as a Tensor
+            string_length = tf.strings.length(x[1])                 # shape: [...] (same as x1)
+            mod3 = tf.math.floormod(string_length, 3)             # Tensor, not a Python int
+
+            # Map {0: -2, 1: -1, 2: 0} using a lookup tensor + gather (works batched)
+            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+            forward_strand = tf.strings.bytes_split(x[0])
 
         # Apply mutations if requested
         if mutate:
@@ -227,11 +253,16 @@ def process_string_inference(
             forward_strand = tf.where(
                 mask, tf.gather(alphabet, mutations), forward_strand
             )
+        if shuffle:
+            forward_strand = tf.random.shuffle(forward_strand)
 
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
-        outputs = {}
 
+        outputs = {}
+        if masking is False:
+            forward_strand = tf.strings.upper(forward_strand)
+            reverse_strand = tf.strings.upper(reverse_strand)
         # Nucleotide representation
         if input_type in ["nucleotide", "both"]:
             nuc1 = map_nucleotide.lookup(forward_strand)
@@ -261,13 +292,12 @@ def process_string_inference(
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=1)
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
-
             if seq_onehot:
                 outputs["translated"] = tf.one_hot(
                     seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
                 )
             else:
-                outputs["translated"] = seq + 1
+                outputs["translated"] = tf.cast(seq + 1, dtype=tf.float32)
 
         # return outputs, {'classifier': label,
         #                  'reliability': reliability
