@@ -1,11 +1,11 @@
 from collections import defaultdict
 from typing import Any, Dict
 import yaml
-
+import math
 import tensorflow as tf
 import numpy as np
 from jaeger.utils.misc import track_ms as track
-from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID
+from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID, PC5_ID, DICODONS, DICODON_ID
 
 # Neural‐net building blocks
 from jaeger.nnlib.v2.layers import (
@@ -329,7 +329,7 @@ class DynamicInferenceModelBuilder:
         sp_config = self.model_cfg.get("string_processor")
 
         _config = {
-            "input_type": emb_config.get("type"),
+            "input_type": emb_config.get("input_type"),
             "codon": _map.get(sp_config.get("codon")),
             "codon_id": _map.get(sp_config.get("codon_id")),
             "codon_depth": max(_map.get(sp_config.get("codon_id"))) + 1,
@@ -367,8 +367,8 @@ class InferModel:
         # Unpack the data
         # set model to inference mode
         y_logits = self.inference_fn(
-            x.get(self.string_processor_config.get("input_type"))
-        )
+                x.get(self.string_processor_config.get("input_type"))
+            )
         return y_logits
 
     def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
@@ -448,28 +448,29 @@ class InferModel:
                 "index": [i["label"] for i in _class_map],
             }
 
-    def _load_string_processor_config(self, path):
-        from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID
+    def _load_string_processor_config(self, path) -> Dict:
+        _map = {
+            "CODON": CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID
+        }
+        
+        _config = yaml.safe_load(path.read_text()) or {}
+        _model_cfg = _config.get("model")
+        _config = _model_cfg.get("embedding")
+        _config.update(_model_cfg.get("string_processor"))
 
-        if path:
-            with open(path) as f:
-                cfg = yaml.safe_load(f)
 
-            _map = {
-                "CODON": CODONS,
-                "CODON_ID": CODON_ID,
-                "AA_ID": AA_ID,
-                "MURPHY10_ID": MURPHY10_ID,
-            }
-
-            return {
-                "input_type": cfg.get("model").get("embedding").get("input_type"),
-                "codon_depth": cfg.get("model").get("embedding").get("input_shape")[-1],
-                "codon": _map.get(
-                    cfg.get("model").get("string_processor").get("codon")
-                ),
-                "codon_id": _map.get(
-                    cfg.get("model").get("string_processor").get("codon_id")
-                ),
-            }
-        return None
+        _config["codon"] = _map.get(_config.get("codon"))
+        _config["codon_id"] = _map.get(_config.get("codon_id"))
+        _config["codon_depth"] = max(_config.get("codon_id")) + 1
+        _config["vocab_size"]  = max(_config.get("codon_id")) + 1
+        _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
+        _config["seq_onehot"] = _config.get("seq_onehot", False)
+        if _config["seq_onehot"] is False:
+             _config["codon_depth"] = 1
+        return _config
