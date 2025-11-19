@@ -467,8 +467,8 @@ class InferModel:
 
         _config["codon"] = _map.get(_config.get("codon"))
         _config["codon_id"] = _map.get(_config.get("codon_id"))
-        _config["codon_depth"] = max(_config.get("codon_id")) + 1
-        _config["vocab_size"]  = max(_config.get("codon_id")) + 1
+        _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
+        _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codons + 1
         _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
         _config["seq_onehot"] = _config.get("seq_onehot", False)
         if _config["seq_onehot"] is False:
