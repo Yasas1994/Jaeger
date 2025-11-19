@@ -177,7 +177,7 @@ class DynamicModelBuilder:
     ) -> Optional[tuple[Path, dict]]:
         path = Path(path)
         """
-        to do: create a checkpoint file once the model converges
+        .h5 is used to check for convergence
         """
         h5_files = sorted(
             path.glob("*.h5"), key=lambda f: f.stat().st_mtime, reverse=True
@@ -649,8 +649,9 @@ class DynamicModelBuilder:
 
         path = Path(self._saving_config.get("path"))
         path.mkdir(parents=True, exist_ok=True)
-        metadata = Path(metadata).resolve()
+        
         if metadata:
+            metadata = Path(metadata).resolve()
             metadata.write_text(json.dumps({"model_path" : str(path),
                                             'experiment_path': str(path.parent),
                                             } , 
@@ -717,12 +718,13 @@ class DynamicModelBuilder:
 
         _config["codon"] = _map.get(_config.get("codon"))
         _config["codon_id"] = _map.get(_config.get("codon_id"))
-        _config["codon_depth"] = max(_config.get("codon_id")) + 1
-        _config["vocab_size"]  = max(_config.get("codon_id")) + 1
+        _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
+        _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codon + 1
         _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
         _config["seq_onehot"] = _config.get("seq_onehot", False)
         if _config["seq_onehot"] is False:
              _config["codon_depth"] = 1
+        ic(_config)
         return _config
 
     def _get_optimizer(self, name, kwargs) -> Any:
@@ -931,6 +933,9 @@ def train_fragment_core(**kwargs):
                 class_weight = builder.train_cfg.get("classifier_class_weights"),
                 **train_args,
             )
+            # checkpoint_path = Path(builder.train_cfg.get("classifier_dir")) / "converged"
+            # checkpoint_path.touch()
+
         else:
             logger.info("Skipping training — classification model")
 
@@ -1021,6 +1026,8 @@ def train_fragment_core(**kwargs):
                 class_weight = builder.train_cfg.get("reliability_class_weights"),
                 **train_args,
             )
+            # checkpoint_path = Path(builder.train_cfg.get("reliability_dir")) / "converged"
+            # checkpoint_path.touch()
         else:
             logger.info("Skipping training — reliability model")
 
