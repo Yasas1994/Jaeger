@@ -290,7 +290,7 @@ def tune(**kwargs):
     "--meta",
     type=click.Path(
         exists=False,
-        file_okay=False,
+        file_okay=True,
     ),
     required=False,
     help="Path to write metadata from the container",
