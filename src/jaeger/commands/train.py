@@ -2,9 +2,9 @@
 Copyright 2024 R. Y. Wijesekara - University Medicine Greifswald, Germany
 
 Identifying phage genome sequences concealed in metagenomes is a
-long standing problem in viral metagenomics and ecology.
+long standing problem in viral metagenomics and viral ecology.
 The Jaeger approach uses homology-free machine learning to identify
- both phages and prophages in metagenomic assemblies.
+both phages and prophages in metagenomic assemblies.
 """
 
 import os
@@ -916,7 +916,7 @@ def train_fragment_core(**kwargs):
                         builder.train_cfg.get("classifier_validation_steps")
                     ),
                     "epochs": builder.train_cfg.get("projection_epochs"),
-                    "callbacks": builder.get_callbacks(branch="classifier"),
+                    "callbacks": builder.get_callbacks(branch="projection"),
                 }
                 models.get("jaeger_projection").fit(
                     train_data.get("train").take(
