@@ -530,6 +530,7 @@ def utils(obj):
 @click.option(
     "--class_col",
     type=int,
+    default=None,
     required=False,
     help="csv col with class id (when --itype CSV)",
 )
@@ -537,6 +538,7 @@ def utils(obj):
 @click.option(
     "--seq_col",
     type=int, 
+    default=None,
     required=False,
     help="csv col with sequence (when --itype CSV)",
 )
@@ -544,8 +546,13 @@ def shuffle(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import shuffle_core
     if kwargs.get("itype") == "CSV":
-        if not (kwargs.get("seq_col", None) and kwargs.get("class_col", None)) :
-            raise click.UsageError("class_col and seq_col are required when --itype CSV")
+        seq_col = kwargs.get("seq_col")
+        class_col = kwargs.get("class_col")
+
+        if not (seq_col and class_col):
+            raise click.UsageError(
+                "When --itype CSV is used, both --seq-col and --class-col must be provided."
+        )
 
     shuffle_core(**kwargs)
 
