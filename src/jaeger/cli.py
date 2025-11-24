@@ -549,7 +549,7 @@ def shuffle(**kwargs):
         seq_col = kwargs.get("seq_col")
         class_col = kwargs.get("class_col")
 
-        if not (seq_col and class_col):
+        if not (seq_col is not  None and class_col is not None):
             raise click.UsageError(
                 "When --itype CSV is used, both --seq-col and --class-col must be provided."
         )
