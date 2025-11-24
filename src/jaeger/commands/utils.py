@@ -161,15 +161,15 @@ def shuffle_core(**kwargs):
                 ),
                 pl.lit(0).alias("column_1"),
             )
-            ft = None
+            ft = pl.DataFrame()
             if n_tandem_repeats > 0:
                 ft = pl.from_dict(dict(column_1=np.array([0 for _ in range(n_tandem_repeats)], dtype=np.int32),
                     column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
                     column_3=[f'tandem_repeat_{i}' for i in range(n_tandem_repeats)]))
             
-            logger.info(f"id : {len(f)} ood: {len(fs)} ood_tandem: {len(ft) if ft else 0}")
+            logger.info(f"id : {len(f)} ood: {len(fs)} ood_tandem: {0 if ft.is_empty() else len(ft)}")
 
-            f = pl.concat([i for i in [f, fs, ft] if i is not None], how='vertical').sample(
+            f = pl.concat([i for i in [f, fs, ft] if not  i.is_empty()], how='vertical').sample(
                 fraction=1.0, shuffle=True, with_replacement=False
             )
 
