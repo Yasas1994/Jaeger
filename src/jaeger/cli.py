@@ -499,7 +499,11 @@ def utils(obj):
     required=True,
     help="Path to input file",
 )
-@click.option("-o", "--output", type=str, required=True, help="Path to output file")
+@click.option("-o", 
+              "--output", 
+              type=str, 
+              required=True, 
+              help="Path to output file")
 @click.option("--dinuc", is_flag=True, required=False, help="dinuc shuffle")
 @click.option("-k", type=int, default=1, required=False, help="kmer size" )
 @click.option(
@@ -514,9 +518,34 @@ def utils(obj):
     required=True,
     help="out file type",
 )
+
+@click.option(
+    "--num_tandem_repeats",
+    type=int,
+    default=0,
+    required=False,
+    help="generate n random tandem repeats",
+)
+
+@click.option(
+    "--class_col",
+    type=int,
+    required=False,
+    help="csv col with class id (when --itype CSV)",
+)
+
+@click.option(
+    "--seq_col",
+    type=int, 
+    required=False,
+    help="csv col with sequence (when --itype CSV)",
+)
 def shuffle(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import shuffle_core
+    if kwargs.get("itype") == "CSV":
+        if not (kwargs.get("seq_col", None) and kwargs.get("class_col", None)) :
+            click.BadOptionUsage("class_col and seq_col are required when --itype CSV")
 
     shuffle_core(**kwargs)
 
@@ -717,13 +746,6 @@ def mask(**kwargs):
     required=False,
     help="dereplication method",
     default="ANI",
-)
-@click.option(
-    "--ood",
-    is_flag=True,
-    required=False,
-    help="generate dataset for training ood model",
-    default=False,
 )
 def dataset(**kwargs):
     """Generate a non-redundant fragment database from fasta file for training/validating

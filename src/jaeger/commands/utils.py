@@ -13,7 +13,8 @@ import random
 from math import log2, sqrt
 from scipy import stats
 import csv
-
+from jaeger.utils.logging import get_logger
+logger = get_logger(log_file=None, log_path=None, level=3)
 
 def shannon_entropy(seq: str) -> float:
     """
@@ -102,7 +103,6 @@ def generate_low_entropy_sequence(length: int, window_size: int, threshold: floa
             return seq
     raise ValueError(f"Failed to generate low-entropy sequence after {max_attempts} attempts")
 
-
 def shuffle_dna(seq: str) -> str:
     """Randomly shuffles a DNA sequence."""
     seq_list = list(seq)
@@ -131,12 +131,18 @@ def kmer_mix_shuffle(seq1: str, seq2: str, k: int):
     pass
 
 def shuffle_core(**kwargs):
+    """
+    shuffle sequences while mainintaining the 
+    1. dinuc composition or
+    2. break a seqeunce into k-mers -> shuffle -> concat
+    3. random shuffling 
+    """
     if kwargs.get("dinuc"):
         shuffle_fn = dinuc_shuffle
     else:
         def shuffle_fn(x):
             return kmer_shuffle(seq=x, k=kwargs.get('k', 1))
-
+    n_tandem_repeats = kwargs.get("num_tandem_repeats")
     match kwargs.get("itype"):
         case "CSV":
             f = pl.read_csv(
@@ -155,15 +161,18 @@ def shuffle_core(**kwargs):
                 ),
                 pl.lit(0).alias("column_1"),
             )
-            ft = pl.from_dict(dict(column_1=np.array([0 for _ in range(10_000)], dtype=np.int32),
-                 column_2=generate_random_tandem_repeats(num_sequences=10_000),
-                 column_3=[f'tandem_repeat_{i}' for i in range(10_000)]))
-            print(f)
-            print(ft)
-            print(fs)
+            if n_tandem_repeats > 0:
+                ft = pl.from_dict(dict(column_1=np.array([0 for _ in range(n_tandem_repeats)], dtype=np.int32),
+                    column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
+                    column_3=[f'tandem_repeat_{i}' for i in range(n_tandem_repeats)]))
+            
+            logger.info(f"id : {len(f)} ood: {len(fs)} ood_tandem: {len(ft)}")
+
             f = pl.concat([f, fs, ft], how='vertical').sample(
                 fraction=1.0, shuffle=True, with_replacement=False
             )
+
+            
 
             match kwargs.get("otype"):
                 case "CSV":
@@ -187,9 +196,9 @@ def shuffle_core(**kwargs):
 
             # 1) pre‑generate your tandem dict
             tandem = dict(
-                column_1=[0 for _ in range(10_000)],
-                column_2=generate_random_tandem_repeats(num_sequences=10_000),
-                column_3=[f"tandem_repeat_{i}" for i in range(10_000)]
+                column_1=[0 for _ in range(n_tandem_repeats)],
+                column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
+                column_3=[f"tandem_repeat_{i}" for i in range(n_tandem_repeats)]
             )
 
             # 2) collect ALL entries into a list
@@ -227,23 +236,145 @@ def shuffle_core(**kwargs):
                         fh.write(f"{label},{sequence},{seq_id}\n")
 
 
-
 def write_fasta_entry(fh, header, seq, label):
+    """
+    formats and writes a fasta record to a file
+    """
     fh.write(f">{header}class={label}\n")
     for i in range(0, len(seq), 70):
         fh.write(seq[i:i+70] + "\n")
 
+# def split_core(**kwargs):
+#     """
+#     sequencially sample random fragments from genomes (to mimic metagenome assemblies) for a given size 
+#     distribution
+#     """
+
+
+#     input_path = kwargs.get("input")
+#     output_path = kwargs.get("output")
+#     min_len = kwargs.get("minlen", 2000)
+#     max_len = kwargs.get("maxlen", 50000)
+#     overlap = kwargs.get("overlap", 0)  # how many bases to overlap
+#     shuffle = kwargs.get("shuffle", False)
+
+#     f = pyfastx.Fasta(input_path, build_index=False)
+
+#     with open(output_path, "w") as fh:
+#         for name, seq in track(f, description="Processing..."):
+#             seq = str(seq)
+#             if shuffle:
+#                 seq = dinuc_shuffle(seq)
+
+#             start = 0
+#             frag_id = 0
+
+#             while start < len(seq):
+#                 frag_len = random.randint(min_len, max_len)
+#                 end = min(start + frag_len, len(seq))
+#                 fragment = seq[start:end]
+
+#                 # Write FASTA record
+#                 Ns = fragment.count("N")
+#                 if Ns / len(fragment) < 0.3 and len(fragment) >= min_len:
+#                     fh.write(f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n")
+#                     for i in range(0, len(fragment), 60):
+#                         fh.write(fragment[i : i + 60] + "\n")
+
+#                 # Move to next fragment start (with overlap)
+#                 if end == len(seq):
+#                     break
+
+#                 start = end - overlap
+#                 frag_id += 1
+
+
 def split_core(**kwargs):
-    # split records in f into fragments of varying sizes
+    """
+    Sample random fragments from genomes (to mimic metagenome assemblies)
+    for a given size distribution.
+
+    Two modes:
+    1) Sequentially sample random fragments of varying size (given a size distribution):
+       - Used when `coverage` is NOT provided.
+       - Walks along each genome with random fragment lengths and fixed overlap.
+       - when minlen == maxlen -> sliding window with constant window size
+
+    2) Coverage-based random sampling:
+       - Used when `coverage` is provided.
+       - For each genome, sample random fragments until
+         target_bases = coverage * genome_length is reached (approx).
+
+    Parameters
+    ----------
+    minlen : int
+    minimum fragment length (min of discrete uniform dinstribution)
+
+    maxlen: int
+    maximum fragment length (max of discrete uniform dinstribution)
+
+    overlap: int
+    number of overlapping nuc between two consecutive fragments
+
+    coverage: int
+    switch from sequential sampling to coverage based sampling if not None
+
+    circular: bool
+    treats the sequences as circular (conts the ends)
+
+    nax_n_prop: float
+    max proportion of Ns allowed in a fragment
+
+    seed: int
+    seed for the random number generator
+
+    """
 
     input_path = kwargs.get("input")
     output_path = kwargs.get("output")
+
     min_len = kwargs.get("minlen", 2000)
     max_len = kwargs.get("maxlen", 50000)
-    overlap = kwargs.get("overlap", 0)  # how many bases to overlap
+    overlap = kwargs.get("overlap", 0)       # used only in sequential mode
     shuffle = kwargs.get("shuffle", False)
+    coverage = kwargs.get("coverage", None)  # per-genome coverage; if None → sequential
+    circular = kwargs.get("circular", False)
+    max_n_prop = kwargs.get("max_n_prop", 0.3)
+    seed = kwargs.get("seed", None)
+
+    if seed is not None:
+        random.seed(seed)
+        logger.info(f"using seed: {seed}")
+
+    if min_len <= 0 or max_len < min_len:
+        raise ValueError("Invalid minlen/maxlen: ensure 0 < minlen <= maxlen")
 
     f = pyfastx.Fasta(input_path, build_index=False)
+
+    def sample_fragment(seq, frag_len, circular=False):
+        """
+        Sample a fragment of length `frag_len` from `seq`.
+        If circular=True, allow wrapping around the end.
+        Returns (start, fragment_seq).
+        """
+        G = len(seq)
+        if frag_len > G:
+            frag_len = G
+        if circular:
+            start = random.randint(0, G - 1)
+            end = start + frag_len
+            if end <= G:
+                fragment = seq[start:end]
+            else:
+                # wrap around
+                end_part = seq[start:]
+                wrap_part = seq[: (end - G)]
+                fragment = end_part + wrap_part
+        else:
+            # ensure we don't go out of bounds
+            start = random.randint(0, G - frag_len)
+            fragment = seq[start:start + frag_len]
+        return start, fragment
 
     with open(output_path, "w") as fh:
         for name, seq in track(f, description="Processing..."):
@@ -251,28 +382,68 @@ def split_core(**kwargs):
             if shuffle:
                 seq = dinuc_shuffle(seq)
 
-            start = 0
+            genome_len = len(seq)
             frag_id = 0
 
-            while start < len(seq):
-                frag_len = random.randint(min_len, max_len)
-                end = min(start + frag_len, len(seq))
-                fragment = seq[start:end]
+            # If genome is shorter than min_len, skip it
+            if genome_len < min_len:
+                continue
 
-                # Write FASTA record
-                Ns = fragment.count("N")
-                if Ns / len(fragment) < 0.3 and len(fragment) >= min_len:
-                    fh.write(f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n")
-                    for i in range(0, len(fragment), 60):
-                        fh.write(fragment[i : i + 60] + "\n")
+            # --- MODE 1: coverage-based random sampling ---
+            if coverage is not None:
+                target_bases = coverage * genome_len
+                bases_so_far = 0
 
-                # Move to next fragment start (with overlap)
-                if end == len(seq):
-                    break
+                while bases_so_far < target_bases:
+                    frag_len = random.randint(min_len, max_len)
+                    if frag_len > genome_len:
+                        frag_len = genome_len
 
-                start = end - overlap
-                frag_id += 1
+                    start, fragment = sample_fragment(seq, frag_len, circular=circular)
 
+                    Ns = fragment.count("N")
+                    n_prop = Ns / len(fragment)
+
+                    if n_prop <= max_n_prop and len(fragment) >= min_len:
+                        header = (
+                            f">{name}_frag{frag_id}_start{start}_"
+                            f"len{len(fragment)}_cov{coverage}\n"
+                        )
+                        fh.write(header)
+                        for i in range(0, len(fragment), 60):
+                            fh.write(fragment[i : i + 60] + "\n")
+
+                        bases_so_far += len(fragment)
+                        frag_id += 1
+
+            # --- MODE 2: original sequential tiling with overlap ---
+            else:
+                start = 0
+                while start < genome_len:
+                    frag_len = random.randint(min_len, max_len)
+                    end = min(start + frag_len, genome_len)
+                    fragment = seq[start:end]
+
+                    Ns = fragment.count("N")
+                    if len(fragment) > 0:
+                        n_prop = Ns / len(fragment)
+                    else:
+                        n_prop = 1.0  # force skip
+
+                    # Write FASTA record if passes filters
+                    if n_prop <= max_n_prop and len(fragment) >= min_len:
+                        fh.write(
+                            f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n"
+                        )
+                        for i in range(0, len(fragment), 60):
+                            fh.write(fragment[i : i + 60] + "\n")
+
+                    # Move to next fragment start (with overlap)
+                    if end == genome_len:
+                        break
+
+                    start = end - overlap
+                    frag_id += 1
 
 def mask_core(**kwargs):
     import numpy as np
@@ -441,7 +612,7 @@ def run_mmseqs_cluster(frag_fasta, out_prefix, tmpdir, min_id, min_cov):
 
 def split_dataset(records, trainperc, valperc, testperc):
     """Split records into train, val, and test sets."""
-    assert abs(trainperc + valperc + testperc - 1.0) < 1e-6, "train+val+test must sum to 1"
+    
     random.shuffle(records)
     N = len(records)
     n_train = int(trainperc * N)
@@ -505,6 +676,9 @@ def dataset_core(**kwargs):
     class_col = kwargs.get("class_col")
     seq_col = kwargs.get("seq_col")
     class_id = kwargs.get("class")
+
+    assert abs(trainperc + valperc + testperc - 1.0) < 1e-6, "train+val+test must sum to 1" 
+
     def get_class(x):
         return x.split('=')[-1]
     out_pref.mkdir(exist_ok=True, parents=True)
@@ -639,8 +813,6 @@ def welch_t_one_tailed(mean1, var1, n1, mean2, var2, n2, alternative="greater"):
 
 def stats_core(**kwargs):
     import matplotlib.pyplot as plt
-    import logging
-    logger = logging.getLogger("Jaeger")
 
     import seaborn as sns
     import pandas as pd
@@ -763,8 +935,8 @@ def stats_core(**kwargs):
             plt.savefig(relscore_len, dpi=150, bbox_inches="tight")
             plt.close()
         except Exception as e:
-            logging.warning(e)
-            logging.warning("Legth-wise (quantile) plot was not created")
+            logger.warning(e)
+            logger.warning("Legth-wise (quantile) plot was not created")
             
 
     # perform welch t-tests to check if there is a statistically significant difference
