@@ -545,7 +545,7 @@ def shuffle(**kwargs):
     from jaeger.commands.utils import shuffle_core
     if kwargs.get("itype") == "CSV":
         if not (kwargs.get("seq_col", None) and kwargs.get("class_col", None)) :
-            click.BadOptionUsage("class_col and seq_col are required when --itype CSV")
+            raise click.UsageError("class_col and seq_col are required when --itype CSV")
 
     shuffle_core(**kwargs)
 
