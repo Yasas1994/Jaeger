@@ -100,6 +100,8 @@ class DynamicModelBuilder:
         self.reliability_out_dim: int = int(self.model_cfg.get("reliability_out_dim", 0))
 
         # --- losses & metrics (populated later) ---
+        self.loss_classifier_name = self.train_cfg.get("loss_classifier", "categorical_crossentropy" ).lower()
+        self.loss_reliability_name = self.train_cfg.get("loss_reliability", "binary_crossentropy").lower()
         self.loss_classifier = None
         self.loss_reliability = None
         self.metrics_classifier: list[Any] = []
@@ -279,7 +281,8 @@ class DynamicModelBuilder:
             if self._checkpoints.get("classifier", {}).get("path", False):
                 # loads weights from the last checkpoint
                 models["jaeger_classifier"].load_weights(
-                    self._checkpoints.get("classifier").get("path")
+                    self._checkpoints.get("classifier").get("path"),
+                    skip_mismatch=True
                 )
                 logger.info(
                     f"Loaded classification model weights from {self._checkpoints.get('classifier').get('path')}"
@@ -309,7 +312,8 @@ class DynamicModelBuilder:
                 if self._checkpoints.get("reliability", {}).get("path", False):
                     # loads weights from the last checkpoint
                     models["jaeger_reliability"].load_weights(
-                        self._checkpoints.get("reliability").get("path")
+                        self._checkpoints.get("reliability").get("path"),
+                        skip_mismatch=True
                     )
                     logger.info(
                         f"Loaded reliability model weights from {self._checkpoints.get('reliability').get('path')}"
@@ -410,12 +414,13 @@ class DynamicModelBuilder:
 
         return inputs, x
     
-    def _get_bias(self, data_path: str, kind: str):
+    def _get_bias(self, data_path: str, kind: str, label_map: list):
         """
         initialize final layer bias connsidering the
         class frequencies of the training datasets
         path to train file and kind[softmax, sigmoid]
         """
+
         import polars as pl
         def _sigmoid(f:Dict):
             n, p = f.values()
@@ -425,7 +430,12 @@ class DynamicModelBuilder:
         def _softmax(f:Dict):
             f = np.array(list(f.values()))
             return np.log(f/np.sum(f))
-
+        
+        def _correct_label_map(f:Dict, label_map: list):
+            _tmp = {i:0 for i in range(max(label_map)+1)}
+            for k,v in f.items():
+                _tmp[label_map[k]] += v
+            return _tmp
 
         df = pl.read_csv(data_path, columns=[0], has_header=False)
 
@@ -437,6 +447,8 @@ class DynamicModelBuilder:
 
         counts_dict = dict(zip(counts_dict["column_1"], counts_dict["count"]))
         counts_dict = {k:counts_dict[k] for k in  sorted(list(counts_dict.keys()))}
+        if len(label_map) > 0:
+            counts_dict = _correct_label_map(counts_dict, label_map)
         match kind:
             case "softmax":
                 return _softmax(counts_dict)
@@ -473,12 +485,18 @@ class DynamicModelBuilder:
 
             if "bias_initializer" in cfg_layer:
                 if "calculate_from" in cfg_layer.get("bias_initializer"):
+                    classifier_label_map = self.model_cfg.get("string_processor").get("classifier_labels_map", [])
+                    reliability_label_map = self.model_cfg.get("string_processor").get("reliability_labels_map", [])
                     if "relia" in prefix:
                         path = self._get_reliability_fragment_paths().get('train').get('paths')[-1]
-                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, kind="sigmoid"))
+                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, 
+                                                                                                     kind="sigmoid" if "binary" in self.loss_reliability_name else "softmax",
+                                                                                                     label_map=reliability_label_map))
                     elif "classi" in prefix:
                         path = self._get_fragment_paths().get('train').get('paths')[-1]
-                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, kind="softmax"))
+                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, 
+                                                                                                      kind="sigmoid" if "binary" in self.loss_classifier_name else "softmax",
+                                                                                                      label_map=classifier_label_map))
 
             # Handle residual blocks
             if "block_size" in cfg_layer:
@@ -714,7 +732,7 @@ class DynamicModelBuilder:
         }
         _config = self.model_cfg.get("embedding")
         _config.update(self.model_cfg.get("string_processor"))
-
+        # get original labels and -> mapping
 
         _config["codon"] = _map.get(_config.get("codon"))
         _config["codon_id"] = _map.get(_config.get("codon_id"))
@@ -853,6 +871,8 @@ def train_fragment_core(**kwargs):
                     codons=string_processor_config.get("codon"),
                     codon_num=string_processor_config.get("codon_id"),
                     codon_depth=string_processor_config.get("codon_depth"),
+                    label_original=string_processor_config.get("classifier_labels", None),
+                    label_alternative=string_processor_config.get("classifier_labels_map", None),
                     ngram_width=string_processor_config.get("ngram_width"),
                     seq_onehot=string_processor_config.get("seq_onehot"),
                     crop_size=string_processor_config.get("crop_size"),
@@ -861,7 +881,7 @@ def train_fragment_core(**kwargs):
                     mutate=string_processor_config.get("mutate"),
                     mutation_rate=string_processor_config.get("mutation_rate"),
                     num_classes=builder.classifier_out_dim,
-                    class_label_onehot=True,
+                    class_label_onehot=False if "binary" in builder.train_cfg.get("loss_classifier", "categorical_crossentropy").lower() else True,
                     shuffle=string_processor_config.get("shuffle"),
                 ),
                 num_parallel_calls=tf.data.AUTOTUNE,
