@@ -7,43 +7,36 @@ logger = logging.getLogger("jaeger")
 
 def find_runs(x):  # sourcery skip: extract-method
     # from https://gist.github.com/alimanfoo/c5977e87111abe8127453b21204c1065
-    """Find runs of consecutive items in an array.
-
-    Args
-    ----
-    x : list or np.array
-        a list or a numpy array with integers
-
-    Returns
-    -------
-    a tuple of lists (run_values, run_lengths)
     """
-    # ensure array
+    Find runs of consecutive identical items in a 1D array.
+
+    Args:
+        x (list or np.array): A list or numpy array of integers.
+
+    Returns:
+        tuple: (run_values, run_lengths, run_starts)
+    """
     x = np.asanyarray(x)
     if x.ndim != 1:
-        raise ValueError("only 1D array supported")
+        raise ValueError("Only 1D arrays are supported")
+
     n = x.shape[0]
-
     if n == 0:
-        return np.array([]), np.array([]), np.array([])
+        return np.array([], dtype=x.dtype), np.array([], dtype=int), np.array([], dtype=int)
 
-    # find run starts
+    # Find where the value changes
     loc_run_start = np.empty(n, dtype=bool)
     loc_run_start[0] = True
     np.not_equal(x[:-1], x[1:], out=loc_run_start[1:])
     run_starts = np.nonzero(loc_run_start)[0]
 
-    # find run values
-    run_values = x[loc_run_start]
-
-    # find run lengths
+    run_values = x[run_starts]
     run_lengths = np.diff(np.append(run_starts, n))
 
-    # return run_values, run_starts, run_lengths
-    return run_values, run_lengths
+    return run_values, run_lengths, run_starts
 
 
-def get_window_summary(x, phage_pos):
+def get_window_summary_legacy(x, phage_pos):
     """
     returns string representation of window-wise predictions
 
@@ -62,7 +55,8 @@ def get_window_summary(x, phage_pos):
     represent cellular windows
 
     """
-    items, run_length = find_runs(x == phage_pos)
+    x = x.flatten() 
+    items, run_length, _ = find_runs(x== phage_pos)
     run_length = np.array(run_length, dtype=np.str_)
     tmp = np.empty(items.shape, dtype=np.str_)
     # print(phage_pos, items, run_length)
@@ -71,6 +65,40 @@ def get_window_summary(x, phage_pos):
     x = np.char.add(run_length, tmp)
     return "".join(x)
 
+def get_window_summary(x, class_map:dict[int,str], classes:list[str]):
+    """
+    returns string representation of window-wise predictions
+
+    Args
+    ----
+
+    x : list or np.array
+        list or numpy array with window-wise integer class labels
+
+    phage_pos : int
+        integer value representing Phage or Virus class
+
+    Returns
+    -------
+    a string with Vs and ns. Vs represent virus or phage windows. ns
+    represent cellular windows
+
+    """
+    def vmap(i: str, classes:list):
+        if i.lower() in classes:
+            return i[0].upper()
+        return i[0].lower()
+    class_sum_ = {k: vmap(v, classes=classes) for k, v in class_map.items()}
+    x = x.flatten() 
+    items, run_length, _ = find_runs(x)
+    run_length = np.array(run_length, dtype=np.str_)
+    tmp = np.empty(items.shape, dtype=np.str_)
+    # print(phage_pos, items, run_length)
+    for k,v in class_sum_.items():
+        tmp[items == k] = v
+        #tmp[items == phage_pos] = "V"
+    x = np.char.add(run_length, tmp)
+    return "".join(x)
 
 def update_dict(x, num_classes=4):
     # sourcery skip: remove-redundant-constructor-in-dict-union
@@ -112,23 +140,67 @@ def shanon_entropy(p):
     return -np.sum(p * p_log, axis=-1)
 
 
-def softmax_entropy(x):
+# def softmax_entropy(x):
+#     """
+#     Calculates the entropy of a softmax output distribution.
+
+#     Args:
+#     ----
+#         x (array-like): The softmax output distribution as an array-like
+#                         object.
+
+#     Returns:
+#     -------
+#         float: The entropy value calculated from the softmax output
+#                distribution.
+#     """
+
+#     ex = np.exp(x)
+#     return shanon_entropy(ex / np.sum(ex, axis=-1).reshape(-1, 1))
+
+def binary_entropy(p, eps=1e-12):
+    p = np.clip(p, eps, 1 - eps)
+    return -(p * np.log2(p) + (1 - p) * np.log2(1 - p))
+
+def softmax_entropy(p, axis=-1, eps=1e-12):
+    p = np.clip(p, eps, 1.0)
+    return -np.sum(p * np.log2(p), axis=axis)
+
+
+def logsumexp(x: np.ndarray, axis: int = -1) -> np.ndarray:
     """
-    Calculates the entropy of a softmax output distribution.
+    Stable logsumexp implementation in NumPy.
+    """
+    xmax = np.max(x, axis=axis, keepdims=True)
+    stable = x - xmax
+    return xmax.squeeze(axis=axis) + np.log(np.sum(np.exp(stable), axis=axis))
 
-    Args:
-    ----
-        x (array-like): The softmax output distribution as an array-like
-                        object.
+def energy(x: np.ndarray, axis: int = -1) -> np.ndarray:
+    """
+    Energy score from logits.
 
-    Returns:
+    Parameters
+    ----------
+    x : np.ndarray
+        - Binary: logits of shape (...)
+        - Multiclass: logits of shape (..., C)
+    axis : int
+        Class axis for multiclass logits.
+
+    Returns
     -------
-        float: The entropy value calculated from the softmax output
-               distribution.
+    np.ndarray
+        Energy values (lower = more confident).
     """
+    x = np.asarray(x, dtype=np.float64)
 
-    ex = np.exp(x)
-    return shanon_entropy(ex / np.sum(ex, axis=-1).reshape(-1, 1))
+    # Binary case: single logit per sample
+    if x.ndim == 0 or (x.ndim >= 1 and x.shape[-1] != 2):
+        # log(exp(z) + 1) = logsumexp([z, 0])
+        return -logsumexp(np.stack([x, np.zeros_like(x)], axis=-1), axis=-1)
+
+    # Multiclass softmax case
+    return -logsumexp(x, axis=axis)
 
 
 def sigmoid(x):

@@ -324,18 +324,22 @@ class DynamicInferenceModelBuilder:
             "CODON_ID": CODON_ID,
             "AA_ID": AA_ID,
             "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID
         }
-        emb_config = self.model_cfg.get("embedding")
-        sp_config = self.model_cfg.get("string_processor")
+        _config = self.model_cfg.get("embedding")
+        _config.update(self.model_cfg.get("string_processor"))
+        # get original labels and -> mapping
 
-        _config = {
-            "input_type": emb_config.get("input_type"),
-            "codon": _map.get(sp_config.get("codon")),
-            "codon_id": _map.get(sp_config.get("codon_id")),
-            "codon_depth": max(_map.get(sp_config.get("codon_id"))) + 1,
-            "crop_size": sp_config.get("crop_size"),
-            "buffer_size": sp_config.get("buffer_size"),
-        }
+        _config["codon"] = _map.get(_config.get("codon"))
+        _config["codon_id"] = _map.get(_config.get("codon_id"))
+        _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
+        _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codon + 1
+        _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
+        _config["seq_onehot"] = _config.get("seq_onehot", False)
+        if _config["seq_onehot"] is False:
+             _config["codon_depth"] = 1
 
         return _config
 

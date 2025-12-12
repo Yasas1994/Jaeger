@@ -219,7 +219,7 @@ def run_core(**kwargs):
             pass
         data, _ = pred_to_dict(
             y_pred,
-            num_classes=model.class_map.get("num_classes"),
+            class_map=model.class_map,
             fsize=kwargs.get("fsize"),
             term_repeats=term_repeats,
         )
