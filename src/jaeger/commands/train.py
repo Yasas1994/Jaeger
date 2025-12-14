@@ -733,15 +733,21 @@ class DynamicModelBuilder:
         _config = self.model_cfg.get("embedding")
         _config.update(self.model_cfg.get("string_processor"))
         # get original labels and -> mapping
-
-        _config["codon"] = _map.get(_config.get("codon"))
-        _config["codon_id"] = _map.get(_config.get("codon_id"))
-        _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
-        _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codon + 1
-        _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
         _config["seq_onehot"] = _config.get("seq_onehot", False)
-        if _config["seq_onehot"] is False:
-             _config["codon_depth"] = 1
+        if _config["input_type"] == "translated":
+            _config["codon"] = _map.get(_config.get("codon"))
+            _config["codon_id"] = _map.get(_config.get("codon_id"))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
+            _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codon + 1
+            _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
+            if _config["seq_onehot"] is False:
+                _config["codon_depth"] = 1
+        else:
+            _config["codon"] = None
+            _config["codon_id"] = None
+            _config["codon_depth"] = None
+            _config["vocab_size"]  = 4
+            _config["ngram_width"] = None
         ic(_config)
         return _config
 
