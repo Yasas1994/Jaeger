@@ -783,7 +783,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.conv2 = MaskedConv1D(
             padding=self.padding,
             name=f"masked_conv1d_blk{self.block_number}_2",
-            **{k:v for k,v in kwargs.items() if k not in ["name", "padding"]}
+            **{k:v for k,v in kwargs.items() if k not in ["name", "padding", "strides"]}
         )
         self.conv3 = None
         if use_1x1conv or kwargs.get('strides') > 1:
@@ -793,7 +793,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                  name=f"masked_conv1d_blk{self.block_number}_bypass",
                  **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name", "padding"]}
             )
-
+            self.bn3 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_bypass",)
         self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1",)
         self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2", return_nmd=return_nmd)
         self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
@@ -810,7 +810,7 @@ class ResidualBlock(tf.keras.layers.Layer):
             x = self.bn2(x)
         
         if self.conv3 is not None:
-            x = self.add([x, self.conv3(inputs)])
+            x = self.add([x, self.bn3(self.conv3(inputs))])
         else:       
             x = self.add([x, inputs])
         if self.return_nmd:
