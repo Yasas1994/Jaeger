@@ -82,8 +82,8 @@ def process_string_train(
         class_label_onehot: One-hot encode labels
         input_type: 'translated', 'nucleotide', 'both'
     """
-
-    map_codon = _map_codon(codons=codons, codon_num=codon_num)
+    if codons and codon_num:
+        map_codon = _map_codon(codons=codons, codon_num=codon_num)
     map_complement = _map_complement()
     map_nucleotide = _map_nucleotide()
 
@@ -218,8 +218,8 @@ def process_string_inference(
         class_label_onehot: One-hot encode labels
         input_type: 'translated', 'nucleotide', 'both'
     """
-
-    map_codon = _map_codon(codons=codons, codon_num=codon_num)
+    if codons and codon_num:
+        map_codon = _map_codon(codons=codons, codon_num=codon_num)
     map_complement = _map_complement()
     map_nucleotide = _map_nucleotide()
 
