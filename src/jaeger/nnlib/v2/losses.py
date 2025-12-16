@@ -38,70 +38,81 @@ class ArcFaceLoss(tf.keras.layers.Layer):
     def __init__(
         self, num_classes, embedding_dim, margin=0.5, scale=30.0, onehot=True, **kwargs
     ):
-        """
-        Initialize the ArcFaceLoss layer for supervised metric learning.
-
-        :param num_classes: Number of classes.
-        :param margin: Angular margin to add.
-        :param scale: Scaling factor for the logits.
-        :param kwargs: Additional keyword arguments.
-        """
         super(ArcFaceLoss, self).__init__(**kwargs)
         self.num_classes = num_classes
         self.margin = margin
         self.scale = scale
         self.embedding_dim = embedding_dim
-        # self.eps = 1e-7  # Small value to avoid division by zero
         self.onehot = onehot
-        # Initialize class weights for the final fully connected layer
+
+        # Class weights are usually kept in float32 even in mixed precision
         self.class_weights = self.add_weight(
             name="class_weights",
             shape=(self.num_classes, self.embedding_dim),
             initializer="glorot_uniform",
             trainable=True,
+            dtype=tf.float32,
         )
 
     def call(self, labels, embeddings):
         """
-        Compute the ArcFace loss.
-
-        :param embeddings: Embeddings from the model (batch_size, embedding_dim).
-        :param labels: True labels (batch_size,).
-        :return: Computed ArcFace loss.
+        :param embeddings: (batch_size, embedding_dim)
+        :param labels: either:
+            - one-hot labels (batch_size, num_classes) if self.onehot=True
+            - integer labels (batch_size,) or (batch_size, 1) if self.onehot=False
         """
-        eps = 6.55e-4 if embeddings.dtype == "float16" else 1.0e-9
-        # Normalize embeddings and class weights
+        # Work in the compute dtype (usually float16 in mixed precision)
+        compute_dtype = embeddings.dtype
+
+        # eps depends on dtype
+        eps = tf.constant(
+            6.55e-4 if compute_dtype == tf.float16 else 1.0e-9,
+            dtype=compute_dtype,
+        )
+
+        # Normalize embeddings and class weights in compute dtype
+        embeddings = tf.cast(embeddings, compute_dtype)
+        class_weights = tf.cast(self.class_weights, compute_dtype)
+
         embeddings = tf.nn.l2_normalize(embeddings, axis=1)
-        class_weights = tf.nn.l2_normalize(self.class_weights, axis=1)
-        class_weights = tf.cast(class_weights, dtype=embeddings.dtype)
-        # Compute cosine similarity between embeddings and class weights
+        class_weights = tf.nn.l2_normalize(class_weights, axis=1)
+
+        # Cosine similarity: (batch_size, num_classes)
         cosine = tf.matmul(embeddings, class_weights, transpose_b=True)
 
-        # Convert labels to one-hot encoding
+        # Labels -> one-hot
         if self.onehot:
-            labels_one_hot = tf.cast(labels, dtype=cosine.dtype)
-
+            # Assume labels already one-hot, just cast
+            labels_one_hot = tf.cast(labels, compute_dtype)
         else:
-            labels_one_hot = tf.squeeze(
-                tf.one_hot(labels, depth=self.num_classes, axis=-1), axis=1
+            labels = tf.reshape(labels, [-1])             # (batch_size,)
+            labels = tf.cast(labels, tf.int32)
+            labels_one_hot = tf.one_hot(
+                labels, depth=self.num_classes, dtype=compute_dtype
             )
 
-        # Compute the angle (theta) and add margin
+        # Angle and margin
         theta = tf.acos(tf.clip_by_value(cosine, -1.0 + eps, 1.0 - eps))
         target_logits = tf.cos(theta + self.margin)
 
         # Construct logits
-        logits = cosine * (1 - labels_one_hot) + target_logits * labels_one_hot
+        logits = cosine * (1.0 - labels_one_hot) + target_logits * labels_one_hot
 
         # Apply scaling
-        logits *= self.scale
+        logits = logits * self.scale
 
-        # Compute softmax cross-entropy loss
-        loss = tf.nn.softmax_cross_entropy_with_logits(
-            labels=labels_one_hot, logits=logits
+        # ---- IMPORTANT PART FOR MIXED PRECISION ----
+        # Do the actual loss calculation in float32
+        logits_fp32 = tf.cast(logits, tf.float32)
+        labels_fp32 = tf.cast(labels_one_hot, tf.float32)
+
+        loss_vec = tf.nn.softmax_cross_entropy_with_logits(
+            labels=labels_fp32, logits=logits_fp32
         )
+        loss = tf.reduce_mean(loss_vec)
 
-        return tf.reduce_mean(loss)
+        # Always return float32 loss
+        return loss
 
 class HierarchicalLoss(tf.keras.losses.Loss):
     def __init__(self, parent_of, groups, l_fine=1.0, l_coarse=1.5, name="hier_loss"):

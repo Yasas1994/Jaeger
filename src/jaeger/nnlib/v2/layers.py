@@ -1344,7 +1344,6 @@ class ResidualBlock(tf.keras.layers.Layer):
 # To do: implement a method to set epsilon considering the data type of the tensors passed to the layers
 # if not implemented correctly, this can lead to overflow/underflow issues.
 
-
 class MetricModel(tf.keras.Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1416,21 +1415,29 @@ class MetricModel(tf.keras.Model):
         }
 
     def test_step(self, data):
-        x, y = data
+        # No scaling needed in eval
+        if len(data) == 3:
+            x, y, _ = data
+        else:
+            x, y = data
+
         y_pred = self(x, training=False)
-        # Adjust loss call based on your loss_fn signature:
-        loss = self.loss_fn([y, y_pred])
-        self.loss_tracker.update_state(loss)
+        base_loss = self.loss_fn(y, y_pred)
+        reg_loss = tf.add_n(self.losses) if self.losses else 0.0
+        total_loss = base_loss + reg_loss
+
+        self.loss_tracker.update_state(total_loss)
+        # (Usually people don’t track reg-loss in test, but you can if you want)
         return {"loss": self.loss_tracker.result()}
 
     @property
     def metrics(self):
+        # These are reset automatically at the start of each epoch
         return [
             self.loss_tracker,
             self.regularization_loss_tracker,
             self.gradient_tracker,
         ]
-
 
 class SinusoidalPositionEmbedding(tf.keras.layers.Layer):
     def __init__(self, max_wavelength=10000, **kwargs):
