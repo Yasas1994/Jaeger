@@ -489,14 +489,134 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
         self.score_dense = tf.keras.layers.Dense.from_config(config["score_dense"])
     
 
+# class MaskedBatchNorm(tf.keras.layers.Layer):
+#     """
+#     Masked Batch Normalization that supports arbitrary input rank and optional return
+#     of normalized mean difference vectors. Masked positions are excluded from statistics.
+#     """
+
+#     def __init__(self, epsilon=1e-5, momentum=0.9, return_nmd=False,dtype=None, **kwargs):
+#         super().__init__(**kwargs)
+#         self.epsilon = epsilon
+#         self.momentum = momentum
+#         self.supports_masking = True
+#         self.return_nmd = return_nmd
+
+#     def build(self, input_shape):
+#         channel_dim = input_shape[-1]
+#         if channel_dim is None:
+#             raise ValueError("The last (channel) dimension must be defined.")
+#         self.gamma = self.add_weight(
+#             shape=(channel_dim,), initializer="ones", trainable=True, name="gamma"
+#         )
+#         self.beta = self.add_weight(
+#             shape=(channel_dim,), initializer="zeros", trainable=True, name="beta"
+#         )
+#         self.moving_mean = self.add_weight(
+#             shape=(channel_dim,), initializer="zeros", trainable=False, name="moving_mean"
+#         )
+#         self.moving_variance = self.add_weight(
+#             shape=(channel_dim,), initializer="ones", trainable=False, name="moving_variance"
+#         )
+#         super().build(input_shape)
+
+#     def _vec_broadcast_shape(self, ndims_int, vec):
+#         """Return [1, 1, ..., C] to reshape a (C,) vector for broadcasting."""
+#         c = tf.shape(vec)[0]
+#         ones = tf.ones([ndims_int - 1], dtype=tf.int32)  # [1]*(ndims-1) as a Tensor
+#         return tf.concat([ones, [c]], axis=0)
+
+#     def call(self, inputs, mask=None, training=False):
+#         # Use STATIC rank for axes so Keras can infer shapes
+#         ndims = inputs.shape.rank
+#         if ndims is None:
+#             # Fallback: require known rank for this layer
+#             raise ValueError("Input rank must be statically known for MaskedBatchNorm.")
+
+#         # Axes as Python lists (not Tensors!)
+#         reduce_axes = list(range(0, max(ndims - 1, 0)))   # batch stats: all except channel
+#         example_axes = list(range(1, max(ndims - 1, 1)))  # per-example: skip batch & channel
+
+#         # Prepare mask (once) and masked inputs (once)
+#         use_mask = mask is not None
+#         if use_mask:
+#             mask = tf.cast(mask, inputs.dtype)
+#             if mask.shape.rank is None or mask.shape.rank < ndims:
+#                 mask = tf.expand_dims(mask, axis=-1)  # broadcast over channels
+#             masked_inputs = inputs * mask
+
+#             valid_elements = tf.reduce_sum(mask, axis=reduce_axes) + self.epsilon
+#             mean_batch = tf.reduce_sum(masked_inputs, axis=reduce_axes) / valid_elements
+
+#             mean_broadcast_batch = tf.reshape(
+#                 mean_batch, self._vec_broadcast_shape(ndims, mean_batch)
+#             )
+#             variance_batch = (
+#                 tf.reduce_sum(mask * tf.square(inputs - mean_broadcast_batch), axis=reduce_axes)
+#                 / valid_elements
+#             )
+#         else:
+#             # axes are Python lists → safe for Keras shape inference
+#             mean_batch, variance_batch = tf.nn.moments(inputs, axes=reduce_axes)
+
+#         # Pick stats (update EMA during training)
+#         if training:
+#             self.moving_mean.assign(
+#                 self.momentum * self.moving_mean + (1.0 - self.momentum) * mean_batch
+#             )
+#             self.moving_variance.assign(
+#                 self.momentum * self.moving_variance + (1.0 - self.momentum) * variance_batch
+#             )
+#             mean_to_use = mean_batch
+#             var_to_use = variance_batch
+#         else:
+#             mean_to_use = self.moving_mean
+#             var_to_use = self.moving_variance
+
+#         # Normalize (build broadcast shapes once)
+#         mean_broadcast = tf.reshape(mean_to_use, self._vec_broadcast_shape(ndims, mean_to_use))
+#         var_broadcast  = tf.reshape(var_to_use,  self._vec_broadcast_shape(ndims, var_to_use))
+#         inv_std = tf.math.rsqrt(var_broadcast + self.epsilon)
+
+#         normalized = (inputs - mean_broadcast) * inv_std
+#         output = self.gamma * normalized + self.beta
+
+#         if not self.return_nmd:
+#             return output
+
+#         # NMD: per-example channel mean (mask-aware) minus reference mean
+#         if use_mask:
+#             per_ex_sum   = tf.reduce_sum(masked_inputs, axis=example_axes)             # (B, C)
+#             per_ex_count = tf.reduce_sum(mask,         axis=example_axes) + self.epsilon  # (B, 1)
+#             mean_channel = per_ex_sum / per_ex_count                                   # (B, C)
+#         else:
+#             # If ndims==2, example_axes == [], reduce_mean returns inputs (OK)
+#             mean_channel = tf.reduce_mean(inputs, axis=example_axes)                   # (B, C)
+
+#         nmd = mean_channel - mean_to_use  # (B, C) - (C,) via broadcasting
+#         return output, nmd
+
+#     def get_config(self):
+#         config = super().get_config()
+#         config.update({
+#             "epsilon": self.epsilon,
+#             "momentum": self.momentum,
+#             "return_nmd": self.return_nmd,
+#         })
+#         return config
+
 class MaskedBatchNorm(tf.keras.layers.Layer):
     """
     Masked Batch Normalization that supports arbitrary input rank and optional return
     of normalized mean difference vectors. Masked positions are excluded from statistics.
     """
 
-    def __init__(self, epsilon=1e-5, momentum=0.9, return_nmd=False, **kwargs):
+    def __init__(self, epsilon=1e-5, momentum=0.9, return_nmd=False, dtype=None, **kwargs):
+        # Let Keras / mixed_precision policy control dtype if provided
+        if dtype is not None:
+            kwargs["dtype"] = dtype
         super().__init__(**kwargs)
+
         self.epsilon = epsilon
         self.momentum = momentum
         self.supports_masking = True
@@ -506,95 +626,132 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
         channel_dim = input_shape[-1]
         if channel_dim is None:
             raise ValueError("The last (channel) dimension must be defined.")
+
+        # Use variable_dtype so these stay float32 under mixed_float16
         self.gamma = self.add_weight(
-            shape=(channel_dim,), initializer="ones", trainable=True, name="gamma"
+            name="gamma",
+            shape=(channel_dim,),
+            initializer="ones",
+            trainable=True,
+            dtype=self.variable_dtype,
         )
         self.beta = self.add_weight(
-            shape=(channel_dim,), initializer="zeros", trainable=True, name="beta"
+            name="beta",
+            shape=(channel_dim,),
+            initializer="zeros",
+            trainable=True,
+            dtype=self.variable_dtype,
         )
         self.moving_mean = self.add_weight(
-            shape=(channel_dim,), initializer="zeros", trainable=False, name="moving_mean"
+            name="moving_mean",
+            shape=(channel_dim,),
+            initializer="zeros",
+            trainable=False,
+            dtype=self.variable_dtype,
         )
         self.moving_variance = self.add_weight(
-            shape=(channel_dim,), initializer="ones", trainable=False, name="moving_variance"
+            name="moving_variance",
+            shape=(channel_dim,),
+            initializer="ones",
+            trainable=False,
+            dtype=self.variable_dtype,
         )
         super().build(input_shape)
 
     def _vec_broadcast_shape(self, ndims_int, vec):
         """Return [1, 1, ..., C] to reshape a (C,) vector for broadcasting."""
         c = tf.shape(vec)[0]
-        ones = tf.ones([ndims_int - 1], dtype=tf.int32)  # [1]*(ndims-1) as a Tensor
+        ones = tf.ones([ndims_int - 1], dtype=tf.int32)
         return tf.concat([ones, [c]], axis=0)
 
-    def call(self, inputs, mask=None, training=False):
-        # Use STATIC rank for axes so Keras can infer shapes
-        ndims = inputs.shape.rank
+    def call(self, inputs, mask=None, training=None):
+        # Force stats math into float32
+        x = tf.cast(inputs, tf.float32)
+        ndims = x.shape.rank
         if ndims is None:
-            # Fallback: require known rank for this layer
             raise ValueError("Input rank must be statically known for MaskedBatchNorm.")
 
-        # Axes as Python lists (not Tensors!)
         reduce_axes = list(range(0, max(ndims - 1, 0)))   # batch stats: all except channel
         example_axes = list(range(1, max(ndims - 1, 1)))  # per-example: skip batch & channel
 
-        # Prepare mask (once) and masked inputs (once)
         use_mask = mask is not None
         if use_mask:
-            mask = tf.cast(mask, inputs.dtype)
-            if mask.shape.rank is None or mask.shape.rank < ndims:
-                mask = tf.expand_dims(mask, axis=-1)  # broadcast over channels
-            masked_inputs = inputs * mask
+            mask_f = tf.cast(mask, tf.float32)
+            if mask_f.shape.rank is None or mask_f.shape.rank < ndims:
+                mask_f = tf.expand_dims(mask_f, axis=-1)  # broadcast over channels
 
-            valid_elements = tf.reduce_sum(mask, axis=reduce_axes) + self.epsilon
+            masked_inputs = x * mask_f
+
+            valid_elements = tf.reduce_sum(mask_f, axis=reduce_axes) + self.epsilon
             mean_batch = tf.reduce_sum(masked_inputs, axis=reduce_axes) / valid_elements
 
             mean_broadcast_batch = tf.reshape(
                 mean_batch, self._vec_broadcast_shape(ndims, mean_batch)
             )
             variance_batch = (
-                tf.reduce_sum(mask * tf.square(inputs - mean_broadcast_batch), axis=reduce_axes)
+                tf.reduce_sum(mask_f * tf.square(x - mean_broadcast_batch), axis=reduce_axes)
                 / valid_elements
             )
         else:
-            # axes are Python lists → safe for Keras shape inference
-            mean_batch, variance_batch = tf.nn.moments(inputs, axes=reduce_axes)
+            mean_batch, variance_batch = tf.nn.moments(x, axes=reduce_axes)
 
-        # Pick stats (update EMA during training)
+        # Ensure stats are float32
+        mean_batch = tf.cast(mean_batch, tf.float32)
+        variance_batch = tf.cast(variance_batch, tf.float32)
+
+        # --- update moving stats in float32, then cast to var dtype on assign ---
+        mm = tf.cast(self.moving_mean, tf.float32)
+        mv = tf.cast(self.moving_variance, tf.float32)
+
         if training:
-            self.moving_mean.assign(
-                self.momentum * self.moving_mean + (1.0 - self.momentum) * mean_batch
-            )
-            self.moving_variance.assign(
-                self.momentum * self.moving_variance + (1.0 - self.momentum) * variance_batch
-            )
+            new_mm = self.momentum * mm + (1.0 - self.momentum) * mean_batch
+            new_mv = self.momentum * mv + (1.0 - self.momentum) * variance_batch
+
+            self.moving_mean.assign(tf.cast(new_mm, self.moving_mean.dtype))
+            self.moving_variance.assign(tf.cast(new_mv, self.moving_variance.dtype))
+
             mean_to_use = mean_batch
             var_to_use = variance_batch
         else:
-            mean_to_use = self.moving_mean
-            var_to_use = self.moving_variance
+            mean_to_use = mm
+            var_to_use = mv
 
-        # Normalize (build broadcast shapes once)
         mean_broadcast = tf.reshape(mean_to_use, self._vec_broadcast_shape(ndims, mean_to_use))
         var_broadcast  = tf.reshape(var_to_use,  self._vec_broadcast_shape(ndims, var_to_use))
-        inv_std = tf.math.rsqrt(var_broadcast + self.epsilon)
+        inv_std = tf.math.rsqrt(var_broadcast + tf.cast(self.epsilon, tf.float32))
 
-        normalized = (inputs - mean_broadcast) * inv_std
-        output = self.gamma * normalized + self.beta
+        # Normalize + affine in float32
+        gamma = tf.cast(self.gamma, tf.float32)
+        beta = tf.cast(self.beta, tf.float32)
+
+        normalized = (x - mean_broadcast) * inv_std
+        output_f32 = gamma * normalized + beta
+
+        # Cast back to the layer's compute dtype (float16 under mixed precision)
+        output = tf.cast(output_f32, self.compute_dtype)
 
         if not self.return_nmd:
             return output
 
-        # NMD: per-example channel mean (mask-aware) minus reference mean
+        # NMD in float32, then cast
         if use_mask:
-            per_ex_sum   = tf.reduce_sum(masked_inputs, axis=example_axes)             # (B, C)
-            per_ex_count = tf.reduce_sum(mask,         axis=example_axes) + self.epsilon  # (B, 1)
-            mean_channel = per_ex_sum / per_ex_count                                   # (B, C)
+            per_ex_sum   = tf.reduce_sum(masked_inputs, axis=example_axes)    # (B, C)
+            per_ex_count = tf.reduce_sum(mask_f,        axis=example_axes) + self.epsilon
+            mean_channel = per_ex_sum / per_ex_count                          # (B, C)
         else:
-            # If ndims==2, example_axes == [], reduce_mean returns inputs (OK)
-            mean_channel = tf.reduce_mean(inputs, axis=example_axes)                   # (B, C)
+            mean_channel = tf.reduce_mean(x, axis=example_axes)              # (B, C)
 
-        nmd = mean_channel - mean_to_use  # (B, C) - (C,) via broadcasting
+        nmd_f32 = mean_channel - mean_to_use                                 # (B, C) - (C,)
+        nmd = tf.cast(nmd_f32, self.compute_dtype)
+
         return output, nmd
+
+    def compute_output_shape(self, input_shape):
+        if self.return_nmd:
+            batch = input_shape[0]
+            channels = input_shape[-1]
+            return (input_shape, (batch, channels))
+        return input_shape
 
     def get_config(self):
         config = super().get_config()
@@ -605,12 +762,163 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
         })
         return config
 
+# class MaskedConv1D(tf.keras.layers.Layer):
+#     """
+#     Masked 1D convolution that accepts an optional mask tensor and sets
+#     mask positions to zero before applying convolution. Also, propagates the mask
+#     to the next layer. Accepts inputs like (batch, frames, length, channels) where
+#     batch and length dimention can be unknown.
+#     """
+
+#     def __init__(
+#         self,
+#         filters,
+#         kernel_size,
+#         strides=1,
+#         axis=-1,
+#         padding="valid",
+#         dilation_rate=1,
+#         activation=None,
+#         use_bias=True,
+#         kernel_initializer="glorot_uniform",
+#         bias_initializer="zeros",
+#         kernel_regularizer=None,
+#         dtype=None,
+#         **kwargs,
+#     ):
+#         super().__init__(**kwargs)
+#         self.axis = axis
+#         self.filters = filters
+#         self.kernel_size = kernel_size
+#         self.strides = strides
+#         self.padding = padding.upper()
+#         self.dilation_rate = dilation_rate
+#         self.activation = tf.keras.activations.get(activation)
+#         self.use_bias = use_bias
+#         self.kernel_initializer = tf.keras.initializers.get(kernel_initializer)
+#         self.bias_initializer = tf.keras.initializers.get(bias_initializer)
+#         self.kernel_regularizer = kernel_regularizer
+
+#     def build(self, input_shape):
+#         channel_axis = self.axis
+#         input_dim = input_shape[channel_axis]
+#         kernel_shape = (self.kernel_size, input_dim, self.filters)
+
+#         self.kernel = self.add_weight(
+#             shape=kernel_shape,
+#             initializer=self.kernel_initializer,
+#             regularizer=self.kernel_regularizer,
+#             name="kernel",
+#             trainable=True,
+#         )
+#         if self.use_bias:
+#             self.bias = self.add_weight(
+#                 shape=(self.filters,),
+#                 initializer=self.bias_initializer,
+#                 name="bias",
+#                 trainable=True,
+#             )
+#         else:
+#             self.bias = None
+#         super().build(input_shape)
+
+
+#     def call(self, inputs, mask=None):
+#         input_shape = tf.shape(inputs)
+#         output_shape = self.compute_output_shape(input_shape)
+
+#         output_mask = None
+#         if mask is not None:
+#             mask = tf.cast(mask, dtype=inputs.dtype)
+#             inputs = inputs * tf.expand_dims(mask, axis=-1)
+
+#             # compute output mask here (part of the graph, fine during training/inference)
+#             reshaped_mask = tf.reshape(mask, (-1, input_shape[2]))
+#             mask = tf.expand_dims(reshaped_mask, axis=-1)
+#             mask_kernel = tf.ones((self.kernel_size, 1, 1), dtype=mask.dtype)
+#             output_mask = tf.nn.conv1d(
+#                 input=mask,
+#                 filters=mask_kernel,
+#                 stride=self.strides,
+#                 padding=self.padding,
+#                 dilations=self.dilation_rate,
+#                 data_format="NWC",
+#             )
+#             output_mask = tf.equal(output_mask, self.kernel_size)
+#             output_mask = tf.squeeze(output_mask, axis=-1)
+#             output_mask = tf.reshape(output_mask, shape=output_shape[:-1])
+
+#         # conv1d on actual data
+#         reshaped_inputs = tf.reshape(inputs, (-1, input_shape[2], input_shape[3]))
+#         outputs = tf.nn.conv1d(
+#             input=reshaped_inputs,
+#             filters=self.kernel,
+#             stride=self.strides,
+#             padding=self.padding,
+#             dilations=self.dilation_rate,
+#             data_format="NWC",
+#         )
+#         if self.use_bias:
+#             outputs = tf.nn.bias_add(outputs, self.bias, data_format="NWC")
+#         if self.activation is not None:
+#             outputs = self.activation(outputs)
+
+#         outputs = tf.reshape(outputs, output_shape)
+
+#         # stash mask so compute_mask() can forward it
+#         self._output_mask = output_mask
+#         return outputs
+
+#     def compute_mask(self, inputs, mask=None):
+#         # never recompute, just return the cached mask
+#         return getattr(self, "_output_mask", None)
+
+#     def get_config(self):
+#         config = super(MaskedConv1D, self).get_config()
+#         config.update(
+#             {
+#                 "filters": self.filters,
+#                 "kernel_size": self.kernel_size,
+#                 "strides": self.strides,
+#                 "padding": self.padding.lower(),
+#                 "dilation_rate": self.dilation_rate,
+#                 "activation": tf.keras.activations.serialize(self.activation),
+#                 "use_bias": self.use_bias,
+#                 "kernel_initializer": tf.keras.initializers.serialize(
+#                     self.kernel_initializer
+#                 ),
+#                 "bias_initializer": tf.keras.initializers.serialize(
+#                     self.bias_initializer
+#                 ),
+#             }
+#         )
+#         return config
+
+#     def compute_output_shape(self, input_shape):
+#         """
+#         compute the output shape only if the length dimention is not None.
+#         """
+#         length = input_shape[2]
+#         if length is not None:
+#             if self.padding == "SAME":
+#                 out_length = (length + self.strides - 1) // self.strides
+#             elif self.padding == "VALID":
+#                 out_length = (
+#                     length - self.dilation_rate * (self.kernel_size - 1) - 1
+#                 ) // self.strides + 1
+#             else:
+#                 raise ValueError("Invalid padding type.")
+#             out_length = out_length
+#             return (input_shape[0], input_shape[1], out_length, self.filters)
+#         else:
+#             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
+
 class MaskedConv1D(tf.keras.layers.Layer):
     """
     Masked 1D convolution that accepts an optional mask tensor and sets
-    mask positions to zero before applying convolution. Also, propagates the mask
+    mask positions to zero before applying convolution. Also propagates the mask
     to the next layer. Accepts inputs like (batch, frames, length, channels) where
-    batch and length dimention can be unknown.
+    batch and length dimension can be unknown.
     """
 
     def __init__(
@@ -626,9 +934,13 @@ class MaskedConv1D(tf.keras.layers.Layer):
         kernel_initializer="glorot_uniform",
         bias_initializer="zeros",
         kernel_regularizer=None,
+        dtype=None,   # keep for compatibility, but usually leave None under MP
         **kwargs,
     ):
+        if dtype is not None:
+            kwargs["dtype"] = dtype  # let Keras handle policy + dtype
         super().__init__(**kwargs)
+
         self.axis = axis
         self.filters = filters
         self.kernel_size = kernel_size
@@ -641,67 +953,84 @@ class MaskedConv1D(tf.keras.layers.Layer):
         self.bias_initializer = tf.keras.initializers.get(bias_initializer)
         self.kernel_regularizer = kernel_regularizer
 
+        self.supports_masking = True
+
     def build(self, input_shape):
         channel_axis = self.axis
-        input_dim = input_shape[channel_axis]
+        input_dim = int(input_shape[channel_axis])
         kernel_shape = (self.kernel_size, input_dim, self.filters)
 
+        # IMPORTANT: use variable_dtype so vars stay float32 under mixed_float16
         self.kernel = self.add_weight(
+            name="kernel",
             shape=kernel_shape,
             initializer=self.kernel_initializer,
             regularizer=self.kernel_regularizer,
-            name="kernel",
             trainable=True,
+            dtype=self.variable_dtype,
         )
         if self.use_bias:
             self.bias = self.add_weight(
+                name="bias",
                 shape=(self.filters,),
                 initializer=self.bias_initializer,
-                name="bias",
                 trainable=True,
+                dtype=self.variable_dtype,
             )
         else:
             self.bias = None
+
         super().build(input_shape)
 
-
     def call(self, inputs, mask=None):
+        # Inputs arrive in compute_dtype under policy (e.g. float16)
+        # Be explicit:
+        inputs = tf.cast(inputs, self.compute_dtype)
+
         input_shape = tf.shape(inputs)
         output_shape = self.compute_output_shape(input_shape)
 
         output_mask = None
         if mask is not None:
-            mask = tf.cast(mask, dtype=inputs.dtype)
-            inputs = inputs * tf.expand_dims(mask, axis=-1)
+            # Broadcast mask, but do mask math in float32 for stability
+            mask = tf.cast(mask, tf.float32)
+            # apply mask on inputs (cast back to compute_dtype)
+            inputs = inputs * tf.cast(tf.expand_dims(mask, axis=-1), self.compute_dtype)
 
-            # compute output mask here (part of the graph, fine during training/inference)
+            # compute output mask (pure mask math in float32)
             reshaped_mask = tf.reshape(mask, (-1, input_shape[2]))
-            mask = tf.expand_dims(reshaped_mask, axis=-1)
-            mask_kernel = tf.ones((self.kernel_size, 1, 1), dtype=mask.dtype)
-            output_mask = tf.nn.conv1d(
-                input=mask,
+            mask_1d = tf.expand_dims(reshaped_mask, axis=-1)
+            mask_kernel = tf.ones((self.kernel_size, 1, 1), dtype=tf.float32)
+
+            mask_conv = tf.nn.conv1d(
+                input=mask_1d,
                 filters=mask_kernel,
                 stride=self.strides,
                 padding=self.padding,
                 dilations=self.dilation_rate,
                 data_format="NWC",
             )
-            output_mask = tf.equal(output_mask, self.kernel_size)
+            output_mask = tf.equal(mask_conv, float(self.kernel_size))
             output_mask = tf.squeeze(output_mask, axis=-1)
             output_mask = tf.reshape(output_mask, shape=output_shape[:-1])
 
         # conv1d on actual data
         reshaped_inputs = tf.reshape(inputs, (-1, input_shape[2], input_shape[3]))
+
+        # Cast kernel to compute dtype when mixing with activations
+        kernel = tf.cast(self.kernel, self.compute_dtype)
+
         outputs = tf.nn.conv1d(
             input=reshaped_inputs,
-            filters=self.kernel,
+            filters=kernel,
             stride=self.strides,
             padding=self.padding,
             dilations=self.dilation_rate,
             data_format="NWC",
         )
         if self.use_bias:
-            outputs = tf.nn.bias_add(outputs, self.bias, data_format="NWC")
+            bias = tf.cast(self.bias, self.compute_dtype)
+            outputs = tf.nn.bias_add(outputs, bias, data_format="NWC")
         if self.activation is not None:
             outputs = self.activation(outputs)
 
@@ -716,7 +1045,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         return getattr(self, "_output_mask", None)
 
     def get_config(self):
-        config = super(MaskedConv1D, self).get_config()
+        config = super().get_config()
         config.update(
             {
                 "filters": self.filters,
@@ -732,13 +1061,20 @@ class MaskedConv1D(tf.keras.layers.Layer):
                 "bias_initializer": tf.keras.initializers.serialize(
                     self.bias_initializer
                 ),
+                "axis": self.axis,
+                "kernel_regularizer": tf.keras.regularizers.serialize(
+                    self.kernel_regularizer
+                )
+                if self.kernel_regularizer is not None
+                else None,
             }
         )
         return config
 
     def compute_output_shape(self, input_shape):
         """
-        compute the output shape only if the length dimention is not None.
+        compute the output shape only if the length dimension is not None.
+        This version is written to work with either TensorShape or tf.Tensor.
         """
         length = input_shape[2]
         if length is not None:
@@ -750,11 +1086,97 @@ class MaskedConv1D(tf.keras.layers.Layer):
                 ) // self.strides + 1
             else:
                 raise ValueError("Invalid padding type.")
-            out_length = out_length
             return (input_shape[0], input_shape[1], out_length, self.filters)
         else:
             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
+
+# class ResidualBlock(tf.keras.layers.Layer):
+#     """The Residual block of ResNet models."""
+
+#     def __init__(
+#         self,
+#         use_1x1conv=False,
+#         block_number=1,
+#         activation="gelu",
+#         return_nmd=False,
+#         **kwargs,
+#     ):
+        
+#         super().__init__()
+#         self.supports_masking = True
+#         self.filters = kwargs.get('filters')
+#         self.padding = kwargs.get('padding', 'same').upper()
+#         self.strides = kwargs.get('strides', 1)
+#         self.block_number = block_number
+#         self.return_nmd = return_nmd
+#         self.conv1 = MaskedConv1D(
+#             padding=self.padding,
+#             name=f"masked_conv1d_blk{self.block_number}_1",
+#             **{k:v for k,v in kwargs.items() if k not in ["name", "padding"]}
+#         )
+#         self.conv2 = MaskedConv1D(
+#             padding=self.padding,
+#             name=f"masked_conv1d_blk{self.block_number}_2",
+#             **{k:v for k,v in kwargs.items() if k not in ["name", "padding", "strides"]}
+#         )
+#         self.conv3 = None
+#         if use_1x1conv or kwargs.get('strides') > 1:
+#             self.conv3 = MaskedConv1D(
+#                  padding=self.padding,
+#                  kernel_size=1,
+#                  name=f"masked_conv1d_blk{self.block_number}_bypass",
+#                  **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name", "padding"]}
+#             )
+#             self.bn3 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_bypass",)
+#         self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1",)
+#         self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2", return_nmd=return_nmd)
+#         self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
+#         self.activation = tf.keras.layers.Activation(activation, name=f"resblock_activation_blk{self.block_number}")
+
+#     def call(self, inputs, mask=None):
+#         x = self.conv1(inputs, mask=mask)
+#         x = self.bn1(x)
+#         x = self.activation(x)
+#         x = self.conv2(x)
+#         if self.return_nmd:
+#             x, x_nmd = self.bn2(x)
+#         else:
+#             x = self.bn2(x)
+        
+#         if self.conv3 is not None:
+#             x = self.add([x, self.bn3(self.conv3(inputs))])
+#         else:       
+#             x = self.add([x, inputs])
+#         if self.return_nmd:
+#             return self.activation(x), x_nmd
+#         return self.activation(x)
+
+#     def compute_output_shape(self, input_shape):
+#         """
+#         compute the output shape only if the length dimention is not None.
+#         """
+#         length = input_shape[2]
+#         if length is not None:
+#             if self.padding == "SAME":
+#                 out_length = (length + self.strides - 1) // self.strides
+#             elif self.padding == "VALID":
+#                 out_length = (
+#                     length - self.dilation_rate * (self.kernel_size - 1) - 1
+#                 ) // self.strides + 1
+#             else:
+#                 raise ValueError("Invalid padding type.")
+#             out_length = out_length
+#             if self.return_nmd:
+#                 return (input_shape[0], input_shape[1], out_length, self.filters), (input_shape[0], self.filters)
+#             return (input_shape[0], input_shape[1], out_length, self.filters)
+#         else:
+#             if self.return_nmd:
+#                 return (input_shape[0], input_shape[1], input_shape[2], self.filters), (input_shape[0], self.filters)
+#             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
+
+
+#     # Todo: implement output mask computation -> return the mask computed by the last layer?
 
 class ResidualBlock(tf.keras.layers.Layer):
     """The Residual block of ResNet models."""
@@ -767,60 +1189,104 @@ class ResidualBlock(tf.keras.layers.Layer):
         return_nmd=False,
         **kwargs,
     ):
-        
-        super().__init__()
+        # --- 1. Pull out args meant for the convs, so they don't go to super().__init__ ---
+        self.filters = kwargs.pop("filters", None)
+        self.kernel_size = kwargs.pop("kernel_size", 3)
+        self.strides = kwargs.pop("strides", 1)
+        self.padding = kwargs.pop("padding", "same").upper()
+        self.dilation_rate = kwargs.pop("dilation_rate", 1)
+        self.use_bias = kwargs.pop("use_bias", True)
+        self.kernel_regularizer = kwargs.pop("kernel_regularizer", None)
+        self.kernel_initializer = kwargs.pop("kernel_initializer", "glorot_uniform")
+        self.bias_initializer = kwargs.pop("bias_initializer", "zeros")
+
+        # now kwargs only contains things Layer.__init__ understands (name, dtype, trainable, etc.)
+        super().__init__(**kwargs)
+
         self.supports_masking = True
-        self.filters = kwargs.get('filters')
-        self.padding = kwargs.get('padding', 'same').upper()
-        self.strides = kwargs.get('strides', 1)
         self.block_number = block_number
         self.return_nmd = return_nmd
-        self.conv1 = MaskedConv1D(
-            padding=self.padding,
-            name=f"masked_conv1d_blk{self.block_number}_1",
-            **{k:v for k,v in kwargs.items() if k not in ["name", "padding"]}
-        )
-        self.conv2 = MaskedConv1D(
-            padding=self.padding,
-            name=f"masked_conv1d_blk{self.block_number}_2",
-            **{k:v for k,v in kwargs.items() if k not in ["name", "padding", "strides"]}
-        )
-        self.conv3 = None
-        if use_1x1conv or kwargs.get('strides') > 1:
-            self.conv3 = MaskedConv1D(
-                 padding=self.padding,
-                 kernel_size=1,
-                 name=f"masked_conv1d_blk{self.block_number}_bypass",
-                 **{k:v for k,v in kwargs.items() if k not in ["kernel_size", "name", "padding"]}
-            )
-            self.bn3 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_bypass",)
-        self.bn1 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_1",)
-        self.bn2 = MaskedBatchNorm(name=f"masked_batchnorm_blk{self.block_number}_2", return_nmd=return_nmd)
-        self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
-        self.activation = tf.keras.layers.Activation(activation, name=f"resblock_activation_blk{self.block_number}")
 
-    def call(self, inputs, mask=None):
+        # --- 2. Build the internal conv/bn/add layers using the extracted values ---
+
+        conv_common = dict(
+            filters=self.filters,
+            kernel_size=self.kernel_size,
+            strides=self.strides,
+            padding=self.padding,
+            dilation_rate=self.dilation_rate,
+            use_bias=self.use_bias,
+            kernel_initializer=self.kernel_initializer,
+            bias_initializer=self.bias_initializer,
+            kernel_regularizer=self.kernel_regularizer,
+        )
+
+        # first conv
+        self.conv1 = MaskedConv1D(
+            name=f"masked_conv1d_blk{self.block_number}_1",
+            **conv_common,
+        )
+
+        # second conv has stride = 1
+        conv2_common = conv_common.copy()
+        conv2_common["strides"] = 1
+        self.conv2 = MaskedConv1D(
+            name=f"masked_conv1d_blk{self.block_number}_2",
+            **conv2_common,
+        )
+
+        # optional 1x1 conv for the shortcut
+        self.conv3 = None
+        self.bn3 = None
+        if use_1x1conv or self.strides > 1:
+            bypass_common = conv_common.copy()
+            bypass_common["kernel_size"] = 1
+            self.conv3 = MaskedConv1D(
+                name=f"masked_conv1d_blk{self.block_number}_bypass",
+                **bypass_common,
+            )
+            self.bn3 = MaskedBatchNorm(
+                name=f"masked_batchnorm_blk{self.block_number}_bypass",
+            )
+
+        self.bn1 = MaskedBatchNorm(
+            name=f"masked_batchnorm_blk{self.block_number}_1",
+        )
+        self.bn2 = MaskedBatchNorm(
+            name=f"masked_batchnorm_blk{self.block_number}_2",
+            return_nmd=return_nmd,
+        )
+
+        self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
+        self.activation_layer = tf.keras.layers.Activation(
+            activation, name=f"resblock_activation_blk{self.block_number}"
+        )
+
+    def call(self, inputs, mask=None, training=None):
         x = self.conv1(inputs, mask=mask)
-        x = self.bn1(x)
-        x = self.activation(x)
+        x = self.bn1(x, training=training)
+        x = self.activation_layer(x)
+
         x = self.conv2(x)
         if self.return_nmd:
-            x, x_nmd = self.bn2(x)
+            x, x_nmd = self.bn2(x, training=training)
         else:
             x = self.bn2(x)
-        
+
         if self.conv3 is not None:
-            x = self.add([x, self.bn3(self.conv3(inputs))])
-        else:       
-            x = self.add([x, inputs])
+            shortcut = self.conv3(inputs, mask=mask)
+            shortcut = self.bn3(shortcut, training=training)
+        else:
+            shortcut = inputs
+
+        x = self.add([x, shortcut])
+        x = self.activation_layer(x)
+
         if self.return_nmd:
-            return self.activation(x), x_nmd
-        return self.activation(x)
+            return x, x_nmd
+        return x
 
     def compute_output_shape(self, input_shape):
-        """
-        compute the output shape only if the length dimention is not None.
-        """
         length = input_shape[2]
         if length is not None:
             if self.padding == "SAME":
@@ -831,17 +1297,48 @@ class ResidualBlock(tf.keras.layers.Layer):
                 ) // self.strides + 1
             else:
                 raise ValueError("Invalid padding type.")
-            out_length = out_length
             if self.return_nmd:
-                return (input_shape[0], input_shape[1], out_length, self.filters), (input_shape[0], self.filters)
+                return (
+                    (input_shape[0], input_shape[1], out_length, self.filters),
+                    (input_shape[0], self.filters),
+                )
             return (input_shape[0], input_shape[1], out_length, self.filters)
         else:
             if self.return_nmd:
-                return (input_shape[0], input_shape[1], input_shape[2], self.filters), (input_shape[0], self.filters)
+                return (
+                    (input_shape[0], input_shape[1], input_shape[2], self.filters),
+                    (input_shape[0], self.filters),
+                )
             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
-
-    # Todo: implement output mask computation -> return the mask computed by the last layer?
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "use_1x1conv": hasattr(self, "conv3") and self.conv3 is not None,
+                "block_number": self.block_number,
+                "activation": tf.keras.activations.serialize(self.activation_layer.activation),
+                "return_nmd": self.return_nmd,
+                "filters": self.filters,
+                "kernel_size": self.kernel_size,
+                "strides": self.strides,
+                "padding": self.padding.lower(),
+                "dilation_rate": self.dilation_rate,
+                "use_bias": self.use_bias,
+                "kernel_initializer": tf.keras.initializers.serialize(
+                    self.kernel_initializer
+                ),
+                "bias_initializer": tf.keras.initializers.serialize(
+                    self.bias_initializer
+                ),
+                "kernel_regularizer": tf.keras.regularizers.serialize(
+                    self.kernel_regularizer
+                )
+                if self.kernel_regularizer is not None
+                else None,
+            }
+        )
+        return config
 
 
 # To do: implement a method to set epsilon considering the data type of the tensors passed to the layers

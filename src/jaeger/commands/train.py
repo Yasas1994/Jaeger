@@ -758,6 +758,9 @@ class DynamicModelBuilder:
             "rmsprop": tf.keras.optimizers.RMSprop,
             "adagrad": tf.keras.optimizers.Adagrad,
         }
+        # if self.cfg["mix_precision"]:
+        #     logger.info("using log scale optimizer")
+        #     return tf.keras.mixed_precision.LossScaleOptimizer(optimizers[name](**kwargs))
         return optimizers[name](**kwargs)
 
     def _get_pooler(self, name):
@@ -825,7 +828,14 @@ def train_fragment_core(**kwargs):
 
     #ic(kwargs.get("config"))
     #ic(kwargs.get("from_last_checkpoint"))
+    if kwargs.get("mixed_precision", False):
+        logger.info("experiemental: using mix precision floats for faster training")
+        policy = tf.keras.mixed_precision.Policy('mixed_float16')
+        #policy = tf.keras.mixed_precision.Policy('mixed_bfloat16')
+        tf.keras.mixed_precision.set_global_policy(policy)
+
     config = load_model_config(Path(kwargs.get("config")))
+    config["mix_precision"] = kwargs.get("mix_precision", False)
     config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
     config["force"] = kwargs.get("force")
     

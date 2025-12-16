@@ -287,6 +287,12 @@ def tune(**kwargs):
     help="save the model with weights from last checkpoints without training",
 )
 @click.option(
+    "--mixed_precision",
+    is_flag=True,
+    required=False,
+    help="use mix-precision floats to speed up training",
+)
+@click.option(
     "--meta",
     type=click.Path(
         exists=False,
