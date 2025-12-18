@@ -1422,7 +1422,7 @@ class MetricModel(tf.keras.Model):
             x, y = data
 
         y_pred = self(x, training=False)
-        base_loss = self.loss_fn(y, y_pred)
+        base_loss = self.loss_fn([y, y_pred])
         reg_loss = tf.add_n(self.losses) if self.losses else 0.0
         total_loss = base_loss + reg_loss
 
