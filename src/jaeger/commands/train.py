@@ -837,6 +837,23 @@ def train_fragment_core(**kwargs):
 
     #ic(kwargs.get("config"))
     #ic(kwargs.get("from_last_checkpoint"))
+    gpus = tf.config.list_physical_devices('GPU')
+    num_gpus = len(gpus)
+    logger.info(f"Physical GPUs detected: {num_gpus}")
+
+    if num_gpus > 1:
+        # Use all visible GPUs
+        strategy = tf.distribute.MirroredStrategy()
+        logger.info(f"Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas")
+    elif num_gpus == 1:
+        # Explicitly use the single GPU
+        strategy = tf.distribute.OneDeviceStrategy(device="/GPU:0")
+        logger.info("Using OneDeviceStrategy on /GPU:0")
+    else:
+        # Fallback to CPU
+        strategy = tf.distribute.get_strategy()  # default no-op strategy
+        logger.info("No GPU detected, using default CPU strategy")
+
     if kwargs.get("mixed_precision", False):
         logger.info("experiemental: using mix precision floats for faster training")
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
