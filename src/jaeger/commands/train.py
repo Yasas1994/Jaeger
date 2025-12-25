@@ -859,275 +859,277 @@ def train_fragment_core(**kwargs):
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         #policy = tf.keras.mixed_precision.Policy('mixed_bfloat16')
         tf.keras.mixed_precision.set_global_policy(policy)
+    # init a stratergy scope
+    with strategy.scope():
+        logger.info("initializing model")
+        config = load_model_config(Path(kwargs.get("config")))
+        config["mix_precision"] = kwargs.get("mix_precision", False)
+        config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
+        config["force"] = kwargs.get("force")
+        
+        # Initialize the model
+        builder = DynamicModelBuilder(config)
+        models = builder.build_fragment_classifier()
+        models.get("rep_model").summary()
+        model_num_params = numerize(models.get("rep_model").count_params(), decimal=1)
 
-    config = load_model_config(Path(kwargs.get("config")))
-    config["mix_precision"] = kwargs.get("mix_precision", False)
-    config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
-    config["force"] = kwargs.get("force")
-    
-    # Initialize the model
-    builder = DynamicModelBuilder(config)
-    models = builder.build_fragment_classifier()
-    models.get("rep_model").summary()
-    model_num_params = numerize(models.get("rep_model").count_params(), decimal=1)
+        # =================train classifier ======================
+        builder.compile_model(models, train_branch="classifier")
 
-    # =================train classifier ======================
-    builder.compile_model(models, train_branch="classifier")
+        # for i in models.get("jaeger_classifier").layers:
+        #     ic(i.name, i.trainable)
 
-    # for i in models.get("jaeger_classifier").layers:
-    #     ic(i.name, i.trainable)
+        # =================load train data ======================
+        string_processor_config = builder._get_string_processor_config()
+        _train_data = builder._get_fragment_paths()
+        train_data = {"train": None, "validation": None}
+        # classifier_epochs: 50
+        # reliability_epochs: 50
+        # reliability_train_steps: -1 # -1 to run till the generator exhausts
 
-    # =================load train data ======================
-    string_processor_config = builder._get_string_processor_config()
-    _train_data = builder._get_fragment_paths()
-    train_data = {"train": None, "validation": None}
-    # classifier_epochs: 50
-    # reliability_epochs: 50
-    # reliability_train_steps: -1 # -1 to run till the generator exhausts
-
-    for k, v in _train_data.items():
-        _data = tf.data.TextLineDataset(
-            v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
-        )
-        _buffer_size = string_processor_config.get("buffer_size")
-        if string_processor_config.get("input_type") == "translated":
-            padded_shape = {
-                # "translated" : (6, None,string_processor_config.get("codon_depth"))
-                "translated": [
-                    6,
-                    None
-                ] if string_processor_config.get("use_embedding_layer") is True else
-                [
-                    6,
-                    None,
-                    string_processor_config.get("codon_depth"),
-                ]
-            }
-        elif string_processor_config.get("input_type") == "nucleotide":
-            padded_shape = {
-                "nucleotide": [2, string_processor_config.get("crop_size"), 4]
-            }
-        train_data[k] = (
-            _data.map(
-                process_string_train(
-                    codons=string_processor_config.get("codon"),
-                    codon_num=string_processor_config.get("codon_id"),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    label_original=string_processor_config.get("classifier_labels", None),
-                    label_alternative=string_processor_config.get("classifier_labels_map", None),
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    seq_onehot=string_processor_config.get("seq_onehot"),
-                    crop_size=string_processor_config.get("crop_size"),
-                    input_type=string_processor_config.get("input_type"),
-                    masking=string_processor_config.get("masking"),
-                    mutate=string_processor_config.get("mutate"),
-                    mutation_rate=string_processor_config.get("mutation_rate"),
-                    num_classes=builder.classifier_out_dim,
-                    class_label_onehot=False if "binary" in builder.train_cfg.get("loss_classifier", "categorical_crossentropy").lower() else True,
-                    shuffle=string_processor_config.get("shuffle"),
-                ),
-                num_parallel_calls=tf.data.AUTOTUNE,
+        for k, v in _train_data.items():
+            _data = tf.data.TextLineDataset(
+                v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
             )
-            .shuffle(
-                buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size,
-                # reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
-            )
-            .padded_batch(
-                batch_size=builder.train_cfg.get("batch_size"),
-                padded_shapes=(
-                    padded_shape,
-                    [builder.classifier_out_dim],
-                ),
-            )
-            .prefetch(tf.data.AUTOTUNE)
-        )
-    # for i in train_data["train"].take(1):
-    #     ic(i)
-
-    # ============ check if the model has converged ===========
-    checkpoint = builder._checkpoints
-    converged = checkpoint and checkpoint.get("classifier", {}).get(
-        "is_converged", False
-    )
-    if  kwargs.get("only_save", False) is False:
-        if (not converged and not kwargs.get("only_reliability_head", False)):
-            train_args = {
-                "validation_data": train_data.get("validation").take(
-                    builder.train_cfg.get("classifier_validation_steps")
-                ),
-                "epochs": builder.train_cfg.get("classifier_epochs"),
-                "callbacks": builder.get_callbacks(branch="classifier"),
-            }
-
-            if checkpoint:
-                train_args["initial_epoch"] = checkpoint.get("classifier", {}).get(
-                    "epoch", 0
+            _buffer_size = string_processor_config.get("buffer_size")
+            if string_processor_config.get("input_type") == "translated":
+                padded_shape = {
+                    # "translated" : (6, None,string_processor_config.get("codon_depth"))
+                    "translated": [
+                        6,
+                        None
+                    ] if string_processor_config.get("use_embedding_layer") is True else
+                    [
+                        6,
+                        None,
+                        string_processor_config.get("codon_depth"),
+                    ]
+                }
+            elif string_processor_config.get("input_type") == "nucleotide":
+                padded_shape = {
+                    "nucleotide": [2, string_processor_config.get("crop_size"), 4]
+                }
+            train_data[k] = (
+                _data.map(
+                    process_string_train(
+                        codons=string_processor_config.get("codon"),
+                        codon_num=string_processor_config.get("codon_id"),
+                        codon_depth=string_processor_config.get("codon_depth"),
+                        label_original=string_processor_config.get("classifier_labels", None),
+                        label_alternative=string_processor_config.get("classifier_labels_map", None),
+                        ngram_width=string_processor_config.get("ngram_width"),
+                        seq_onehot=string_processor_config.get("seq_onehot"),
+                        crop_size=string_processor_config.get("crop_size"),
+                        input_type=string_processor_config.get("input_type"),
+                        masking=string_processor_config.get("masking"),
+                        mutate=string_processor_config.get("mutate"),
+                        mutation_rate=string_processor_config.get("mutation_rate"),
+                        num_classes=builder.classifier_out_dim,
+                        class_label_onehot=False if "binary" in builder.train_cfg.get("loss_classifier", "categorical_crossentropy").lower() else True,
+                        shuffle=string_processor_config.get("shuffle"),
+                    ),
+                    num_parallel_calls=tf.data.AUTOTUNE,
                 )
+                .shuffle(
+                    buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size,
+                    # reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                )
+                .padded_batch(
+                    batch_size=builder.train_cfg.get("batch_size"),
+                    padded_shapes=(
+                        padded_shape,
+                        [builder.classifier_out_dim],
+                    ),
+                )
+                .prefetch(tf.data.AUTOTUNE)
+            )
+        # for i in train_data["train"].take(1):
+        #     ic(i)
 
-            if kwargs.get("only_classification_head", False) or kwargs.get(
-                "only_heads", False
-            ):
-                models.get("rep_model").trainable = False
-
-            # ============ self-supervised pre-training =============================
-            if kwargs.get("self_supervised_pretraining", False):
-                builder.compile_model(models, train_branch="pretrain")
-                models.get("jaeger_projection").summary()
-                self_supervised_train_args = {
+        # ============ check if the model has converged ===========
+        checkpoint = builder._checkpoints
+        converged = checkpoint and checkpoint.get("classifier", {}).get(
+            "is_converged", False
+        )
+        if  kwargs.get("only_save", False) is False:
+            if (not converged and not kwargs.get("only_reliability_head", False)):
+                train_args = {
                     "validation_data": train_data.get("validation").take(
                         builder.train_cfg.get("classifier_validation_steps")
                     ),
-                    "epochs": builder.train_cfg.get("projection_epochs"),
-                    "callbacks": builder.get_callbacks(branch="projection"),
+                    "epochs": builder.train_cfg.get("classifier_epochs"),
+                    "callbacks": builder.get_callbacks(branch="classifier"),
                 }
+
                 if checkpoint:
-                    self_supervised_train_args["initial_epoch"] = checkpoint.get("projection", {}).get(
+                    train_args["initial_epoch"] = checkpoint.get("classifier", {}).get(
                         "epoch", 0
                     )
-                models.get("jaeger_projection").fit(
+
+                if kwargs.get("only_classification_head", False) or kwargs.get(
+                    "only_heads", False
+                ):
+                    models.get("rep_model").trainable = False
+
+                # ============ self-supervised pre-training =============================
+                if kwargs.get("self_supervised_pretraining", False):
+                    builder.compile_model(models, train_branch="pretrain")
+                    models.get("jaeger_projection").summary()
+                    self_supervised_train_args = {
+                        "validation_data": train_data.get("validation").take(
+                            builder.train_cfg.get("classifier_validation_steps")
+                        ),
+                        "epochs": builder.train_cfg.get("projection_epochs"),
+                        "callbacks": builder.get_callbacks(branch="projection"),
+                    }
+                    if checkpoint:
+                        self_supervised_train_args["initial_epoch"] = checkpoint.get("projection", {}).get(
+                            "epoch", 0
+                        )
+                    models.get("jaeger_projection").fit(
+                        train_data.get("train").take(
+                            builder.train_cfg.get("classifier_train_steps")
+                        ),
+                        **self_supervised_train_args,
+                    )
+                # ============== train the classification model ==========================
+                models.get("jaeger_classifier").fit(
                     train_data.get("train").take(
-                        builder.train_cfg.get("classifier_train_steps")
+                        builder.train_cfg.get("classifier_train_steps"),
+                    
                     ),
-                    **self_supervised_train_args,
+                    class_weight = builder.train_cfg.get("classifier_class_weights"),
+                    **train_args,
                 )
-            # ============== train the classification model ==========================
-            models.get("jaeger_classifier").fit(
-                train_data.get("train").take(
-                    builder.train_cfg.get("classifier_train_steps"),
-                
-                ),
-                class_weight = builder.train_cfg.get("classifier_class_weights"),
-                **train_args,
+                # checkpoint_path = Path(builder.train_cfg.get("classifier_dir")) / "converged"
+                # checkpoint_path.touch()
+
+            else:
+                logger.info("Skipping training — classification model")
+
+        # ============== reliability model ========================
+        builder.compile_model(models, train_branch="reliability")
+        # for i in models.get("jaeger_reliability").layers:
+        #     ic(i.name, i.trainable)
+
+        _rel_train_data = builder._get_reliability_fragment_paths()
+        rel_train_data = {"train": None, "validation": None}
+        for k, v in _rel_train_data.items():
+            _data = tf.data.TextLineDataset(
+                v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
             )
-            # checkpoint_path = Path(builder.train_cfg.get("classifier_dir")) / "converged"
-            # checkpoint_path.touch()
-
-        else:
-            logger.info("Skipping training — classification model")
-
-    # ============== reliability model ========================
-    builder.compile_model(models, train_branch="reliability")
-    # for i in models.get("jaeger_reliability").layers:
-    #     ic(i.name, i.trainable)
-
-    _rel_train_data = builder._get_reliability_fragment_paths()
-    rel_train_data = {"train": None, "validation": None}
-    for k, v in _rel_train_data.items():
-        _data = tf.data.TextLineDataset(
-            v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
-        )
-        if string_processor_config.get("input_type") == "translated":
-            padded_shape = {
-                "translated": [
-                    6,
-                    # string_processor_config.get("crop_size") // 3 - 1,
-                    # string_processor_config.get("codon_depth"),
-                    None
-                ] if string_processor_config.get("use_embedding_layer") is True else
-                [
-                    6,
-                    string_processor_config.get("crop_size") // 3 - 1,
-                    string_processor_config.get("codon_depth"),
-                ]
-            }
-        elif string_processor_config.get("input_type") == "nucleotide":
-            padded_shape = {
-                "nucleotide": [2, string_processor_config.get("crop_size"), 4]
-            }
-        rel_train_data[k] = (
-            _data.map(
-                process_string_train(
-                    codons=string_processor_config.get("codon"),
-                    codon_num=string_processor_config.get("codon_id"),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    seq_onehot=string_processor_config.get("seq_onehot"),
-                    crop_size=string_processor_config.get("crop_size"),
-                    input_type=string_processor_config.get("input_type"),
-                    masking=string_processor_config.get("masking"),
-                    num_classes=builder.reliability_out_dim,
-                    class_label_onehot=False,
-                ),
-                num_parallel_calls=tf.data.AUTOTUNE,
-            )
-            .shuffle(
-                buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size,
-                # reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
-            )
-            .padded_batch(
-                batch_size=builder.train_cfg.get("batch_size"),
-                padded_shapes=(
-                    padded_shape,
-                    [builder.reliability_out_dim],
-                ),
-            )
-            .prefetch(tf.data.AUTOTUNE)
-        )
-    # ============== check if the model has converged ========
-
-    checkpoint = builder._checkpoints
-    converged = checkpoint and checkpoint.get("reliability", {}).get(
-        "is_converged", False
-    )
-    if kwargs.get("only_save", False) is False:
-        #ic(kwargs.get("only_save", False))
-        if (not converged and not kwargs.get("only_classification_head", False)):
-            train_args = {
-                "validation_data": rel_train_data.get("validation").take(
-                    builder.train_cfg.get("reliability_validation_steps")
-                ),
-                "epochs": builder.train_cfg.get("reliability_epochs"),
-                "callbacks": builder.get_callbacks(branch="reliability"),
-            }
-
-            if checkpoint:
-                train_args["initial_epoch"] = checkpoint.get("reliability", {}).get(
-                    "epoch", 0
+            if string_processor_config.get("input_type") == "translated":
+                padded_shape = {
+                    "translated": [
+                        6,
+                        # string_processor_config.get("crop_size") // 3 - 1,
+                        # string_processor_config.get("codon_depth"),
+                        None
+                    ] if string_processor_config.get("use_embedding_layer") is True else
+                    [
+                        6,
+                        string_processor_config.get("crop_size") // 3 - 1,
+                        string_processor_config.get("codon_depth"),
+                    ]
+                }
+            elif string_processor_config.get("input_type") == "nucleotide":
+                padded_shape = {
+                    "nucleotide": [2, string_processor_config.get("crop_size"), 4]
+                }
+            rel_train_data[k] = (
+                _data.map(
+                    process_string_train(
+                        codons=string_processor_config.get("codon"),
+                        codon_num=string_processor_config.get("codon_id"),
+                        codon_depth=string_processor_config.get("codon_depth"),
+                        ngram_width=string_processor_config.get("ngram_width"),
+                        seq_onehot=string_processor_config.get("seq_onehot"),
+                        crop_size=string_processor_config.get("crop_size"),
+                        input_type=string_processor_config.get("input_type"),
+                        masking=string_processor_config.get("masking"),
+                        num_classes=builder.reliability_out_dim,
+                        class_label_onehot=False,
+                    ),
+                    num_parallel_calls=tf.data.AUTOTUNE,
                 )
-
-            models.get("jaeger_reliability").fit(
-                rel_train_data.get("train").take(
-                    builder.train_cfg.get("reliability_train_steps")
-                ),
-                class_weight = builder.train_cfg.get("reliability_class_weights"),
-                **train_args,
+                .shuffle(
+                    buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size,
+                    # reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
+                )
+                .padded_batch(
+                    batch_size=builder.train_cfg.get("batch_size"),
+                    padded_shapes=(
+                        padded_shape,
+                        [builder.reliability_out_dim],
+                    ),
+                )
+                .prefetch(tf.data.AUTOTUNE)
             )
-            # checkpoint_path = Path(builder.train_cfg.get("reliability_dir")) / "converged"
-            # checkpoint_path.touch()
-        else:
-            logger.info("Skipping training — reliability model")
+        # ============== check if the model has converged ========
 
-    # ============= test final model =========================
-    logger.info("testing the final model")
-
-    models.get("jaeger_model").trainable = False
-    models.get("jaeger_classifier").evaluate(
-        train_data.get("validation").take(
-            100
+        checkpoint = builder._checkpoints
+        converged = checkpoint and checkpoint.get("reliability", {}).get(
+            "is_converged", False
         )
-    )
+        if kwargs.get("only_save", False) is False:
+            #ic(kwargs.get("only_save", False))
+            if (not converged and not kwargs.get("only_classification_head", False)):
+                train_args = {
+                    "validation_data": rel_train_data.get("validation").take(
+                        builder.train_cfg.get("reliability_validation_steps")
+                    ),
+                    "epochs": builder.train_cfg.get("reliability_epochs"),
+                    "callbacks": builder.get_callbacks(branch="reliability"),
+                }
 
-    models.get("jaeger_model").predict(
-        train_data.get("validation").take(
-            100
+                if checkpoint:
+                    train_args["initial_epoch"] = checkpoint.get("reliability", {}).get(
+                        "epoch", 0
+                    )
+
+                models.get("jaeger_reliability").fit(
+                    rel_train_data.get("train").take(
+                        builder.train_cfg.get("reliability_train_steps")
+                    ),
+                    class_weight = builder.train_cfg.get("reliability_class_weights"),
+                    **train_args,
+                )
+                # checkpoint_path = Path(builder.train_cfg.get("reliability_dir")) / "converged"
+                # checkpoint_path.touch()
+            else:
+                logger.info("Skipping training — reliability model")
+
+        # ============= test final model =========================
+        logger.info("testing the final model")
+
+        models.get("jaeger_model").trainable = False
+        models.get("jaeger_classifier").evaluate(
+            train_data.get("validation").take(
+                100
+            )
         )
-    )
 
-    # ============= saving ===================================
-    # saving model graph, weights, class map and train config
-    builder.save_model(
-        model=models.get("jaeger_model"), 
-        num_params=model_num_params,
-        suffix="fragment", # use _fragment or contig
-        metadata=kwargs.get("meta", None)
-    )
+        models.get("jaeger_model").predict(
+            train_data.get("validation").take(
+                100
+            )
+        )
 
-# def train_contig_core(**kwargs):
-#     """
-#     to do: contig consensus prediction model
-#     currently, the final predictions per-contig is obtained by averaing the
-#     per-fragment logits. Instead, we can learn a function to combine information
-#     from all fragments.
-#     """
-#     with open(kwargs.get("config"), "r") as f:
-#         config = yaml.safe_load(f)
+        # ============= saving ===================================
+        # saving model graph, weights, class map and train config
+        builder.save_model(
+            model=models.get("jaeger_model"), 
+            num_params=model_num_params,
+            suffix="fragment", # use _fragment or contig
+            metadata=kwargs.get("meta", None)
+        )
+
+    # def train_contig_core(**kwargs):
+    #     """
+    #     to do: contig consensus prediction model
+    #     currently, the final predictions per-contig is obtained by averaing the
+    #     per-fragment logits. Instead, we can learn a function to combine information
+    #     from all fragments.
+    #     """
+    #     with open(kwargs.get("config"), "r") as f:
+    #         config = yaml.safe_load(f)
