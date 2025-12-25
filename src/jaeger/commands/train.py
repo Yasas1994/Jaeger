@@ -255,6 +255,15 @@ class DynamicModelBuilder:
             models["arcface_loss"] = tf.keras.Model(
                 inputs=[labels, embeddings], outputs=loss, name="Arcface"
             )
+            if self._checkpoints.get("projection", {}).get("path", False):
+                # loads weights from the last checkpoint
+                models["jaeger_projection"].load_weights(
+                    self._checkpoints.get("projection").get("path"),
+                    skip_mismatch=True
+                )
+                logger.info(
+                    f"Loaded projection model weights from {self._checkpoints.get('projection').get('path')}"
+                )
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
@@ -748,7 +757,7 @@ class DynamicModelBuilder:
             _config["codon_depth"] = None
             _config["vocab_size"]  = 4
             _config["ngram_width"] = None
-        ic(_config)
+        #ic(_config)
         return _config
 
     def _get_optimizer(self, name, kwargs) -> Any:
@@ -954,6 +963,10 @@ def train_fragment_core(**kwargs):
                     "epochs": builder.train_cfg.get("projection_epochs"),
                     "callbacks": builder.get_callbacks(branch="projection"),
                 }
+                if checkpoint:
+                    self_supervised_train_args["initial_epoch"] = checkpoint.get("projection", {}).get(
+                        "epoch", 0
+                    )
                 models.get("jaeger_projection").fit(
                     train_data.get("train").take(
                         builder.train_cfg.get("classifier_train_steps")
