@@ -641,7 +641,7 @@ class DynamicModelBuilder:
             model.get("jaeger_projection").compile(
                 optimizer=self.optimizer,
                 loss_fn=model.get("arcface_loss"),
-                run_eagerly=True,
+                run_eagerly=False,
             )
             logger.info(f"model compiled for {train_branch}")
 
@@ -859,6 +859,7 @@ def train_fragment_core(**kwargs):
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         #policy = tf.keras.mixed_precision.Policy('mixed_bfloat16')
         tf.keras.mixed_precision.set_global_policy(policy)
+    multi_gpu = strategy.num_replicas_in_sync > 1
     # init a stratergy scope
     with strategy.scope():
         logger.info("initializing model")
@@ -940,6 +941,7 @@ def train_fragment_core(**kwargs):
                         padded_shape,
                         [builder.classifier_out_dim],
                     ),
+                    drop_remainder=multi_gpu,
                 )
                 .prefetch(tf.data.AUTOTUNE)
             )
@@ -1062,6 +1064,7 @@ def train_fragment_core(**kwargs):
                         padded_shape,
                         [builder.reliability_out_dim],
                     ),
+                    drop_remainder=multi_gpu,
                 )
                 .prefetch(tf.data.AUTOTUNE)
             )
