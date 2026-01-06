@@ -92,3 +92,7 @@ label.sd-tab-label {
     text-transform: none;
     font-weight: 800;
 }
+table td, table th {
+    white-space: normal !important;
+    word-wrap: break-word;
+}

@@ -166,6 +166,8 @@
     ]
   },
   "model_paths": [
-    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/models"
+    "/home/yasas-wijesekara/Downloads/test",
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/Jaeger/models"
+
   ]
 }
