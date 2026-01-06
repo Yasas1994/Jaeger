@@ -1,13 +1,27 @@
 # Author: yasas.wijesekara@uni-greifswald.de
 # Jaeger model and training configuration for training new models and fine-tuning 
-# existing models.
-# model(input) -> [logits, reliability score] 
+###################################################################
+#                   _                                             #
+#                  | |                                            #
+#                  | | __ _  ___  __ _  ___ _ __                  #
+#              _   | |/ _` |/ _ \/ _` |/ _ \ '__|                 #
+#             | |__| | (_| |  __/ (_| |  __/ |                    #
+#              \____/ \__,_|\___|\__, |\___|_|                    #
+#                                __/  |                           #
+#                                |___/                            #
+###################################################################
+
+###################################################
+# model configuration
+###################################################
 
 model:
   name: "jaeger" # the trained model will be saved under this name
-  experiment: "test_26"
-  seed: 57341
-  base_dir: "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training"
+  experiment: 1  #experiment number
+  seed: 24876 # a seed or "random"
+  classifier_out_dim: 6 # number of classes
+  reliability_out_dim: 1 # usually 1
+  base_dir: "path/to/base working directory"
   class_label_map:
   - class: "bacteria"
     label: 0
@@ -23,151 +37,347 @@ model:
     label: 5
   activation: "gelu"
   mode: "training" # or "tunning" -> freeze the representation learner and train the classifier
+
   embedding:
-    masking: True # mask lower-case and N
+    use_embedding_layer: true # keras embedding layer is usually faster
     input_type: "translated" # or "nucleotide"
     strands: 2
     frames: 6
     length: null
-    input_shape: [ 6, null, 64 ] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides] 
-    embedding_size: 128
-    mutate: True
-    mutation_rate: 0.3
-    use_positional_embeddings: True
-    positional_embedding_length: 10000
+    input_shape: [ 6, null] #    "nucleotide" -> [2:strand, null:length, 4:nucleotides], "translated" -> [6: strand, null:length]
+    embedding_size: 192
     embedding_regularizer: "l2"
-    embedding_regularizer_w: 0.0001
+    embedding_regularizer_w: 0.00001
 
   string_processor:
     # only applicable when type:nucleotide
-    codon: "CODON"
-    codon_id: "CODON_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID
-    crop_size: 1024
-    buffer_size: 20000 # -1 invokes dataset.cardinality()
+    seq_onehot: False # False when use_embedding_layer: true
+    codon: "CODON" # AA, CODON_ID, PC5, MURPHY, DICODON
+    codon_id: "CODON_ID" # AA_ID, CODON_ID, PC5_ID, MURPHY10_ID, DICODON_ID
+    crop_size: 2000
+    buffer_size: 500 # -1 invokes dataset.cardinality()
     reshuffle_each_iteration: True
+    mutate: False
+    mutation_rate: 0.1
+    shuffle: False
+    masking: False
+    classifier_labels: [ 0, 1, 2, 3, 4, 5 ]
+    classifier_labels_map: [ 0, 1, 0, 0, 0, 1 ]
+
+###################################################################
+# model parameters
+# available layers: masled_conv1d, masked_batchnorm, residual_block,
+# activation, dense, attention, recurrent
+###################################################################
 
   representation_learner:
-    masked_conv1d_1_filters: 512
-    masked_conv1d_1_kernel_size: 7
-    masked_conv1d_1_strides: 1
-    masked_conv1d_1_dilation_rate: 1
-    masked_conv1d_1_regularizer: l2
-    masked_conv1d_1_regularizer_w: 0.0001
 
-    block_sizes: [ 2, 2, 2 ]
-    block_filters: [ 512, 512, 512 ]
-    block_kernel_size: [ 5, 5, 5 ]
-    block_kernel_dilation: [ 3, 3, 3 ]
-    block_kernel_strides: [ 1, 1, 1 ]
-    block_regularizer: [ "l2", "l2", "l2" ]
-    block_regularizer_w: [ 0.0001, 0.0001, 0.0001 ]
+    hidden_layers:
+    # list of layers in correct order
+    - name: "masked_conv1d"
+      config:
+        filters: 32
+        kernel_size: 7
+        strides: 1
+        dilation_rate: 1
+        use_bias: true
+        activation: null
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
 
-    masked_conv1d_final_kernel_size: 5
-    masked_conv1d_final_strides: 1
-    masked_conv1d_final_dilation_rate: 1
-    masked_conv1d_final_regularizer: "l2"
-    masked_conv1d_final_regularizer_w: 0.0001
+    - name: "masked_batchnorm"
+      config:
+        return_nmd: false
 
-    use_transformer_encoder: false
-    transformer_encoder_blocks: null
-    attention_heads: null
+    - name: activation
+      config:
+        activation: gelu
 
+    - name: residual_block # residual_block 1
+      config:
+        use_1x1conv: false
+        block_size: 1
+        filters: 32
+        kernel_size: 5
+        strides: 1
+        dilation_rate: 1
+        use_bias: true
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
+        return_nmd: false
+
+    - name: residual_block # residual_block 1 * 3
+      config:
+        use_1x1conv: false
+        block_size: 3
+        filters: 32
+        kernel_size: 5
+        strides: 1
+        dilation_rate: 1
+        use_bias: true
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
+        return_nmd: false
+
+    - name: residual_block # residual_block 2
+      config:
+        use_1x1conv: false
+        block_size: 1
+        filters: 64
+        kernel_size: 5
+        strides: 2
+        dilation_rate: 1
+        use_bias: true
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
+        return_nmd: false
+
+    - name: residual_block # residual_block 2 * 3 
+      config:
+        use_1x1conv: false
+        block_size: 3
+        filters: 64
+        kernel_size: 5
+        strides: 1
+        dilation_rate: 2
+        use_bias: true
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
+        return_nmd: false
+
+    - name: residual_block # residual_block 3
+      config:
+        use_1x1conv: false
+        block_size: 1
+        filters: 128
+        kernel_size: 5
+        strides: 2
+        dilation_rate: 1
+        use_bias: true
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
+        return_nmd: false
+
+    - name: residual_block # residual_block 3 * 3
+      config:
+        use_1x1conv: false
+        block_size: 3
+        filters: 128
+        kernel_size: 5
+        strides: 1
+        dilation_rate: 4
+        use_bias: true
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.00001
+        return_nmd: false
+
+    - name: residual_block # residual_block 4
+      config:
+        use_1x1conv: false
+        block_size: 1
+        filters: 256
+        kernel_size: 5
+        strides: 2
+        dilation_rate: 1
+        use_bias: false
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.0001
+
+    - name: residual_block # residual_block 4 * 3
+      config:
+        use_1x1conv: false
+        block_size: 3
+        filters: 256
+        kernel_size: 5
+        strides: 1
+        dilation_rate: 8
+        use_bias: false
+        activation: gelu
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.0001
+        return_nmd: true
+    
     pooling: "max"
 
-  classifier:
+  projection:
+    # for supervised contrastive pre-training
+    margin: 0.5
+    scale: 64
+    input_shape: 256
     hidden_layers:
-    - units: 128
-      activation: gelu
-      use_bias: false
-      dropout_rate: 0.5
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.0001
-    - units: 128
-      activation: gelu
-      use_bias: false
-      dropout_rate: 0.5
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.0001
-    output_layer:
-    - units: 6
-      activation: null
-      use_bias: false
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.0001
+    - name: dense
+      config:
+        units: 128
+        activation: gelu
+        use_bias: true
+        kernel_regularizer: "l2" # l2, l1
+        kernel_regularizer_w: 0.00001 # 1.0e-5
+    - name: dropout
+      config:
+        rate: 0.1
+    - name: dense
+      config:
+        units: 128
+        activation: gelu
+        use_bias: true
+        kernel_regularizer: "l2" # l2, l1
+        kernel_regularizer_w: 0.00001
+    - name: dropout
+      config:
+        rate: 0.1
+
+  classifier:
+    input_shape: 256
+    hidden_layers:
+    - name: dense
+      config:
+        units: 128
+        activation: gelu
+        use_bias: true
+        kernel_regularizer: "l2" # l2, l1
+        kernel_regularizer_w: 0.0001
+    - name: dropout
+      config:
+        rate: 0.5
+    - name: dense
+      config:
+        units: 128
+        activation: gelu
+        use_bias: true
+        kernel_regularizer: "l2" # l2, l1
+        kernel_regularizer_w: 0.0001
+    - name: dropout
+      config:
+        rate: 0.5
+    - name: dense
+      config:
+        units: 6
+        activation: null # or None for linear
+        dtype: float32
+        use_bias: true
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.05
+        bias_initializer: calculate_from_train_data
 
   reliability_model:
+    input_shape: 256
     hidden_layers:
-    - units: 8
-      activation: gelu
-      use_bias: false
-      dropout_rate: 0.5
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001
-    output_layer:
-    - units: 1
-      activation: null
-      use_bias: false
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001
+    - name: dense
+      config:
+        units: 8
+        activation: gelu
+        use_bias: true
+        kernel_regularizer: "l2" # l2, l1
+        kernel_regularizer_w: 0.00001
+    - name: dropout
+      config:
+        rate: 0.5
+    - name: dense
+      config:
+        units: 1
+        activation: null
+        dtype: float32
+        use_bias: true
+        kernel_regularizer: "l2"
+        kernel_regularizer_w: 0.05
+        bias_initializer: calculate_from_train_data
 
-  projection:
-    # for supervised contrastive learning
-    hidden_layers:
-    - units: 128
-      activation: gelu
-      use_bias: false
-      dropout_rate: 0
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001 # 1.0e-5
-    - units: 128
-      activation: gelu
-      use_bias: false
-      dropout_rate: 0
-      kernel_regularizer: "l2" # l2, l1
-      kernel_regularizer_w: 0.00001
-    # arcface params
-    margin: 0.1
-    scale: 30
+###################################################
+# training configuration
+###################################################
 
 training:
-  classifier_epochs: 20
-  reliability_epochs: 20
-  projection_epochs: 1
-  classifier_train_steps: 3000
-  reliability_train_steps: 3000 # -1 to run till the generator exhausts
-  classifier_validation_steps: 2000
-  reliability_validation_steps: 2000
-  batch_size: 32
-  optimizer: "sgd" # adam, rmsprop, sgd
+  data_dir: "/path/to/data directory""
+  experiment_root: "experiments/experiment_{{ model.experiment }}_{{ model.seed }}"
+  classifier_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier"
+  reliability_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability"
+  projection_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/projection"
+  classifier_epochs: 100
+  reliability_epochs: 10
+  projection_epochs: 5
+  classifier_train_steps: -1
+  reliability_train_steps: -1 # -1 to run till the generator exhausts
+  classifier_validation_steps: -1
+  reliability_validation_steps: -1
+  batch_size: 64
+  optimizer: adam  #adam, rmsprop, sgd
   optimizer_params:
-    learning_rate: 0.001
-    clipnorm: 20
-    momentum: 0.9
-
+    learning_rate: 0.0003
+    clipnorm: 5
+    # momentum: 0.9
+    
   loss_classifier: "categorical_crossentropy"
   loss_params_classifier:
     from_logits: true
-
+#  loss_classifier: hierachical_loss
+#  loss_params_classifier:
+    # 0: prokaryote 1: mobile 2: eukaryote
+#    parent_of: [ 0, 1, 2, 0, 1, 1 ]
+#    groups: [ [ 0, 3 ], [ 1, 4, 5 ], [ 2 ] ]
+#    l_fine: 1.0
+#    l_coarse: 1.5
+    #label_smoothing: 0.1
+#  class_weights:
+#    0: 0.83
+#    1: 0.98
+#    2: 0.48
+#    3: 0.97
+#    4: 1.76
+#    5: 7.95
   loss_reliability: "binary_crossentropy"
   loss_params_reliability:
     from_logits: true
 
+  metrics_classifier:
+  - name: "categorical_accuracy"
+    params: null
+  - name: "categorical_crossentropy"
+    params:
+      from_logits: true
+      label_smoothing: 0
+  - name: "per_class_precision" # works for one class at a time
+    params: null
+  - name: "per_class_recall"
+    params: null
+  - name: "per_class_specificity"
+    params: null
+
+  metrics_reliability:
+  - name: "binary_accuracy"
+    params: null
+  - name: "binary_crossentropy"
+    params:
+      from_logits: true
+  - name: "precision"
+    params:
+      thresholds: 0
+ # - name: "recall"
+    params:
+      thresholds: 0
   # training callbacks [classifier and reliability model]
   callbacks:
     clean_old: true
     directories:
-    - "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier"
-    - "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability"
+    - "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier"
+    - "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability"
+    - "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/projection"
     classifier:
     - name: "EarlyStopping"
       params:
         monitor: "val_loss"
-        patience: 15
+        patience: 10
         mode: "min"
         restore_best_weights: true
     - name: "ModelCheckpoint"
       params:
-        filepath: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
+        filepath: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
         monitor: "val_loss"
         mode: "min"
         save_weights_only: true
@@ -182,11 +392,38 @@ training:
     - name: "TerminateOnNaN"
     - name: "CSVLogger"
       params:
-        filename: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/classifier/training.log"
+        filename: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier/training.log"
         separator: ","
         append: true
       callbacks:
 
+    projection:
+    - name: "EarlyStopping"
+      params:
+        monitor: "val_loss"
+        patience: 10
+        mode: "min"
+        restore_best_weights: true
+    - name: "ModelCheckpoint"
+      params:
+        filepath: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/projection/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
+        monitor: "val_loss"
+        mode: "min"
+        save_weights_only: true
+        verbose: 1
+        save_best_only: false
+    - name: "ReduceLROnPlateau"
+      params:
+        monitor: "val_loss"
+        patience: 5
+        factor: 0.95
+        min_lr: 0.000001
+    - name: "TerminateOnNaN"
+    - name: "CSVLogger"
+      params:
+        filename: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/projection/training.log"
+        separator: ","
+        append: true
 
     reliability:
     - name: "EarlyStopping"
@@ -197,7 +434,7 @@ training:
         restore_best_weights: true
     - name: "ModelCheckpoint"
       params:
-        filepath: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
+        filepath: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
         monitor: "val_loss"
         mode: "min"
         save_weights_only: true
@@ -212,12 +449,12 @@ training:
     - name: "TerminateOnNaN"
     - name: "CSVLogger"
       params:
-        filename: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/checkpoints/reliability/training.log"
+        filename: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability/training.log"
         separator: ","
         append: true
 
   model_saving:
-    path: "{{ model.base_dir }}/experiments/experiment_{{ model.experiment }}_{{ model.seed }}/model"
+    path: "{{ model.base_dir }}/{{ training.experiment_root }}/model"
     save_weights: true #saves layer-wise weights
     save_exec_graph: true #saves the model in tf saved_model format
 
@@ -228,162 +465,57 @@ training:
     train:
     - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
       path:
-      - "{{ model.base_dir }}/data/train_data_derep_rep_seq.txt.tmp"
+      - "{{ training.data_dir }}/train_data.csv"
       label: [ 0, 1, 2, 3, 4, 5 ]
-    # - class: bacteria
-    #   path: "path/to/bac"
-    #   label: 0
-    #   fragment_length: 1024
-    # - class: phage
-    #   path: "path/to/phage"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: archaea
-    #   path:
-    #   label: 2
-    #   fragment_length: 1024
-    # - class: virus
-    #   path:
-    #   label: 3
-    #   fragment_length: 1024
-    # - class: eukarya
-    #   path:
-    #   label: 4
-    #   fragment_length: 1024
+
 
     validation:
     - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
       path:
-      - "{{ model.base_dir }}/data/val_data.txt"
+      - "{{ training.data_dir }}/validation_data.csv"
       label: [ 0, 1, 2, 3, 4, 5 ]
-    # - class: bacteria
-    #   path: "path/to/bac"
-    #   label: 0
-    #   fragment_length: 1024
-    # - class: phage
-    #   path: "path/to/phage"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: archaea
-    #   path:
-    #   label: 2
-    #   fragment_length: 1024
-    # - class: virus
-    #   path:
-    #   label: 3
-    #   fragment_length: 1024
-    # - class: eukarya
-    #   path:
-    #   label: 4
-    #   fragment_length: 1024
 
+# Not yet implemented
   contig_classifier_data:
     train:
     - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
       path:
       - "path_to_combined_file"
       label: [ 0, 1, 2, 3, 4, 5 ]
-    # - class: bacteria
-    #   path: "path/to/bac"
-    #   label: 0
-    #   fragment_length: 1024
-    # - class: phage
-    #   path: "path/to/phage"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: archaea
-    #   path:
-    #   label: 2
-    #   fragment_length: 1024
-    # - class: virus
-    #   path:
-    #   label: 3
-    #   fragment_length: 1024
-    # - class: eukarya
-    #   path:
-    #   label: 4
-    #   fragment_length: 1024
+
 
     validation:
     - class: [ "bacteria", "phage", "eukarya", "archaea", "plasmid", "virus" ]
       path:
       - "path_to_combined_file"
       label: [ 0, 1, 2, 3, 4, 5 ]
-    # - class: bacteria
-    #   path: "path/to/bac"
-    #   label: 0
-    #   fragment_length: 1024
-    # - class: phage
-    #   path: "path/to/phage"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: archaea
-    #   path:
-    #   label: 2
-    #   fragment_length: 1024
-    # - class: virus
-    #   path:
-    #   label: 3
-    #   fragment_length: 1024
-    # - class: eukarya
-    #   path:
-    #   label: 4
-    #   fragment_length: 1024
+
 
   fragment_reliability_data:
     train:
     - class: [ indist, ood ]
       path:
-      - "{{ model.base_dir }}/data/train_data_derep_rep_seq_ood.txt"
+      - "{{ training.data_dir }}/train_data_ood.csv"
       label: [ 1, 0 ]
-    # - class: indist
-    #   path: "path/to/bac"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: ood
-    #   path: "path/to/phage"
-    #   label: 0
-    #   fragment_length: 1024
+
 
     validation:
     - class: [ indist, ood ]
       path:
-      - "{{ model.base_dir }}/data/val_data_ood.txt"
+      - "{{ training.data_dir }}/validation_data_ood.csv"
       label: [ 1, 0 ]
-    # - class: indist
-    #   path: "path/to/bac"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: ood
-    #   path: "path/to/phage"
-    #   label: 0
-    #   fragment_length: 1024
 
+# Not yet implemented
   contig_reliability_data:
     train:
     - class: [ indist, ood ]
       path:
       - "path_to_combined_file"
       label: [ 1, 0 ]
-    # - class: indist
-    #   path: "path/to/bac"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: ood
-    #   path: "path/to/phage"
-    #   label: 0
-    #   fragment_length: 1024
+
 
     validation:
     - class: [ indist, ood ]
       path:
       - "path_to_combined_file"
       label: [ 1, 0 ]
-    # - class: indist
-    #   path: "path/to/bac"
-    #   label: 1
-    #   fragment_length: 1024
-    # - class: ood
-    #   path: "path/to/phage"
-    #   label: 0
-    #   fragment_length: 1024
