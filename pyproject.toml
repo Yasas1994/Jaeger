@@ -40,7 +40,7 @@ dependencies = [
     "scikit-learn >= 1.6.0",
     "pyyaml >= 6.0.2",
     "jinja2 >= 3.1",
-    "pydustmasker @ git+https://github.com/Yasas1994/pydustmasker@main"
+    "pydustmasker >= 1.0.3"
 ]
 license = {text = "MIT"}
 
