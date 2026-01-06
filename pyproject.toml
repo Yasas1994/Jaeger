@@ -10,7 +10,7 @@ data = ["*.h5", "*.json", "*.npy", "*.pkl", "*.fasta", ".env"]
 
 [project]
 name = "jaeger-bio"
-version = "1.2.5b"
+version = "1.26.1b0"
 description = "A quick and precise pipeline for detecting phages in sequence assemblies."
 readme = "README.md"
 authors = [
