@@ -1,25 +1,38 @@
 Bootstrap: docker
 From: python:3.12.7-bookworm 
 
+%files
+    scripts/calculate_metrics_realworld.py /usr/bin/calculate_metrics_realworld.py
+
 %post
     # Update and install system dependencies
+    mkdir -p /Software/ && cd /Software/
     apt-get update && apt-get install -y --no-install-recommends \
         git \
         wget \
         python3-pip \
         && rm -rf /var/lib/apt/lists/*
+
+    wget https://github.com/soedinglab/MMseqs2/releases/download/18-8cc5c/mmseqs-linux-avx2.tar.gz
+    tar xvf mmseqs-linux-avx2.tar.gz
+    rm mmseqs-linux-avx2.tar.gz
+    # export PATH="/Software/mmseqs/bin:$PATH"
+
     # update pip3
     python3 -m pip install --upgrade pip --root-user-action=ignore
 
     # Install Jaeger and other dependencies
-    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/MGXlab/Jaeger@dev" # install jaeger without tensorflow support
-    pip install --root-user-action=ignore --no-cache-dir  icecream
+    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/Yasas1994/Jaeger@dev" # install jaeger without tensorflow support
+    pip3 install --root-user-action=ignore --no-cache-dir  icecream matplotlib seaborn
+
+    chmod +x /usr/bin/calculate_metrics_realworld.py
 
 %environment
     # Set environment variables for TensorFlow GPU usage
     export TF_FORCE_GPU_ALLOW_GROWTH=true
     export NVIDIA_VISIBLE_DEVICES=all  # Makes all GPUs visible to the container
     export NVIDIA_DRIVER_CAPABILITIES=compute,utility  # Required for GPU support in TensorFlow
+    export PATH="/Software/mmseqs/bin:/usr/local/bin:$PATH"
 
 
 %labels
