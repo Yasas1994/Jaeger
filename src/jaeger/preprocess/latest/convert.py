@@ -268,7 +268,7 @@ def process_string_inference(
             nuc1 = map_nucleotide.lookup(forward_strand)
             nuc2 = map_nucleotide.lookup(reverse_strand)
             nuc = tf.stack([nuc1, nuc2], axis=0)
-            outputs["nucleotide"] = tf.one_hot(nuc, depth=4, dtype=tf.float32)
+            outputs["nucleotide"] = tf.one_hot(nuc, depth=4, dtype=tf.float32, on_value=1, off_value=0)
 
         # Translated representation
         if input_type in ["translated", "both"]:

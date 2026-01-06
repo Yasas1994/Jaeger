@@ -415,7 +415,7 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
         # Append the window summary column - string showing virus / phage predictions
 
     else:
-        print(data["per_class_counts"], class_map)
+        #print(data["per_class_counts"], class_map)
         for i, label in class_map.items():
             columns[f"#_{label}_windows"] = [x[i] for x in data["per_class_counts"]]
 
