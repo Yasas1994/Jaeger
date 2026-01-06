@@ -25,7 +25,7 @@ classifiers = [
 ]
 requires-python = ">=3.11, <3.13"
 dependencies = [
-    "keras >= 3.7.0, <3.9.0",
+    "keras >= 3.12.0",
     "kneed >= 0.8.5",
     "matplotlib >= 3.7",
     "pandas >= 2.2.3",
