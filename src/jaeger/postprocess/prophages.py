@@ -30,7 +30,7 @@ from jaeger.utils.seq import reverse_complement
 logger = logging.getLogger("jaeger")
 
 
-def logits_to_df(config: Any, cutoff_length: int = 500_000, **kwargs) -> Dict:
+def logits_to_df(config: Any, cmdline_kwargs: Dict, **kwargs) -> Dict:
     """
     Convert logits to a dict of dataframe for prophage region identification.
     Output of this function serves as the input for change point based
@@ -45,26 +45,26 @@ def logits_to_df(config: Any, cutoff_length: int = 500_000, **kwargs) -> Dict:
     -------
         tmp : Dict of [pandas dataframes, str:host, int:lengths]
     """
-    lab = {int(k): v for k, v in config[kwargs.get("model")]["all_labels"].items()}
+    lab = {int(k): v for k, v in config["all_labels"].items()}
     tmp = {}
     for key, value, length, gc_skew, gc in zip(
         kwargs.get("headers"),
-        kwargs.get("logits"),
+        kwargs.get("predictions"),
         kwargs.get("lengths"),
         kwargs.get("gc_skews"),
         kwargs.get("gcs"),
     ):
-        if length >= cutoff_length:
-            try:
+        if length >= cmdline_kwargs.get("lc"):
+            # try:
                 value = np.exp(value) / np.sum(np.exp(value), axis=1).reshape(-1, 1)
                 # bac, phage, euk, arch
                 max_class = np.argmax(np.mean(value, axis=0))
                 host = lab[max_class]
                 t = pd.DataFrame(
                     value,
-                    columns=list(config[kwargs.get("model")]["all_labels"].values()),
+                    columns=list(config["all_labels"].values()),
                 )
-                t = t.assign(length=[i * kwargs.get("fsize") for i in range(len(t))])
+                t = t.assign(length=[i * cmdline_kwargs.get("fsize") for i in range(len(t))])
 
                 for k, v in lab.items():
                     t[v] = np.convolve(value[:, k], np.ones(4), mode="same")
@@ -76,9 +76,9 @@ def logits_to_df(config: Any, cutoff_length: int = 500_000, **kwargs) -> Dict:
                 )
 
                 tmp[f"{key}"] = [t, host, length]
-            except Exception as e:
-                logger.error(e)
-                logger.debug(traceback.format_exc())
+            # except Exception as e:
+            #     logger.error(e)
+            #     logger.debug(traceback.format_exc())
 
     return tmp
 
@@ -109,7 +109,7 @@ def plot_scores(
         None
     """
     # quantile cut-off 0.975 (or 0.025 of the right tail)
-    lab = {int(k): v for k, v in config[model]["all_labels"].items()}
+    lab = {int(k): v for k, v in config["all_labels"].items()}
     # legend_lines = []
 
     # Plot outer track with xticks
@@ -208,7 +208,7 @@ def plot_scores(
 
         _ = circos.plotfig()
         plt.title(
-            f"{contig_id.replace('__', ',')}", fontdict={"size": 14, "weight": "bold"}
+            f"{contig_id.replace('___', ',')}", fontdict={"size": 14, "weight": "bold"}
         )
         # Add legend
         handles = (
@@ -388,23 +388,23 @@ def get_prophage_alignment_summary(
 
         return {
             "contig_id": record[0],
-            "alignment_length": None,
-            "identities": None,
-            "identity": None,
-            "score": None,
-            "type": None,
-            "fgaps": None,
-            "rgaps": None,
-            "sstart": s_alig_start,
-            "send": None,
-            "estart": None,
-            "eend": e_alig_end,
             "seq_len": seq_len,
             "region_len": e_alig_end - s_alig_start,
             "phage_score": phage_score,
             "n%": None,
             "gc%": gc_,
             "reject": None,
+            "sstart": s_alig_start,
+            "send": None,
+            "estart": None,
+            "eend": e_alig_end,
+            "att_alignment_length": None,
+            "att_identities": None,
+            "att_identity": None,
+            "att_score": None,
+            "att_type": None,
+            "att_fgaps": None,
+            "att_rgaps": None,
             "attL": None,
             "attR": None,
         }
@@ -439,23 +439,23 @@ def get_prophage_alignment_summary(
 
         return {
             "contig_id": record[0],
-            "alignment_length": alig_len,
-            "identities": iden,
-            "identity": round(iden / alig_len, 2),
-            "score": result_object.score,
-            "type": type_,
-            "fgaps": f_gaps,
-            "rgaps": rc_gaps,
-            "sstart": s_alig_start,
-            "send": s_alig_end,
-            "estart": e_alig_start,
-            "eend": e_alig_end,
             "seq_len": seq_len,
             "region_len": e_alig_end - s_alig_start,
             "phage_score": phage_score,
             "n%": percentage_of_N,
             "gc%": gc_,
             "reject": percentage_of_N > 0.20,
+            "sstart": s_alig_start,
+            "send": s_alig_end,
+            "estart": e_alig_start,
+            "eend": e_alig_end,
+            "att_alignment_length": alig_len,
+            "att_identities": iden,
+            "att_identity": round(iden / alig_len, 2),
+            "att_score": result_object.score,
+            "att_type": type_,
+            "att_fgaps": f_gaps,
+            "att_rgaps": rc_gaps,
             "attL": result_object.traceback.query,
             "attR": result_object.traceback.ref,
         }
@@ -497,90 +497,86 @@ def prophage_report(
             )
         )
 
-    try:
-        for record in pyfastx.Fasta(filehandle, build_index=False):
-            seq_len = len(record[1])
-            header = record[0].replace(",", "__")
-            logger.debug(f"generating prophage report for {header}")
-            if seq_len > 500_000:
-                cords, scores = prophage_cordinates.get(f"{header}", [[], []])
-                if len(cords) > 0 and len(scores) > 0:
-                    for (start, end), j in zip(cords, scores):
-                        start, end = start * fsize, end * fsize
-                        scan_length = min(max(int(seq_len * 0.04), 400), 4000)
-                        off_set = (
-                            2000 if (end - start) // 2 >= 14000 else (end - start) // 4
-                        )
+    for record in pyfastx.Fasta(filehandle, build_index=False):
+        seq_len = len(record[1])
+        header = record[0].replace(",", "___")
+        logger.debug(f"generating prophage report for {header}")
+        if seq_len > 500_000:
+            cords, scores = prophage_cordinates.get(f"{header}", [[], []])
+            if len(cords) > 0 and len(scores) > 0:
+                for (start, end), j in zip(cords, scores):
+                    start, end = start * fsize, end * fsize
+                    scan_length = min(max(int(seq_len * 0.04), 400), 4000)
+                    off_set = (
+                        2000 if (end - start) // 2 >= 14000 else (end - start) // 4
+                    )
 
-                        logger.info(
-                            f"searching for direct repeats {start - scan_length}:{start + off_set} | {end - off_set}:{end + scan_length}"
-                        )
+                    # logger.info(
+                    #     f"searching for direct repeats {start - scan_length}:{start + off_set} | {end - off_set}:{end + scan_length}"
+                    # )
 
-                        result_dtr = parasail.sw_trace_scan_16(
-                            str(record[1][start - scan_length : start + off_set]),
-                            str(record[1][end - off_set : end + scan_length]),
-                            100,
-                            5,
-                            user_matrix,
-                        )
+                    result_dtr = parasail.sw_trace_scan_16(
+                        str(record[1][start - scan_length : start + off_set]),
+                        str(record[1][end - off_set : end + scan_length]),
+                        100,
+                        5,
+                        user_matrix,
+                    )
 
-                        result_itr = parasail.sw_trace_scan_16(
-                            str(record[1][start - scan_length : start + off_set]),
-                            reverse_complement(
-                                str(record[1][end - off_set : end + scan_length])
-                            ),
-                            100,
-                            5,
-                            user_matrix,
-                        )
+                    result_itr = parasail.sw_trace_scan_16(
+                        str(record[1][start - scan_length : start + off_set]),
+                        reverse_complement(
+                            str(record[1][end - off_set : end + scan_length])
+                        ),
+                        100,
+                        5,
+                        user_matrix,
+                    )
 
-                        if (
-                            len(result_itr.traceback.query) > 12
-                            or len(result_dtr.traceback.query) > 12
-                        ):
-                            if result_itr.score > result_dtr.score:
-                                append_summary(
-                                    result_itr,
-                                    seq_len,
-                                    record,
-                                    start - scan_length,
-                                    end + scan_length,
-                                    j,
-                                    "ITR",
-                                )
-                            else:
-                                append_summary(
-                                    result_dtr,
-                                    seq_len,
-                                    record,
-                                    start - scan_length,
-                                    end + scan_length,
-                                    j,
-                                    "DTR",
-                                )
-                        else:
-                            summaries.append(
-                                get_prophage_alignment_summary(
-                                    result_object=None,
-                                    seq_len=seq_len,
-                                    record=record,
-                                    cordinates={
-                                        "start": [start, None],
-                                        "end": [end, None],
-                                    },
-                                    phage_score=j,
-                                    type_=None,
-                                )
+                    if (
+                        len(result_itr.traceback.query) > 12
+                        or len(result_dtr.traceback.query) > 12
+                    ):
+                        if result_itr.score > result_dtr.score:
+                            append_summary(
+                                result_itr,
+                                seq_len,
+                                record,
+                                start - scan_length,
+                                end + scan_length,
+                                j,
+                                "ITR",
                             )
+                        else:
+                            append_summary(
+                                result_dtr,
+                                seq_len,
+                                record,
+                                start - scan_length,
+                                end + scan_length,
+                                j,
+                                "DTR",
+                            )
+                    else:
+                        summaries.append(
+                            get_prophage_alignment_summary(
+                                result_object=None,
+                                seq_len=seq_len,
+                                record=record,
+                                cordinates={
+                                    "start": [start, None],
+                                    "end": [end, None],
+                                },
+                                phage_score=j,
+                                type_=None,
+                            )
+                        )
 
-        if summaries:
-            df = pd.DataFrame(summaries)
-            df["contig_id"] = df["contig_id"].apply(lambda x: x.replace("__", ","))
-            df.to_csv(outdir / "prophages_jaeger.tsv", sep="\t", index=False)
-            logger.info(
-                f"prophage cordinates saved at {outdir / 'prophages_jaeger.tsv'}"
-            )
+    if summaries:
+        df = pd.DataFrame(summaries)
+        df["contig_id"] = df["contig_id"].apply(lambda x: x.replace("___", ","))
+        df.to_csv(outdir / "prophages_jaeger.tsv", sep="\t", index=False, float_format='%.3f')
+        logger.info(
+            f"prophage cordinates saved at {outdir / 'prophages_jaeger.tsv'}"
+        )
 
-    except Exception as e:
-        logger.error(f"an error {e} occured during prophage report generation")
-        logger.debug(traceback.format_exc())

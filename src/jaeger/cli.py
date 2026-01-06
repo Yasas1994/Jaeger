@@ -179,6 +179,9 @@ def test(**kwargs):
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing files")
 def predict(**kwargs):
+    """
+    Runs Jaeger on a dataset
+    """
     model = kwargs.get("model")
     model_path = kwargs.get("model_path")
     config = kwargs.get("config")
@@ -397,6 +400,7 @@ def register_models(**kwargs):
     "--path",
     type=click.Path(file_okay=False),
     required=False,
+    default=None,
     help="Path to save model weights, graph and configuration files",
 )
 @click.option(
@@ -407,8 +411,9 @@ def register_models(**kwargs):
     help="Path to jager config file (useful when using Apptainer or Docker)",
 )
 @click.option(
-    "-m", "--model",
+    "-m", "--model_name",
     required=False,
+    default=None,
     help="identifier of the model to download"
 )
 @click.option(

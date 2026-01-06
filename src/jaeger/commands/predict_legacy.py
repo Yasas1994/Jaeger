@@ -41,7 +41,6 @@ def run_core(**kwargs):
     input_file_path = Path(kwargs.get("input"))
     input_file = input_file_path.name
     file_base = input_file_path.stem
-
     OUTPUT_DIR = Path(kwargs.get("output")) / MODEL
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -278,7 +277,7 @@ def run_core(**kwargs):
             # still experimental - needs more testing!!!!
             try:
                 if logits_df := logits_to_df(
-                    config, cutoff_length=kwargs.get("lc"), **data_full
+                    config, cmdline_kwargs=kwargs, **data_full
                 ):
                     logger.info("identifying prophages")
                     pro_dir = OUTPUT_DIR / f"{file_base}_{config['suffix']}_prophages"
@@ -304,7 +303,7 @@ def run_core(**kwargs):
                     )
                     prophage_report(
                         fsize=kwargs.get("fsize"),
-                        filehandle=input_file_path,
+                        filehandle=str(input_file_path),
                         prophage_cordinates=phage_cord,
                         outdir=pro_dir,
                     )
