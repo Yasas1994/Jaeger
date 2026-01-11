@@ -16,7 +16,7 @@ def char_array_to_string(arr):
     Converts a NumPy array of byte-long ASCII codes into an ASCII string.
     e.g. [65, 67, 71, 84] becomes "ACGT".
     """
-    return arr.tostring().decode("ascii")
+    return arr.tobytes().decode("ascii")
 
 
 def one_hot_to_tokens(one_hot):
