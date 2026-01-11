@@ -311,7 +311,7 @@ class DynamicModelBuilder:
             models["reliability_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_reliability, name="reliability_head"
             )
-            # combine withe representation learner
+            # combine with the representation learner
             x = models["rep_model"].output[1]
             x = models["reliability_head"](x)
             models["jaeger_reliability"] = tf.keras.Model(
@@ -470,7 +470,8 @@ class DynamicModelBuilder:
         Input:  X
         Output: [X'-1, X']
         """
-        nmd = None  # default in case no layer returns it
+        nmd = []  # default in case no layer returns it
+        nmd_con = tf.keras.layers.Concatenate(axis=-1)
         previous_channels = None
         for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
             layer_name = layer_cfg.get("name", "").lower()
@@ -513,7 +514,8 @@ class DynamicModelBuilder:
                 shape = (self.input_shape[0], None, previous_channels)
                 if block_size > 0:
                     if cfg_layer.get("return_nmd", False):
-                        x, nmd = layer_class(block_size, shape, **cfg_layer)(x)
+                        x, nmd_ = layer_class(block_size, shape, **cfg_layer)(x)
+                        nmd.append(nmd_)
                     else:
                         x = layer_class(block_size, shape, **cfg_layer)(x)
                     if 'filters' in cfg_layer:
@@ -525,7 +527,8 @@ class DynamicModelBuilder:
             # Handle return_nmd case
             if "return_nmd" in cfg_layer:
                 if cfg_layer.get("return_nmd"):
-                    x, nmd = layer_class(**cfg_layer)(x)
+                    x, nmd_ = layer_class(**cfg_layer)(x)
+                    nmd.append(nmd_)
                 else:
                     x = layer_class(**cfg_layer)(x)
                 if 'filters' in cfg_layer:
@@ -545,7 +548,10 @@ class DynamicModelBuilder:
         if "pooling" in cfg:
             pooling = cfg.get("pooling", "average").lower()
             pooler = self._get_pooler(pooling)
-
+            if len(nmd) > 1:
+                nmd = nmd_con(nmd)
+            elif len(nmd) == 1:
+                nmd = nmd[0]
             if "gated" not in pooling:
                 x = pooler(name=f"global_{pooling}pool")(x)
                 return (x, nmd) if nmd is not None else x
