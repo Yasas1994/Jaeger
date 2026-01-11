@@ -492,10 +492,10 @@ def utils(obj):
 @utils.command(
     context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
-            Shuffles input DNA sequences in .fasta or .txt files to generate
-            negative train (validation or train) sets for training (testing)
+            Shuffles/generates random complexity input DNA sequences in .fasta or 
+            .txt files to generate train (validation or train) sets for training (testing)
             out-of-distribution detection models (reliability models)
-
+            if -ip is provided, wrong prediction are also added to the negative class
             usage                                                                      
             -----                                                                      
 
@@ -509,6 +509,13 @@ def utils(obj):
     type=click.Path(exists=True),
     required=True,
     help="Path to input file",
+)
+@click.option(
+    "-ip",
+    "--input_predictions",
+    type=click.Path(exists=True),
+    required=False,
+    help="Path to jaeger predictions of the input (optional)",
 )
 @click.option("-o", 
               "--output", 
@@ -553,8 +560,7 @@ def utils(obj):
     required=False,
     help="csv col with sequence (when --itype CSV)",
 )
-def shuffle(**kwargs):
-    """shuffles DNA sequences while preserving the dinucleotide composition."""
+def ood_data(**kwargs):
     from jaeger.commands.utils import shuffle_core
     if kwargs.get("itype") == "CSV":
         seq_col = kwargs.get("seq_col")

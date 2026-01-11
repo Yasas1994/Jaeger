@@ -143,30 +143,64 @@ def shuffle_core(**kwargs):
         def shuffle_fn(x):
             return kmer_shuffle(seq=x, k=kwargs.get('k', 1))
     n_tandem_repeats = kwargs.get("num_tandem_repeats")
+    if kwargs.get("input_predictions"):
+        logger.info("using jaeger predictions to generate the ood dataset")
+        map_ = {
+            0: "bacteria",
+            1: "phage", 
+            2: "eukarya",
+            3: "archaea",
+            4: "plasmid",
+            5: "virus"
+        }
+        ip = pl.read_csv(
+                    kwargs.get("input_predictions"), truncate_ragged_lines=True, separator="\t", columns=[0,2] 
+                )
+        ip = ip.with_columns(
+            true_class = pl.col("contig_id").str.split("__class=").list.last()
+        )
+        ip = ip.with_columns(
+            true_class = pl.col("true_class").replace(map_)
+        )
+        ip = ip.with_columns(
+            is_correct = (pl.col("true_class") == pl.col("prediction")) * 1
+        )
+        ip = ip.with_columns(
+            contig_id = pl.col("contig_id").str.split("__class=").list.first()
+        )
+        correct = set(ip.filter(pl.col("is_correct") == 1)["contig_id"].to_list())
     match kwargs.get("itype"):
         case "CSV":
             f = pl.read_csv(
                 kwargs.get("input"), truncate_ragged_lines=True, has_header=False
             )
             f = f.select(['column_1', 'column_2', 'column_3'])
-            
+            f = f.with_columns(pl.when(pl.col("column_3").is_in(correct))
+                    .then(pl.lit(1, dtype=pl.Int64))
+                    .otherwise(pl.lit(0, dtype=pl.Int64))
+                    .alias("column_1")
+               )
             f = f.with_columns(
                 pl.when((pl.col('column_2').str.count_matches("N")  / pl.col('column_2').str.len_chars()) > 0.3)
-                    .then(pl.lit(0).alias("column_1"))
-                    .otherwise(pl.lit(1).alias("column_1"))
+                    .then(pl.lit(0, dtype=pl.Int64))
+                    .otherwise(pl.col("column_1"))
+                    .alias("column_1")
             )
+            print(f.head())
             fs = f.with_columns(
                 pl.col("column_2").map_elements(
                     lambda x: shuffle_fn(x), return_dtype=pl.String
                 ),
-                pl.lit(0).alias("column_1"),
+                pl.lit(0, dtype=pl.Int64).alias("column_1"),
             )
+            print(fs.head())
             ft = pl.DataFrame()
             if n_tandem_repeats > 0:
-                ft = pl.from_dict(dict(column_1=np.array([0 for _ in range(n_tandem_repeats)], dtype=np.int32),
+                ft = pl.from_dict(dict(
+                    column_1=np.array([0 for _ in range(n_tandem_repeats)], dtype=np.int64),
                     column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
                     column_3=[f'tandem_repeat_{i}' for i in range(n_tandem_repeats)]))
-            
+            print(ft.head())
             logger.info(f"id : {len(f)} ood: {len(fs)} ood_tandem: {0 if ft.is_empty() else len(ft)}")
 
             f = pl.concat([i for i in [f, fs, ft] if not  i.is_empty()], how='vertical').sample(
@@ -194,7 +228,7 @@ def shuffle_core(**kwargs):
             output_path = kwargs.get("output")
             otype       = kwargs.get("otype")  # "FASTA" or "CSV"
             fasta_iter  = pyfastx.Fasta(input_path, build_index=False)
-
+            
             # 1) pre‑generate your tandem dict
             tandem = dict(
                 column_1=[0 for _ in range(n_tandem_repeats)],
@@ -209,9 +243,10 @@ def shuffle_core(**kwargs):
             for name, seq in fasta_iter:
                 ncount     = seq.count("N")
                 lowcomplex = (len(seq) > 0 and (ncount / len(seq)) > 0.3)
+                not_in_correct = name not in correct
                 shuffled   = shuffle_fn(seq)
                 id_        = name.split("__class=")[0]
-                orig_label = 0 if lowcomplex else 1
+                orig_label = 0 if (lowcomplex or not_in_correct) else 1
 
                 # store tuples of (id, sequence, label)
                 entries.append((id_, seq,       orig_label))
