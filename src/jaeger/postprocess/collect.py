@@ -214,6 +214,17 @@ def write_output_legacy(
     logger.info("Summary generation completed!")
     # except Exception as e:
 
+def frac_above_threshold(pairs, threshold: float = 0.5, fmt: str = "{:.2f}", none_str: str = "-") -> str:
+    if pairs is None:
+        return none_str
+
+    arr = np.asarray(pairs, dtype=float)  # shape (n, 2)
+    if arr.size == 0:
+        return fmt.format(0.0)
+
+    frac = (arr > threshold).mean()  # mean over all elements
+    return fmt.format(frac)
+
 
 def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
     """
@@ -310,8 +321,9 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
         host_contam = (pred_sum < pred_var) & (consensus == 1)
 
     # explore differernt ways to summarize
-    ood_sum = np.array([np.squeeze(np.mean(p, axis=0)) for p in ood], dtype=np.float16)
-    ood = np.array([sigmoid(p) for p in ood_sum])
+    # ood = np.array([np.squeeze(np.mean(sigmoid(p), axis=0)) for p in ood], dtype=np.float16)
+    ood = np.array([frac_above_threshold(sigmoid(p)) for p in ood], dtype=np.float16)
+    #ood = np.array([sigmoid(p) for p in ood_sum])
     
     entropy_mean = np.array(
         [np.squeeze(np.mean(e)) for e in entropy_pred], dtype=np.float16
