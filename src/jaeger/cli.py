@@ -284,6 +284,12 @@ def tune(**kwargs):
     help="delete existing checkpoints and continue",
 )
 @click.option(
+    "--save_model",
+    is_flag=True,
+    required=False,
+    help="save a model with weights from the last checkpoint",
+)
+@click.option(
     "--only_save",
     is_flag=True,
     required=False,

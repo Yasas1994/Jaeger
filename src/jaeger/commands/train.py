@@ -61,6 +61,9 @@ def set_global_seed(seed: int = 42):
     os.environ["TF_DETERMINISTIC_OPS"] = "1"   # for some GPU ops
     os.environ["PYTHONHASHSEED"] = str(seed)
 
+def check_files(files: list[str]) -> list[str]:
+    return [f for f in files if Path(f).is_file()]
+
 class DynamicModelBuilder:
     """
     to do: implement feature correlation based out-of-distribution detection
@@ -682,13 +685,13 @@ class DynamicModelBuilder:
 
         path = Path(self._saving_config.get("path"))
         path.mkdir(parents=True, exist_ok=True)
-        
+
         if metadata:
             metadata = Path(metadata).resolve()
             metadata.write_text(json.dumps({"model_path" : str(path),
                                             'experiment_path': str(path.parent),
                                             } , 
-                                           indent=2))
+                                        indent=2))
         if any(path.iterdir()):
             logger.warning(f"{path} is not empty. deleting existing files!")
             clear_directory(path=path)
@@ -895,8 +898,13 @@ def train_fragment_core(**kwargs):
         # reliability_train_steps: -1 # -1 to run till the generator exhausts
 
         for k, v in _train_data.items():
+            paths = check_files(v.get("paths"))
+            if not paths:
+                logger.warning("no valid files in paths=%r", k, v.get("paths"))
+                exit(1)
+
             _data = tf.data.TextLineDataset(
-                v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
+                paths, num_parallel_reads=len(paths), buffer_size=200
             )
             _buffer_size = string_processor_config.get("buffer_size")
             if string_processor_config.get("input_type") == "translated":
@@ -956,11 +964,11 @@ def train_fragment_core(**kwargs):
 
         # ============ check if the model has converged ===========
         checkpoint = builder._checkpoints
-        converged = checkpoint and checkpoint.get("classifier", {}).get(
+        cls_converged = checkpoint and checkpoint.get("classifier", {}).get(
             "is_converged", False
         )
         if  kwargs.get("only_save", False) is False:
-            if (not converged and not kwargs.get("only_reliability_head", False)):
+            if (not cls_converged and not kwargs.get("only_reliability_head", False)):
                 train_args = {
                     "validation_data": train_data.get("validation").take(
                         builder.train_cfg.get("classifier_validation_steps")
@@ -1023,6 +1031,10 @@ def train_fragment_core(**kwargs):
         _rel_train_data = builder._get_reliability_fragment_paths()
         rel_train_data = {"train": None, "validation": None}
         for k, v in _rel_train_data.items():
+            paths = check_files(v.get("paths"))
+            if not paths:
+                logger.warning("no valid files in paths=%r", k, v.get("paths"))
+                exit(1)
             _data = tf.data.TextLineDataset(
                 v.get("paths"), num_parallel_reads=len(v.get("paths")), buffer_size=200
             )
@@ -1077,12 +1089,12 @@ def train_fragment_core(**kwargs):
         # ============== check if the model has converged ========
 
         checkpoint = builder._checkpoints
-        converged = checkpoint and checkpoint.get("reliability", {}).get(
+        rel_converged = checkpoint and checkpoint.get("reliability", {}).get(
             "is_converged", False
         )
         if kwargs.get("only_save", False) is False:
             #ic(kwargs.get("only_save", False))
-            if (not converged and not kwargs.get("only_classification_head", False)):
+            if (not rel_converged and not kwargs.get("only_classification_head", False)):
                 train_args = {
                     "validation_data": rel_train_data.get("validation").take(
                         builder.train_cfg.get("reliability_validation_steps")
@@ -1126,19 +1138,11 @@ def train_fragment_core(**kwargs):
 
         # ============= saving ===================================
         # saving model graph, weights, class map and train config
-        builder.save_model(
-            model=models.get("jaeger_model"), 
-            num_params=model_num_params,
-            suffix="fragment", # use _fragment or contig
-            metadata=kwargs.get("meta", None)
-        )
+        if kwargs.get("save_model", False):
+            builder.save_model(
+                model=models.get("jaeger_model"), 
+                num_params=model_num_params,
+                suffix="fragment", # use _fragment or contig
+                metadata=kwargs.get("meta", None),
+            )
 
-    # def train_contig_core(**kwargs):
-    #     """
-    #     to do: contig consensus prediction model
-    #     currently, the final predictions per-contig is obtained by averaing the
-    #     per-fragment logits. Instead, we can learn a function to combine information
-    #     from all fragments.
-    #     """
-    #     with open(kwargs.get("config"), "r") as f:
-    #         config = yaml.safe_load(f)
