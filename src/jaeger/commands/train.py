@@ -1124,20 +1124,15 @@ def train_fragment_core(**kwargs):
         logger.info("testing the final model")
 
         models.get("jaeger_model").trainable = False
-        models.get("jaeger_classifier").evaluate(
-            train_data.get("validation").take(
-                100
-            )
-        )
-
         models.get("jaeger_model").predict(
             train_data.get("validation").take(
                 100
             )
         )
-
+        logger.info("training completed!")
         # ============= saving ===================================
         # saving model graph, weights, class map and train config
+        
         if kwargs.get("save_model", False):
             builder.save_model(
                 model=models.get("jaeger_model"), 
