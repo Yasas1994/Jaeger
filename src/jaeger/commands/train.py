@@ -64,6 +64,25 @@ def set_global_seed(seed: int = 42):
 def check_files(files: list[str]) -> list[str]:
     return [f for f in files if Path(f).is_file()]
 
+
+GRAPH_RE = re.compile(
+    r"^jaeger_(?P<id>[0-9a-fA-F]+)_(?P<size>\d+(?:\.\d+)?[A-Z])_fragment_graph$"
+)
+
+def find_existing_graph_id(path: Path) -> Optional[str]:
+    """
+    Search *direct children* of `path` for jaeger_<id>_1.2M_fragment_graph
+    and return the extracted <id>. Returns None if not found.
+    """
+    if not path.exists() or not path.is_dir():
+        return None
+
+    for p in path.iterdir():
+        m = GRAPH_RE.match(p.name)
+        if m:
+            return m.group("id")
+    return None
+
 class DynamicModelBuilder:
     """
     to do: implement feature correlation based out-of-distribution detection
@@ -692,13 +711,17 @@ class DynamicModelBuilder:
                                             'experiment_path': str(path.parent),
                                             } , 
                                         indent=2))
+        graph_id = find_existing_graph_id(path)
+
         if any(path.iterdir()):
             logger.warning(f"{path} is not empty. deleting existing files!")
+            if graph_id is not None:
+                logger.warning("if a graph is found, it's id will be reused")
+                logger.warning(f"found existing graph id: {graph_id}")
             clear_directory(path=path)
-
         model_name = self.model_cfg.get("name")
 
-        model_name += f"{'_' + self.uid}{'_' + num_params if num_params else ''}{'_' + suffix if suffix else ''}"
+        model_name += f"{'_' + graph_id if graph_id else '_' + self.uid}{'_' + num_params if num_params else ''}{'_' + suffix if suffix else ''}"
 
         # with open(path / f"{model_name}_project.yaml", "w+") as yaml_file:
         #     ic("saving project config")
