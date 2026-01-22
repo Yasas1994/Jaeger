@@ -5,7 +5,7 @@ import tarfile
 import logging
 
 API_URL = "https://ckan.fdm.uni-greifswald.de/api/3/action/package_search"
-QUERY = "jaeger_models"
+QUERY = "jaeger"
 logger = logging.getLogger("Jaeger")
 
 
