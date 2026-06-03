@@ -49,14 +49,20 @@ jobs:
       - name: Checkout bioconda-recipes fork
         uses: actions/checkout@v4
         with:
-          repository: bioconda/bioconda-recipes
+          # Check out the user's fork, not the upstream repo
+          repository: ${{ github.repository_owner }}/bioconda-recipes
           token: ${{ secrets.BIOCONDA_BOT_TOKEN }}
           path: bioconda-recipes
 
-      - name: Configure git
+      - name: Configure git and sync with upstream
+        working-directory: bioconda-recipes
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add upstream remote and fetch latest master
+          git remote add upstream https://github.com/bioconda/bioconda-recipes.git
+          git fetch upstream master
 
       - name: Update recipe
         working-directory: bioconda-recipes
@@ -66,9 +72,9 @@ jobs:
           SHA256="${{ steps.sha256.outputs.sha256 }}"
           RECIPE_DIR="recipes/${NAME}"
 
-          # Create branch
+          # Create branch from upstream/master
           BRANCH="bump-${NAME}-${VERSION}"
-          git checkout -b "${BRANCH}"
+          git checkout -b "${BRANCH}" upstream/master
 
           # Update version and sha256 in meta.yaml
           sed -i "s/{% set version = \"[^\"]*\" %}/{% set version = \"${VERSION}\" %}/" "${RECIPE_DIR}/meta.yaml"
@@ -77,7 +83,7 @@ jobs:
           git add "${RECIPE_DIR}/meta.yaml"
           git commit -m "Bump ${NAME} to ${VERSION}"
 
-      - name: Push branch and open PR
+      - name: Push branch to fork and open PR
         working-directory: bioconda-recipes
         env:
           GH_TOKEN: ${{ secrets.BIOCONDA_BOT_TOKEN }}
@@ -86,19 +92,16 @@ jobs:
           NAME="jaeger-bio"
           BRANCH="bump-${NAME}-${VERSION}"
 
-          # Push to the user's fork (requires forking bioconda-recipes first)
-          # The token must have push access to the fork
+          # Push branch to the user's fork (origin = fork)
           git push origin "${BRANCH}"
 
-          # Open PR via GitHub CLI (if gh is available)
-          if command -v gh &> /dev/null; then
-            gh pr create \
-              --repo bioconda/bioconda-recipes \
-              --title "Bump ${NAME} to ${VERSION}" \
-              --body "Automated Bioconda recipe update triggered by the ${NAME} ${VERSION} release." \
-              --head "${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
-              --base master || true
-          fi
+          # Open PR via GitHub CLI
+          gh pr create \
+            --repo bioconda/bioconda-recipes \
+            --title "Bump ${NAME} to ${VERSION}" \
+            --body "Automated Bioconda recipe update triggered by the ${NAME} ${VERSION} release." \
+            --head "${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
+            --base master
 
       - name: Upload recipe artifacts
         uses: actions/upload-artifact@v4
