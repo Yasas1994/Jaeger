@@ -1,0 +1,103 @@
+name: Bioconda Recipe Update
+
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to update the Bioconda recipe for (e.g. 1.26.1)"
+        required: true
+        type: string
+      pypi_url:
+        description: "Direct PyPI source URL (optional — auto-computed if omitted)"
+        required: false
+        type: string
+
+jobs:
+  update-bioconda:
+    runs-on: ubuntu-latest
+    # Only trigger from the canonical repository
+    if: github.repository == 'Yasas1994/Jaeger'
+    steps:
+      - name: Resolve version and PyPI URL
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          NAME="jaeger-bio"
+          if [ -n "${{ inputs.pypi_url }}" ]; then
+            URL="${{ inputs.pypi_url }}"
+          else
+            URL="https://pypi.io/packages/source/${NAME:0:1}/${NAME}/${NAME}-${VERSION}.tar.gz"
+          fi
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch PyPI artifact and compute SHA256
+        id: pypi
+        run: |
+          URL="${{ steps.resolve.outputs.url }}"
+          curl -sL "${URL}" -o /tmp/artifact.tar.gz
+          SHA256=$(sha256sum /tmp/artifact.tar.gz | awk '{print $1}')
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout bioconda-recipes fork
+        uses: actions/checkout@v4
+        with:
+          repository: bioconda/bioconda-recipes
+          token: ${{ secrets.BIOCONDA_BOT_TOKEN }}
+          path: bioconda-recipes
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update recipe
+        working-directory: bioconda-recipes
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          NAME="${{ steps.resolve.outputs.name }}"
+          SHA256="${{ steps.pypi.outputs.sha256 }}"
+          RECIPE_DIR="recipes/${NAME}"
+
+          # Create branch
+          BRANCH="bump-${NAME}-${VERSION}"
+          git checkout -b "${BRANCH}"
+
+          # Update version and sha256 in meta.yaml
+          sed -i "s/{% set version = \"[^\"]*\" %}/{% set version = \"${VERSION}\" %}/" "${RECIPE_DIR}/meta.yaml"
+          sed -i "s/sha256: .*/sha256: ${SHA256}/" "${RECIPE_DIR}/meta.yaml"
+
+          git add "${RECIPE_DIR}/meta.yaml"
+          git commit -m "Bump ${NAME} to ${VERSION}"
+
+      - name: Push branch and open PR
+        working-directory: bioconda-recipes
+        env:
+          GH_TOKEN: ${{ secrets.BIOCONDA_BOT_TOKEN }}
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          NAME="${{ steps.resolve.outputs.name }}"
+          BRANCH="bump-${NAME}-${VERSION}"
+
+          # Push to the user's fork (requires forking bioconda-recipes first)
+          # The token must have push access to the fork
+          git push origin "${BRANCH}"
+
+          # Open PR via GitHub CLI (if gh is available)
+          if command -v gh &> /dev/null; then
+            gh pr create \
+              --repo bioconda/bioconda-recipes \
+              --title "Bump ${NAME} to ${VERSION}" \
+              --body "Automated Bioconda recipe update triggered by the ${NAME} ${VERSION} release." \
+              --head "${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
+              --base master || true
+          fi
