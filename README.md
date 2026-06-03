@@ -223,7 +223,7 @@ jaeger run --help
 ````
 ````
 
-## Jaeger 1.1.30 (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
+## Jaeger (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
 https://github.com/Yasas1994/Jaeger.git
 usage: jaeger run  -i INPUT -o OUTPUT
 
@@ -261,7 +261,7 @@ Misc. Options:
 ---
 #### Python Library
 ---
-Jaeger can be integrated into python scripts using the jaegeraa python library as follows.
+Jaeger can be integrated into python scripts using the jaeger python library as follows.
 currently the predict function accepts 4 different input types.
 1) Nucleotide sequence -> str
 2) List of Nucleotide sequences -> list(str,str,..)
@@ -270,7 +270,7 @@ currently the predict function accepts 4 different input types.
 5) Biopython Seq object
 
 ```python
-from jaegeraa.api import Predictions
+from jaeger.api import Predictions
 
 model=Predictor()
 predictions=model.predict(input,stride=2048,fragsize=2048,batch=100)
