@@ -56,9 +56,14 @@ jobs:
 
       - name: Configure git and sync with upstream
         working-directory: bioconda-recipes
+        env:
+          TOKEN: ${{ secrets.BIOCONDA_BOT_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Explicitly set origin to the user's fork with token auth
+          git remote set-url origin "https://${TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/bioconda-recipes.git"
 
           # Add upstream remote and fetch latest master
           git remote add upstream https://github.com/bioconda/bioconda-recipes.git
