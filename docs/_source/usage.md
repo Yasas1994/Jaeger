@@ -1,7 +1,7 @@
----
-#### Running Jaeger
----
+## Running Jaeger
+
 ##### CPU/GPU mode
+---
 Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed .fasta files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. 
 
 ```
@@ -13,6 +13,7 @@ To run jaeger with singularity
 singularity run --bind /path/to/wd --nv jaeger.sif jaeger run -i path/to/wd/xxx.fna -o path/to/wd/out
 ```
 ##### multi-GPU mode
+---
 
 We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of GPUs at your disposal. **--maxworkers** flag can be used to set the number of samples that should be processed parallaly per GPU. All other arguments remains similar to 'Jaeger' program.
 
@@ -24,32 +25,29 @@ ls ./files/*.fna | xargs realpath > input_file_list
 # to process eight samples in parallel on two GPUs 
 jaeger_parallel -i input_file_list -o output_dir --batch 128 --maxworkers 4 --ngpu 2
 ```
-
-##### Selecting the batch parameter 
-
-You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 96 is good enough for a graphics card with 4 Gb of memory.
-
+```{admonition} Key Features:
+:class: hint
+- You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the `--bactch` option to a lower value. for example 96 is good enough for a graphics card with 4 Gb of memory.
+```
 
 #### What is in the output?
+---
 
-All predictions are summarized in a table located at ```output_dir/<input_file>_default.jaeger.tsv```
+All predictions are summarized in a table located at ```output_dir/<input_file>_default.jaeger.tsv``` <br>
 
-```
-┌───────────────────────────────────┬────────┬────────────┬─────────┬───┬─────────────┬────────────────┬──────────────────┬───────────────┐
-│ contig_id                         ┆ length ┆ prediction ┆ entropy ┆ … ┆ Archaea_var ┆ window_summary ┆ terminal_repeats ┆ repeat_length │
-╞═══════════════════════════════════╪════════╪════════════╪═════════╪═══╪═════════════╪════════════════╪══════════════════╪═══════════════╡
-│ NODE_1109_length_9622_cov_23.163… ┆ 9622   ┆ Phage      ┆ 0.43    ┆ … ┆ 0.143       ┆ 1V1n2V         ┆ null             ┆ null          │
-│ NODE_1181_length_9275_cov_26.864… ┆ 9275   ┆ Phage      ┆ 0.327   ┆ … ┆ 0.504       ┆ 4V             ┆ null             ┆ null          │
-│ NODE_123_length_36569_cov_24.228… ┆ 36569  ┆ Phage      ┆ 0.503   ┆ … ┆ 1.554       ┆ 9V1n7V         ┆ null             ┆ null          │
-│ NODE_149_length_32942_cov_23.754… ┆ 32942  ┆ Phage      ┆ 0.458   ┆ … ┆ 3.229       ┆ 3V1n1n11V      ┆ null             ┆ null          │
-│ NODE_231_length_24276_cov_21.832… ┆ 24276  ┆ Phage      ┆ 0.502   ┆ … ┆ 1.467       ┆ 1V1n3V1n5V     ┆ null             ┆ null          │
-└───────────────────────────────────┴────────┴────────────┴─────────┴───┴─────────────┴────────────────┴──────────────────┴───────────────┘
+| contig_id                           | length | prediction | entropy | … | Archaea_var | window_summary | terminal_repeats | repeat_length |
+|------------------------------------|--------|------------|---------|---|-------------|----------------|------------------|----------------|
+| NODE_1109_length_9622_cov_23.163…  | 9622   | Phage      | 0.43    | … | 0.143       | 1V1n2V         | null             | null           |
+| NODE_1181_length_9275_cov_26.864…  | 9275   | Phage      | 0.327   | … | 0.504       | 4V             | null             | null           |
+| NODE_123_length_36569_cov_24.228…  | 36569  | Phage      | 0.503   | … | 1.554       | 9V1n7V         | null             | null           |
+| NODE_149_length_32942_cov_23.754…  | 32942  | Phage      | 0.458   | … | 3.229       | 3V1n1n11V      | null             | null           |
+| NODE_231_length_24276_cov_21.832…  | 24276  | Phage      | 0.502   | … | 1.467       | 1V1n3V1n5V     | null             | null           |
 
-```
-
+<br>
 This table provides information about various contigs in a metagenomic assembly. Each row represents a single contig, and the columns provide information about the contig's ID, length, the number of windows identified as prokaryotic, viral, eukaryotic, and archaeal, the prediction of the contig (Phage or Non-phage), the score of the contig for each category (bacterial, viral, eukaryotic and archaeal), and a summary of the windows. The table can be used to identify potential phage sequences in the metagenomic assembly based on the prediction column. The score columns can be used to further evaluate the confidence of the prediction and the window summary column can be used to understand the count of windows that contributed to the final prediction.
+<br>
 
-##### List of all output fields
+
 | Field | Explanation | Expected range |
 |----------|----------|----------|
 | contig_id  | header of the fasta record  | -  |
@@ -63,8 +61,8 @@ This table provides information about various contigs in a metagenomic assembly.
 | window_summary  | graphical summary of windows classified as phage and non-phage  |  -  |
 
 
-
-#### Options
+#### cmdline options
+---
 
 
 ````
@@ -107,7 +105,19 @@ Misc. Options:
 
 
 ````
----
+
+```{note}
+* The program expects the input file to be in .fasta format.
+* The program uses a sliding window approach to scan the input sequences, so the stride argument determines how far the window will move after each scan.
+* The batch argument determines how many sequences will be processed in parallel.
+* The program is compatible with both CPU and GPU. By default, it will run on the GPU, but if the --cpu option is provided, it will use the specified number of threads for inference.
+* The program uses a pre-trained neural network model for phage genome prediction.
+* The --getalllabels option will output predicted labels for Non-Viral contigs, which can be useful for further analysis.
+It's recommended to use the output of this program in conjunction with other methods for phage genome identification.
+```
+
+
+
 #### Python Library
 ---
 Jaeger can be integrated into python scripts using the jaeger python library as follows.
@@ -149,19 +159,7 @@ This dictionary can be easily converted to a pandas dataframe using DataFrame.fr
 import pandas as pd
 df = DataFrame.from_dict(predictions)
 ```
----
-#### Notes
----
-* The program expects the input file to be in .fasta format.
-* The program uses a sliding window approach to scan the input sequences, so the stride argument determines how far the window will move after each scan.
-* The batch argument determines how many sequences will be processed in parallel.
-* The program is compatible with both CPU and GPU. By default, it will run on the GPU, but if the --cpu option is provided, it will use the specified number of threads for inference.
-* The program uses a pre-trained neural network model for phage genome prediction.
-* The --getalllabels option will output predicted labels for Non-Viral contigs, which can be useful for further analysis.
-It's recommended to use the output of this program in conjunction with other methods for phage genome identification.
 
-
----
 
 #### Predicting prophages with Jaeger
 ---
@@ -185,7 +183,7 @@ users can find the following visulaization in the ```plots``` directory <br><br>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Yasas1994/Jaeger/assets/34155351/3efcd886-e45a-454f-9f61-53f954932b84"  width="500">
   <source media="(prefers-color-scheme: light)" srcset="https://github.com/Yasas1994/Jaeger/assets/34155351/6acc1561-2c36-42c5-94ba-523721e902a5"  width="500">
-  <img alt="dark mode" src="https://github.com/Yasas1994/Jaeger/assets/34155351/3efcd886-e45a-454f-9f61-53f954932b84">
+  <img alt="light mode" src="https://github.com/Yasas1994/Jaeger/assets/34155351/6acc1561-2c36-42c5-94ba-523721e902a5">
 </picture>
 </p>
 
@@ -217,3 +215,4 @@ list of prophage coordinates can be found in ```prophages_jaeger.tsv```
 └─────────────┴────────────┴──────────┴──────────┴───┴──────────┴────────┴────────────┴────────────┘
 
 ```
+

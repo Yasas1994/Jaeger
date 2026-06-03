@@ -1,14 +1,20 @@
-#### option 1 : bioconda
+# Installation
+
+## installing jaeger
+
+
+::::{tab-set}
+
+:::{tab-item}  bioconda
 
 The performance of the Jaeger workflow can be significantly increased by utilizing GPUs. To enable GPU support, the CUDA Toolkit and cuDNN library must be accessible to conda.
 
-````bash
-# setup bioconda
-conda config --add channels defaults
-conda config --add channels bioconda
-conda config --add channels conda-forge
-conda config --set channel_priority strict
-````
+```bash
+    conda config --add channels defaults
+    conda config --add channels bioconda
+    conda config --add channels conda-forge
+    conda config --set channel_priority strict
+```
 create conda environment and install jaeger
 ```bash
 mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.13" pip jaeger-bio
@@ -23,9 +29,9 @@ test the installation with test data
 ```bash
 jaeger test
 ```
+:::
 
-
-#### option 2 : Installing from pypi
+:::{tab-item}  pypi
 
 
 create a conda environment and activate
@@ -53,8 +59,9 @@ to install on a Mac(arm)
 ```bash
 pip install jaeger-bio[darwin-arm]
 ```
+:::
 
-#### option 3 : Installing from git
+:::{tab-item} git
 
 ```bash
 # clone the jaeger repository
@@ -81,8 +88,9 @@ pip install ".[cpu]"
 pip install ".[darwin-arm]"
 
 ```
+:::
 
-#### option 4 : Apptainer (recomended)
+:::{tab-item} Apptainer
 ```bash
 # clone the jaeger repository
 git clone https://github.com/MGXlab/Jaeger.git
@@ -94,9 +102,11 @@ apptainer build jaeger.sif singularity/jaeger_singularity.def
 # to run jaeger
 apptainer run --nv jaeger.sif jaeger run -i input_file.fasta -o output_dir --batch 128
 ```
+:::
 
+::::
 
-#### Troubleshooting
+## Troubleshooting
 
 
 If you have a NVIDIA GPU on the system, and jaeger fails to detect it, try these steps.
