@@ -62,8 +62,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Debug: show current remotes
+          echo "Current remotes:"
+          git remote -v
+
           # Explicitly set origin to the user's fork with token auth
-          git remote set-url origin "https://${TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/bioconda-recipes.git"
+          # Use GITHUB_TOKEN as fallback if BIOCONDA_BOT_TOKEN is not set
+          AUTH_TOKEN="${TOKEN:-${{ github.token }}}"
+          git remote set-url origin "https://${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/bioconda-recipes.git"
+
+          echo "Updated remotes:"
+          git remote -v
 
           # Add upstream remote and fetch latest master
           git remote add upstream https://github.com/bioconda/bioconda-recipes.git
