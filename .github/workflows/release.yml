@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Only create releases from the canonical repository
+    if: github.repository == 'Yasas1994/Jaeger'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Extract changelog section for this version
+          if [ -f CHANGELOG.md ]; then
+            awk '/^## \['"${VERSION}"'\]/ {found=1; next} /^## \[/ {found=0} found' CHANGELOG.md > /tmp/notes.md || true
+          fi
+
+          if [ ! -s /tmp/notes.md ]; then
+            echo "Automated release for version ${VERSION}." > /tmp/notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: /tmp/notes.md
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
