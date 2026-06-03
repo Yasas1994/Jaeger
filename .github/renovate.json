@@ -1,0 +1,39 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "Europe/Berlin",
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "rebaseWhen": "behind-base-branch",
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "schedule": ["before 6am on the first day of the month"]
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["project.optional-dependencies"],
+      "groupName": "optional dependencies"
+    },
+    {
+      "matchPackageNames": ["tensorflow", "tensorflow-metal"],
+      "matchManagers": ["pep621"],
+      "reviewers": ["Yasas1994"],
+      "groupName": "TensorFlow",
+      "schedule": ["before 6am on the first day of the month"]
+    },
+    {
+      "matchPackageNames": ["keras"],
+      "matchManagers": ["pep621"],
+      "reviewers": ["Yasas1994"],
+      "groupName": "Keras",
+      "schedule": ["before 6am on the first day of the month"]
+    }
+  ]
+}
