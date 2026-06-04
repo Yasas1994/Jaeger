@@ -44,23 +44,32 @@ https://doi.org/10.5281/zenodo.20534106
 ---
 
 - [Installing Jaeger](#installation)
-  - [Bioconda](#option-1--bioconda)
-  - [PyPi](#option-2--installing-from-pypi)
-  - [git (main branch)](#option-3--installing-from-git)
-  - [containers](#option-4-building-a-singularity-container)
+  - [One-liner install script](#option-1--one-liner-install-script-recommended)
+  - [Bioconda](#option-2--bioconda)
+  - [PyPI](#option-3--installing-from-pypi)
+  - [git (main branch)](#option-4--installing-from-git)
+  - [containers](#option-5--apptainer-singularity)
 - [Downloading models](#downloading-models)
 
 ---
 #### Installing Jaeger
 ---
 
-##### option 1 : bioconda
+##### option 1 : One-liner install script (recommended)
+
+The easiest way to install Jaeger. This script auto-detects your platform (GPU, CPU, or Apple Silicon) and sets up the environment for you.
+
+```bash
+curl -sSL https://raw.githubusercontent.com/MGXlab/Jaeger/main/install.sh | bash
+```
+
+##### option 2 : bioconda
 
 The performance of the Jaeger workflow can be significantly increased by utilizing GPUs. To enable GPU support, the CUDA Toolkit and cuDNN library must be accessible to conda.
 
 ````bash
 # create conda environment and install jaeger
-mamba create -n jaeger -c bioconda jaeger-bio==1.2
+mamba create -n jaeger -c bioconda jaeger-bio==1.26
 
 # activate environment
 conda activate jaeger
@@ -71,7 +80,7 @@ jaeger health
 ```
 
 
-##### option 2 : Installing from PyPI (recommended)
+##### option 3 : Installing from PyPI (recommended)
 
 ```bash
 # create a conda environment and activate
@@ -95,7 +104,7 @@ pip install jaeger-bio[darwin-arm]
 jaeger health
 ```
 
-##### option 3 : Installing from git (main branch)
+##### option 4 : Installing from git (main branch)
 
 ```bash
 # create a conda environment and activate
@@ -122,7 +131,7 @@ jaeger health
 
 ```
 
-##### option 4 : Apptainer (Singularity)
+##### option 5 : Apptainer (Singularity)
 If you're using Apptainer on a cluster, it's recommended to build the container on your local machine and then transfer it to the cluster.
 ```bash
 # get the container def
