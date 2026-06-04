@@ -80,6 +80,10 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.target_spec.supported_types = [tf.float16]
     elif mode == "full_int8":
+        log.warning(
+            "full_int8 mode is experimental and may reduce accuracy. "
+            "Use a representative dataset from your target domain for best results."
+        )
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.representative_dataset = _make_rep_dataset()
         converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
@@ -138,7 +142,10 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
     "--mode",
     type=click.Choice(["dynamic", "float16", "full_int8"]),
     default="dynamic",
-    help="Quantization mode",
+    help=(
+        "Quantization mode. dynamic (default) is recommended. "
+        "full_int8 is experimental and may reduce accuracy."
+    ),
 )
 @click.option(
     "-v",
