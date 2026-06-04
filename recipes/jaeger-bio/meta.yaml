@@ -7,7 +7,7 @@ package:
 
 source:
   url: "https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name | replace('-', '_') }}-{{ version }}.tar.gz"
-  sha256: b890227e03f123d5bc3d8f29269f5256079fe4dfd87ec22d85da9206e18e46eb
+  sha256: 4cd0bdf87f4f52731d46508d7cd4852dd9dc6b2eab1e75dd14ed423dab333a07
 
 build:
   number: 0
@@ -51,6 +51,7 @@ test:
 
   commands:
     - jaeger --help
+    - jaeger predict --help
 
 about:
   home: "https://github.com/Yasas1994/Jaeger"
