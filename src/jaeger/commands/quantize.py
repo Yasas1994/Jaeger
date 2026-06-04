@@ -83,8 +83,11 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.representative_dataset = _make_rep_dataset()
         converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.int8
+        # Keep input/output as FLOAT32 so the TFLite runtime handles
+        # quantization/dequantization automatically. This avoids needing
+        # to manually quantize inputs in the inference pipeline.
+        # converter.inference_input_type = tf.int8
+        # converter.inference_output_type = tf.int8
 
     try:
         tflite_model = converter.convert()
