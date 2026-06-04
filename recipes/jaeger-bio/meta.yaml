@@ -24,24 +24,21 @@ requirements:
   run:
     - python >=3.11,<3.13
     - pip
-    - click >=8.1
-    - h5py >=3.8
-    - jinja2 >=3.1
-    - keras >=3.12.0
-    - kneed >=0.8.5
-    - matplotlib-base >=3.7
-    - numpy >=1.24
-    - pandas >=2.2.3
+    # Compiled/binary dependencies — must be conda packages
+    - tensorflow >=2.18,<2.19
     - parasail-python >=1.3.4
-    - progressbar2 >=4.4.2
-    - psutil >=7.0.0
-    - pycirclize
-    - pydustmasker >=1.0.3
     - pyfastx >=2
+    - psutil >=7.0.0
+    - h5py >=3.8
+    - numpy >=1.24
+    - scikit-learn >=1.6.0
+    # Pure-python dependencies with version constraints
+    - click >=8.1
+    - keras >=3.12.0
+    - matplotlib-base >=3.7
+    - pandas >=2.2.3
     - pyyaml >=6.0.2
     - ruptures >=1.1.9
-    - scikit-learn >=1.6.0
-    - tensorflow >=2.18,<2.19
 
 test:
   imports:
