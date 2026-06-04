@@ -58,14 +58,14 @@ exclude_patterns = []
 # a list of builtin themes.
 #
 html_theme = "furo"
-html_favicon = "figures/jaeger_icon.svg"
+html_favicon = "figures/favicon.png"
 pygments_style = "catppuccin-latte"
 pygments_dark_style = "catppuccin-mocha"
 html_theme_options = {
     "sidebar_hide_name": True,
     "navigation_with_keys": True,
-    "light_logo": "figures/jaeger_logo_dark.svg",
-    "dark_logo": "figures/jaeger_logo_light.svg",
+    "light_logo": "figures/banner.png",
+    "dark_logo": "figures/banner.png",
     "light_css_variables": {
         "font-stack": "'Nunito Sans',system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen,Ubuntu,Cantarell,Fira Sans,Droid Sans,Helvetica Neue,sans-serif",
         "font-stack--monospace": "ui-monospace,Cascadia Mono,Source Code Pro,Segoe UI Mono,Menlo,Monaco,Consolas,Courier New,monospace",

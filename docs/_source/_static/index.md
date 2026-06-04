@@ -1,24 +1,3 @@
-```
-                  .                                                         
-               ,'/ \`.                                                      
-              |\/___\/|                                                     
-              \'\   /`/          ██╗ █████╗ ███████╗ ██████╗ ███████╗██████╗
-               `.\ /,'           ██║██╔══██╗██╔════╝██╔════╝ ██╔════╝██╔══██╗
-                  |              ██║███████║█████╗  ██║  ███╗█████╗  ██████╔╝
-                  |         ██   ██║██╔══██║██╔══╝  ██║   ██║██╔══╝  ██╔══██╗
-                 |=|        ╚█████╔╝██║  ██║███████╗╚██████╔╝███████╗██║  ██║
-            /\  ,|=|.  /\    ╚════╝ ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
-        ,'`.  \/ |=| \/  ,'`.                                                
-      ,'    `.|\ `-' /|,'    `.                                              
-    ,'   .-._ \ `---' / _,-.   `.                                            
-       ,'    `-`-._,-'-'   `.     
-      '  
-```
-
-
-
-Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequences
-===============
 <p align="center">
   <a href="https://github.com/Yasas1994/jaeger/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/Yasas1994/jaeger" alt="License">
@@ -42,7 +21,6 @@ Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequenc
     <img src="https://zenodo.org/badge/379281156.svg" alt="DOI">
   </a>
 </p>
-
 
 ```{toctree}
 :maxdepth 1
