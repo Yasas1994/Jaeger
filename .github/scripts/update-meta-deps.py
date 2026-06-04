@@ -36,7 +36,10 @@ def parse_pyproject_deps(pyproject_path: Path) -> list[tuple[str, str]]:
 
 def pip_to_conda_dep(name: str, spec: str) -> str:
     conda_name = PIP_TO_CONDA.get(name, name)
+    # Conda requires no spaces around version operators
+    # e.g., pip: "keras >= 3.12.0" -> conda: "keras >=3.12.0"
     spec = spec.replace(", ", ",")
+    spec = re.sub(r'\s*([<>=!~]+)\s*', r'\1', spec)
     return f"    - {conda_name} {spec}" if spec else f"    - {conda_name}"
 
 
