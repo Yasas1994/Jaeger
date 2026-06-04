@@ -19,6 +19,7 @@ from importlib.resources import files
 from jaeger.utils.misc import json_to_dict, add_data_to_json, AvailableModels
 import warnings
 from jaeger.commands.quantize import quantize_model
+from jaeger.commands.convert_graph import convert_graph
 
 warnings.filterwarnings("ignore")
 
@@ -190,6 +191,11 @@ def health(**kwargs):
     "--xla",
     is_flag=True,
     help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
+)
+@click.option(
+    "--onnx",
+    is_flag=True,
+    help="Use ONNX Runtime for inference. Requires converting the model first with 'jaeger utils convert-graph --mode onnx'.",
 )
 def predict(**kwargs):
     """
@@ -953,6 +959,52 @@ def stats(**kwargs):
 def quantize_cmd(**kwargs):
     """Quantize a Jaeger model"""
     quantize_model(**kwargs)
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+            Convert a Jaeger SavedModel to an optimized inference graph.
+
+            Supports XLA, TFLite, ONNX, and TensorRT backends.
+
+            usage
+            -----
+
+            jaeger utils convert-graph -m default -o ./optimized --mode xla
+            jaeger utils convert-graph -m default -o ./optimized --mode onnx
+        """,
+)
+@click.option(
+    "-m",
+    "--model",
+    type=str,
+    required=True,
+    help="Model name to convert",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Output directory for the converted model",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["xla", "tflite", "onnx", "tensorrt"]),
+    default="xla",
+    help="Conversion mode",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level",
+    default=1,
+)
+def convert_graph_cmd(model, output, mode, verbose):
+    """Convert a Jaeger SavedModel to an optimized inference graph."""
+    convert_graph(model, output, mode, verbose)
 
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))

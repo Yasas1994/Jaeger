@@ -566,3 +566,327 @@ class TFLiteInferModel:
             if _config["seq_onehot"] is False:
                 _config["codon_depth"] = 1
         return _config
+
+
+class ONNXEngine:
+    """
+    ONNX Runtime inference engine for Jaeger models.
+
+    Loads an ONNX model and runs inference via ONNX Runtime.
+    Supports multiple execution providers:
+    - TensorRT (fastest on NVIDIA GPUs)
+    - CUDA (NVIDIA GPU fallback)
+    - CPU (universal fallback)
+
+    The ONNX model should be created using:
+        jaeger utils convert-graph -m <model> -o <dir> --mode onnx
+    """
+
+    def __init__(self, path_dict, providers: list[str] | None = None):
+        self.class_map = self._load_class_map(path_dict.get("classes"))
+        self.string_processor_config = self._load_string_processor_config(
+            path_dict.get("project", None)
+        )
+
+        # Load ONNX model
+        onnx_path = path_dict.get("onnx")
+        if onnx_path is None or not Path(onnx_path).exists():
+            raise ValueError(
+                f"ONNX model not found at {onnx_path}. "
+                "Run 'jaeger utils convert-graph --mode onnx' first."
+            )
+
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise ImportError(
+                "onnxruntime is not installed. Install it with:\n"
+                "  pip install onnxruntime-gpu  # for GPU\n"
+                "  pip install onnxruntime      # for CPU only"
+            )
+
+        # Auto-select providers if not specified
+        if providers is None:
+            available = ort.get_available_providers()
+            # Prefer TensorRT > CUDA > CPU
+            preferred = [
+                "TensorrtExecutionProvider",
+                "CUDAExecutionProvider",
+                "CPUExecutionProvider",
+            ]
+            providers = [p for p in preferred if p in available]
+            if not providers:
+                providers = ["CPUExecutionProvider"]
+
+        self.providers = providers
+        self.session = ort.InferenceSession(str(onnx_path), providers=providers)
+
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_names = [o.name for o in self.session.get_outputs()]
+
+    def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
+        """
+        dataset: yields tuples (inputs_dict, meta0, meta1, …)
+        Returns a dict of numpy arrays, each of shape (N, …)
+        """
+        acc: dict[str, list[np.ndarray]] = defaultdict(list)
+        input_name = self.input_name
+        output_names = self.output_names
+        session = self.session
+        input_type = self.string_processor_config.get("input_type", "translated")
+
+        for inputs, *meta in track(
+            dataset, description="[cyan]Crunching data…", disable=no_progress
+        ):
+            x = inputs.get(input_type)
+            if isinstance(x, tf.Tensor):
+                x = x.numpy()
+
+            # Run inference
+            outputs = session.run(output_names, {input_name: x})
+
+            # Map outputs (prediction, reliability)
+            acc["prediction"].append(outputs[0])
+            acc["reliability"].append(outputs[1])
+
+            # meta data
+            for idx, m in enumerate(meta):
+                if isinstance(m, tf.Tensor):
+                    m = m.numpy()
+                acc[f"meta_{idx}"].append(m)
+
+        # concatenate arrays; keep lists for non-array metadata
+        result: dict[str, np.ndarray] = {}
+        for k, arr_list in acc.items():
+            if k.startswith("meta_"):
+                try:
+                    result[k] = np.concatenate(arr_list, axis=0)
+                except ValueError:
+                    result[k] = arr_list
+            else:
+                result[k] = np.concatenate(arr_list, axis=0)
+        return result
+
+    def evaluate(self, dataset, no_progress: bool = False) -> dict[str, float]:
+        """Evaluate on a dataset."""
+        logits_acc: list[np.ndarray] = []
+        true_acc: list[np.ndarray] = []
+        input_name = self.input_name
+        session = self.session
+        input_type = self.string_processor_config.get("input_type", "translated")
+
+        for inputs, y_true in track(
+            dataset, description="[cyan]Evaluating…", disable=no_progress
+        ):
+            x = inputs.get(input_type)
+            if isinstance(x, tf.Tensor):
+                x = x.numpy()
+
+            outputs = session.run(None, {input_name: x})
+            logits = outputs[0]  # prediction is first output
+
+            logits_acc.append(logits)
+            true_acc.append(y_true.numpy() if isinstance(y_true, tf.Tensor) else y_true)
+
+        logits = np.concatenate(logits_acc, axis=0)
+        y_true = np.concatenate(true_acc, axis=0)
+
+        loss = tf.keras.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True
+        )
+        loss = float(tf.reduce_mean(loss).numpy())
+
+        pred_labels = np.argmax(logits, axis=1)
+        true_labels = np.argmax(y_true, axis=1)
+        accuracy = float(np.mean(pred_labels == true_labels))
+
+        return {"loss": loss, "accuracy": accuracy}
+
+    def _load_class_map(self, path):
+        with open(path) as f:
+            _class_map = yaml.safe_load(f)["classes"]
+            return {
+                "num_classes": len(_class_map),
+                "class": [i["class"] for i in _class_map],
+                "index": [i["label"] for i in _class_map],
+            }
+
+    def _load_string_processor_config(self, path) -> Dict:
+        _map = {
+            "CODON": CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID,
+        }
+
+        if path is None:
+            return {"input_type": "translated"}
+
+        _config = yaml.safe_load(Path(path).read_text()) or {}
+        _model_cfg = _config.get("model")
+        _config = _model_cfg.get("embedding")
+        _config.update(_model_cfg.get("string_processor"))
+        _config["input_type"] = _config.get("type", "translated")
+
+        if _config["codon"] is not None and _config["codon_id"] is not None:
+            _config["codon"] = _map.get(_config.get("codon"))
+            _config["codon_id"] = _map.get(_config.get("codon_id"))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
+            input_shape = _model_cfg.get("embedding", {}).get("input_shape")
+            if _config.get("seq_onehot") is None and input_shape is not None:
+                _config["seq_onehot"] = (
+                    len(input_shape) == 3
+                    and input_shape[-1] is not None
+                    and input_shape[-1] > 1
+                )
+            _config["seq_onehot"] = _config.get("seq_onehot", False)
+            if _config["seq_onehot"] is False:
+                _config["codon_depth"] = 1
+        return _config
+
+
+class TensorRTEngine:
+    """
+    TensorRT inference engine for Jaeger models.
+
+    Loads a TensorRT-optimized SavedModel and runs inference.
+    Requires TensorFlow built with TensorRT support.
+
+    The TensorRT-optimized model should be created using:
+        jaeger utils convert-graph -m <model> -o <dir> --mode tensorrt
+    """
+
+    def __init__(self, path_dict):
+        self.class_map = self._load_class_map(path_dict.get("classes"))
+        self.string_processor_config = self._load_string_processor_config(
+            path_dict.get("project", None)
+        )
+
+        # Load TensorRT-optimized SavedModel
+        trt_dir = path_dict.get("trt_graph")
+        if trt_dir is None or not Path(trt_dir).exists():
+            raise ValueError(
+                f"TensorRT model not found at {trt_dir}. "
+                "Run 'jaeger utils convert-graph --mode tensorrt' first.\n"
+                "Note: TensorRT requires TensorFlow built with TensorRT support."
+            )
+
+        self.loaded_model = tf.saved_model.load(str(trt_dir))
+        self.inference_fn = self.loaded_model.signatures["serving_default"]
+
+        # Build predict step with XLA for additional optimization
+        input_type = self.string_processor_config.get("input_type")
+        inference_fn = self.inference_fn
+
+        @tf.function(jit_compile=True)
+        def _predict_step(x):
+            return inference_fn(inputs=x.get(input_type))
+
+        self._predict_step = _predict_step
+
+    def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
+        """
+        dataset: yields tuples (inputs_dict, meta0, meta1, …)
+        Returns a dict of numpy arrays, each of shape (N, …)
+        """
+        acc: dict[str, list[np.ndarray]] = defaultdict(list)
+        inf_fn = self._predict_step
+
+        for inputs, *meta in track(
+            dataset, description="[cyan]Crunching data…", disable=no_progress
+        ):
+            logits = inf_fn(inputs)
+            for k, t in logits.items():
+                acc[k].append(t.numpy())
+            for idx, m in enumerate(meta):
+                acc[f"meta_{idx}"].append(m)
+
+        result: dict[str, np.ndarray] = {}
+        for k, arr_list in acc.items():
+            if k.startswith("meta_"):
+                try:
+                    result[k] = np.concatenate(arr_list, axis=0)
+                except ValueError:
+                    result[k] = arr_list
+            else:
+                result[k] = np.concatenate(arr_list, axis=0)
+        return result
+
+    def evaluate(self, dataset, no_progress: bool = False) -> dict[str, float]:
+        """Evaluate on a dataset."""
+        logits_acc: list[np.ndarray] = []
+        true_acc: list[np.ndarray] = []
+        inf_fn = self._predict_step
+
+        for inputs, y_true in track(
+            dataset, description="[cyan]Evaluating…", disable=no_progress
+        ):
+            logits = inf_fn(inputs)["prediction"]
+            logits_acc.append(logits.numpy())
+            true_acc.append(y_true.numpy())
+
+        logits = np.concatenate(logits_acc, axis=0)
+        y_true = np.concatenate(true_acc, axis=0)
+
+        loss = tf.keras.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True
+        )
+        loss = float(tf.reduce_mean(loss).numpy())
+
+        pred_labels = np.argmax(logits, axis=1)
+        true_labels = np.argmax(y_true, axis=1)
+        accuracy = float(np.mean(pred_labels == true_labels))
+
+        return {"loss": loss, "accuracy": accuracy}
+
+    def _load_class_map(self, path):
+        with open(path) as f:
+            _class_map = yaml.safe_load(f)["classes"]
+            return {
+                "num_classes": len(_class_map),
+                "class": [i["class"] for i in _class_map],
+                "index": [i["label"] for i in _class_map],
+            }
+
+    def _load_string_processor_config(self, path) -> Dict:
+        _map = {
+            "CODON": CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID,
+        }
+
+        if path is None:
+            return {"input_type": "translated"}
+
+        _config = yaml.safe_load(Path(path).read_text()) or {}
+        _model_cfg = _config.get("model")
+        _config = _model_cfg.get("embedding")
+        _config.update(_model_cfg.get("string_processor"))
+        _config["input_type"] = _config.get("type", "translated")
+
+        if _config["codon"] is not None and _config["codon_id"] is not None:
+            _config["codon"] = _map.get(_config.get("codon"))
+            _config["codon_id"] = _map.get(_config.get("codon_id"))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
+            input_shape = _model_cfg.get("embedding", {}).get("input_shape")
+            if _config.get("seq_onehot") is None and input_shape is not None:
+                _config["seq_onehot"] = (
+                    len(input_shape) == 3
+                    and input_shape[-1] is not None
+                    and input_shape[-1] > 1
+                )
+            _config["seq_onehot"] = _config.get("seq_onehot", False)
+            if _config["seq_onehot"] is False:
+                _config["codon_depth"] = 1
+        return _config

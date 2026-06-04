@@ -11,7 +11,7 @@ from importlib.metadata import version
 from pathlib import Path
 import tensorflow as tf
 
-from jaeger.nnlib.inference import InferModel, TFLiteInferModel
+from jaeger.nnlib.inference import InferModel, TFLiteInferModel, ONNXEngine
 from jaeger.preprocess.fasta import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
@@ -180,9 +180,10 @@ def run_core(**kwargs):
         fsize=kwargs.get("fsize"),
     )
 
-    # Use quantized TFLite model if requested
+    # Select inference engine based on options
     quantized_mode = kwargs.get("quantized")
     use_xla = kwargs.get("xla", False)
+    use_onnx = kwargs.get("onnx", False)
     
     if quantized_mode:
         # Look for quantized model in the same directory as the original model
@@ -201,6 +202,23 @@ def run_core(**kwargs):
         model_info_tflite = model_info.copy()
         model_info_tflite["tflite"] = tflite_path
         model = TFLiteInferModel(model_info_tflite)
+    elif use_onnx:
+        # Look for ONNX model
+        graph_dir = Path(model_info["graph"])
+        onnx_dir = graph_dir.parent / f"{model_name}_onnx"
+        onnx_path = onnx_dir / f"{model_name}.onnx"
+        
+        if not onnx_path.exists():
+            logger.error(
+                f"ONNX model not found at {onnx_path}. "
+                f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx' first."
+            )
+            sys.exit(1)
+        
+        logger.info(f"Using ONNX model: {onnx_path}")
+        model_info_onnx = model_info.copy()
+        model_info_onnx["onnx"] = onnx_path
+        model = ONNXEngine(model_info_onnx)
     else:
         if use_xla:
             logger.info("Using XLA-compiled inference (first batch may be slow due to compilation)")
