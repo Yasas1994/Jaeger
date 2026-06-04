@@ -97,6 +97,18 @@ def run_core(**kwargs):
     elif gpus:
         mode = "GPU"
         tf.config.set_visible_devices([gpus[kwargs.get("physicalid")]], "GPU")
+
+        # Set mixed precision policy if requested
+        precision = kwargs.get("precision", "fp32")
+        if precision == "fp16":
+            tf.keras.mixed_precision.set_global_policy("mixed_float16")
+            logger.info("GPU precision: mixed_float16 (FP16 compute, FP32 variables)")
+        elif precision == "bf16":
+            tf.keras.mixed_precision.set_global_policy("mixed_bfloat16")
+            logger.info("GPU precision: mixed_bfloat16 (BF16 compute, FP32 variables)")
+        else:
+            logger.info("GPU precision: float32 (FP32)")
+
         try:
             tf.config.set_logical_device_configuration(
                 gpus[kwargs.get("physicalid")],

@@ -178,7 +178,13 @@ def health(**kwargs):
 @click.option(
     "--quantized",
     type=click.Choice(["dynamic", "float16", "full_int8"]),
-    help="Use quantized model for inference (dynamic|float16|full_int8)",
+    help="Use quantized TFLite model for inference (dynamic|float16|full_int8)",
+)
+@click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"]),
+    default="fp32",
+    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
 )
 def predict(**kwargs):
     """
