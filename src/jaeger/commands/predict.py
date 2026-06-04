@@ -5,7 +5,6 @@ os.environ["GLOG_minloglevel"] = "2"
 import traceback
 import sys
 import psutil
-import shutil
 import time
 from importlib.resources import files
 from importlib.metadata import version
@@ -19,13 +18,14 @@ from jaeger.utils.termini import scan_for_terminal_repeats
 from jaeger.utils.fs import validate_fasta_entries
 from jaeger.utils.misc import json_to_dict, AvailableModels, get_model_id
 from jaeger.utils.logging import description, get_logger
+
 # from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
 GB_BYTES = 1024**3
 
 
 def run_core(**kwargs):
     current_process = psutil.Process()
-    
+
     USER_MODEL_PATH = kwargs.get("model_path")
     CONFIG_PATH = kwargs.get("config") or files("jaeger.data") / "config.json"
 
@@ -125,8 +125,12 @@ def run_core(**kwargs):
     logger.info(f"mode: {mode}")
     logger.info(f"model: {model_id}")
     logger.info(f"avail mem: {psutil.virtual_memory().available / (GB_BYTES):.2f}GB")
-    logger.info(f"intra threads: {tf.config.threading.get_intra_op_parallelism_threads()}")
-    logger.info(f"inter threads: {tf.config.threading.get_inter_op_parallelism_threads()}")
+    logger.info(
+        f"intra threads: {tf.config.threading.get_intra_op_parallelism_threads()}"
+    )
+    logger.info(
+        f"inter threads: {tf.config.threading.get_inter_op_parallelism_threads()}"
+    )
     logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
     logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
     logger.info(
@@ -168,7 +172,7 @@ def run_core(**kwargs):
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
         fragment_generator(
-            #str(INPUT_FILE_MASKED),
+            # str(INPUT_FILE_MASKED),
             file_path=str(input_file_path),
             no_progress=False,
             fragsize=kwargs.get("fsize"),
@@ -179,22 +183,23 @@ def run_core(**kwargs):
     )
 
     from jaeger.preprocess.latest.convert import process_string_inference
-    #from icecream import ic
-    #ic(string_processor_config)
+
+    # from icecream import ic
+    # ic(string_processor_config)
     idataset = (
         input_dataset.map(
             process_string_inference(
-                    codons=string_processor_config.get("codon"),
-                    codon_num=string_processor_config.get("codon_id"),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    seq_onehot=string_processor_config.get("seq_onehot"),
-                    crop_size=string_processor_config.get("crop_size"),
-                    input_type=string_processor_config.get("input_type"),
-                    masking=string_processor_config.get("masking"),
-                    mutate=string_processor_config.get("mutate"),
-                    mutation_rate=string_processor_config.get("mutation_rate"),
-                    shuffle=string_processor_config.get("shuffle"),
+                codons=string_processor_config.get("codon"),
+                codon_num=string_processor_config.get("codon_id"),
+                codon_depth=string_processor_config.get("codon_depth"),
+                ngram_width=string_processor_config.get("ngram_width"),
+                seq_onehot=string_processor_config.get("seq_onehot"),
+                crop_size=string_processor_config.get("crop_size"),
+                input_type=string_processor_config.get("input_type"),
+                masking=string_processor_config.get("masking"),
+                mutate=string_processor_config.get("mutate"),
+                mutation_rate=string_processor_config.get("mutation_rate"),
+                shuffle=string_processor_config.get("shuffle"),
             ),
             num_parallel_calls=tf.data.AUTOTUNE,
         )
@@ -223,7 +228,7 @@ def run_core(**kwargs):
             fsize=kwargs.get("fsize"),
             term_repeats=term_repeats,
         )
-        #print(len(data['headers']))
+        # print(len(data['headers']))
         num_written = write_output(
             data,
             labels=model.class_map.get("class"),
@@ -239,8 +244,17 @@ def run_core(**kwargs):
             f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
         )
         import numpy as np
-        if 'embedding' in y_pred:
-            np.savez(OUTPUT_DIR / f"{file_base}_embedding.npz", embedding=y_pred['embedding'], headers=y_pred["meta_0"])
-        if 'nmd' in y_pred:
-            np.savez(OUTPUT_DIR / f"{file_base}_nmd.npz", embedding=y_pred['nmd'], headers=y_pred["meta_0"])
-        # INPUT_FILE_MASKED.unlink() 
+
+        if "embedding" in y_pred:
+            np.savez(
+                OUTPUT_DIR / f"{file_base}_embedding.npz",
+                embedding=y_pred["embedding"],
+                headers=y_pred["meta_0"],
+            )
+        if "nmd" in y_pred:
+            np.savez(
+                OUTPUT_DIR / f"{file_base}_nmd.npz",
+                embedding=y_pred["nmd"],
+                headers=y_pred["meta_0"],
+            )
+        # INPUT_FILE_MASKED.unlink()

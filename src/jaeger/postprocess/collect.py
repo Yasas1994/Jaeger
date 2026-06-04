@@ -11,7 +11,7 @@ from jaeger.postprocess.helpers import (
     sigmoid,
     softmax_entropy,
     binary_entropy,
-    energy
+    energy,
 )
 
 logger = logging.getLogger("jaeger")
@@ -214,7 +214,10 @@ def write_output_legacy(
     logger.info("Summary generation completed!")
     # except Exception as e:
 
-def frac_above_threshold(pairs, threshold: float = 0.5, fmt: str = "{:.2f}", none_str: str = "-") -> str:
+
+def frac_above_threshold(
+    pairs, threshold: float = 0.5, fmt: str = "{:.2f}", none_str: str = "-"
+) -> str:
     if pairs is None:
         return none_str
 
@@ -242,9 +245,8 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
     split_indices = np.where(split_flags == 1)[0] + 1
 
     # determine if the classifier is softmax or binary (len, num_class)
-    #print(y_pred["prediction"].shape)
+    # print(y_pred["prediction"].shape)
     if y_pred["prediction"].shape[-1] == 1:
-        
         classifier_type = "binary"
     else:
         classifier_type = "softmax"
@@ -284,20 +286,27 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
     ns = np.split(ns, split_indices)
     gcs = np.split(gcs, split_indices)
 
-    # -- Step 6: Summary statistics 
+    # -- Step 6: Summary statistics
     # preictions can be softmax for sigmoid [record, len, classes]
     # p -> [len, classes]
-    pred_sum = np.array([np.squeeze(np.mean(p, axis=0)) for p in predictions], dtype=np.float16)
-    pred_var = np.array([np.squeeze(np.var(p, axis=0)) for p in predictions], dtype=np.float16)
+    pred_sum = np.array(
+        [np.squeeze(np.mean(p, axis=0)) for p in predictions], dtype=np.float16
+    )
+    pred_var = np.array(
+        [np.squeeze(np.var(p, axis=0)) for p in predictions], dtype=np.float16
+    )
 
     if classifier_type == "softmax":
         entropy_pred = [softmax_entropy(p) for p in predictions]
         energy_pred = [energy(p) for p in predictions]
-        consensus = np.argmax(pred_sum, axis=1) # for each window
+        consensus = np.argmax(pred_sum, axis=1)  # for each window
         frag_pred = [np.argmax(p, axis=-1) for p in predictions]
 
         per_class_counts = [
-            update_dict(np.unique(fp, return_counts=True), kwargs.get("class_map").get("num_classes"))
+            update_dict(
+                np.unique(fp, return_counts=True),
+                kwargs.get("class_map").get("num_classes"),
+            )
             for fp in frag_pred
         ]
         prophage_contam = (pred_sum[:, 1] < pred_var[:, 1]) & (consensus == 0)
@@ -314,7 +323,10 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
         frag_pred = [(p > 0.5).astype(int) for p in frag_pred]
 
         per_class_counts = [
-            update_dict(np.unique(fp, return_counts=True), kwargs.get("class_map").get("num_classes"))
+            update_dict(
+                np.unique(fp, return_counts=True),
+                kwargs.get("class_map").get("num_classes"),
+            )
             for fp in frag_pred
         ]
         prophage_contam = (pred_sum < pred_var) & (consensus == 0)
@@ -323,8 +335,8 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
     # explore differernt ways to summarize
     # ood = np.array([np.squeeze(np.mean(sigmoid(p), axis=0)) for p in ood], dtype=np.float16)
     ood = np.array([frac_above_threshold(sigmoid(p)) for p in ood], dtype=np.float16)
-    #ood = np.array([sigmoid(p) for p in ood_sum])
-    
+    # ood = np.array([sigmoid(p) for p in ood_sum])
+
     entropy_mean = np.array(
         [np.squeeze(np.mean(e)) for e in entropy_pred], dtype=np.float16
     )
@@ -333,7 +345,6 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
     )
     # print(entropy_mean)
     # -- Step 7: Contamination heuristics
-
 
     # -- Step 8: Build output dicts
     data = {
@@ -416,7 +427,7 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
     # columns["prediction_2"] = [class_map2[x] for x in (ev + av + bv)]
 
     # Appends class-wise information to the dictionary
-    #print(data["pred_sum"])
+    # print(data["pred_sum"])
     if len(class_map.keys()) > 2:
         for i, label in class_map.items():
             columns[f"#_{label}_windows"] = [x[i] for x in data["per_class_counts"]]
@@ -427,7 +438,7 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
         # Append the window summary column - string showing virus / phage predictions
 
     else:
-        #print(data["per_class_counts"], class_map)
+        # print(data["per_class_counts"], class_map)
         for i, label in class_map.items():
             columns[f"#_{label}_windows"] = [x[i] for x in data["per_class_counts"]]
 
@@ -435,33 +446,34 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
         columns["var"] = data["pred_var"]
 
     columns["window_summary"] = [
-        get_window_summary(x, class_map=class_map, classes=["virus", "phage"]) for x in data["frag_pred"]
+        get_window_summary(x, class_map=class_map, classes=["virus", "phage"])
+        for x in data["frag_pred"]
     ]
     # Create dataframe and merge with repeat data
     df = pd.DataFrame(columns)
-    #print(df)
-    #print(df.size, df.shape)
+    # print(df)
+    # print(df.size, df.shape)
 
-    #print(set(df['contig_id']) - set(data['repeats']['contig_id']))
+    # print(set(df['contig_id']) - set(data['repeats']['contig_id']))
 
-    #print(set(data['repeats']['contig_id']) - set(df['contig_id']))
+    # print(set(data['repeats']['contig_id']) - set(df['contig_id']))
     df = pd.merge(
         left=df,
         right=data["repeats"][["contig_id", "terminal_repeats", "repeat_length"]],
-        on='contig_id',
+        on="contig_id",
         how="left",
-    )#.reset_index(names="contig_id")
+    )  # .reset_index(names="contig_id")
 
-    #print(data["repeats"], data["repeats"].shape)
-    #print(df)
-    #print(df.size, df.shape)
+    # print(data["repeats"], data["repeats"].shape)
+    # print(df)
+    # print(df.size, df.shape)
     # Replace "___" with "," in contig_id
     df["contig_id"] = df["contig_id"].str.replace("___", ",")
 
     return df
 
 
-def write_output(data: Dict, reliability_cutoff: float = 0.5, phage_score = 1,**kwargs):
+def write_output(data: Dict, reliability_cutoff: float = 0.5, phage_score=1, **kwargs):
     """
     Writes the output based on the provided arguments, configuration, and data.
 

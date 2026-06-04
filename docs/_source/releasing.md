@@ -64,7 +64,7 @@ The script edits version strings in:
 | `.cz.toml` | `version = "…"` |
 | `recipes/jaeger-bio/meta.yaml` | `{% set version = "…" %}` |
 | `singularity/jaeger_singularity.def` | `jaeger-bio==…` |
-| `README.md` | `## Jaeger X.Y.Z …` header |
+| `README.md` | `## Jaeger X.Y.Z` header (if present) + `jaeger-bio==…` |
 | `AGENTS.md` | ``Current version: `X.Y.Z` `` |
 | `docs/_source/usage.md` | Header + `jaeger_X.Y.Z.sif` |
 | `docs/_source/_static/usage.md` | Header + `jaeger_X.Y.Z.sif` |

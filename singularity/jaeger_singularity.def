@@ -10,7 +10,7 @@ From: tensorflow/tensorflow:2.15.0-gpu  # Build upon the latest TensorFlow GPU-e
         && rm -rf /var/lib/apt/lists/*
 
     # Install Jaeger and other dependencies
-    pip install --root-user-action=ignore --no-cache-dir "jaeger-bio==1.1.30"  # install jaeger without tensorflow support
+    pip install --root-user-action=ignore --no-cache-dir "jaeger-bio==1.26.2"  # install jaeger without tensorflow support
 
 %environment
     # Set environment variables for TensorFlow GPU usage

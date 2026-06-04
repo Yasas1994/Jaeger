@@ -2,10 +2,10 @@ import tensorflow as tf
 import logging
 from pathlib import Path
 import shutil
-from jaeger.utils.misc import json_to_dict, AvailableModels, get_model_id
-logger = logging.getLogger("Jaeger")
-
+from jaeger.utils.misc import AvailableModels
 from icecream import ic
+
+logger = logging.getLogger("Jaeger")
 
 
 class EnsembleModel(tf.Module):
@@ -31,26 +31,26 @@ class EnsembleModel(tf.Module):
         return combined
 
 
-
 def combine_models_core(**kwargs):
-    model_info = [tuple(AvailableModels(i).info.values()) for i in kwargs.get('input')]
-    aggregation = kwargs.get('comb')
-    
-    out_dir = Path(kwargs.get('output'))
+    model_info = [tuple(AvailableModels(i).info.values()) for i in kwargs.get("input")]
+    out_dir = Path(kwargs.get("output"))
     out_dir.mkdir(parents=True, exist_ok=True)
     out_model_path = out_dir / "model"
-    model_name = model_info[0][0].get('graph').name.rsplit('_', 1)[0]
+    model_name = model_info[0][0].get("graph").name.rsplit("_", 1)[0]
     out_graph_path = out_model_path / f"{model_name}_{len(model_info)}_ensemble_graph"
-    out_project_path = out_model_path / f"{model_name}_{len(model_info)}_ensemble_project.yaml"
-    out_class_path = out_model_path / f"{model_name}_{len(model_info)}_ensemble_classes.yaml"
+    out_project_path = (
+        out_model_path / f"{model_name}_{len(model_info)}_ensemble_project.yaml"
+    )
+    out_class_path = (
+        out_model_path / f"{model_name}_{len(model_info)}_ensemble_classes.yaml"
+    )
 
-    ic([i[0].get('graph') for i in model_info])
-
+    ic([i[0].get("graph") for i in model_info])
 
     # Load models as callable objects
-    model_paths = [p[0].get('graph') for p in model_info]
-    project_path = model_info[0][0].get('project')
-    class_path =  model_info[0][0].get('classes')
+    model_paths = [p[0].get("graph") for p in model_info]
+    project_path = model_info[0][0].get("project")
+    class_path = model_info[0][0].get("classes")
     # preds = [sig(x)["output_0"] for sig in signatures]  # adjust key if needed
     # ic(preds)
     # === 3. Define the ensemble function ===

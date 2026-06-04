@@ -1,6 +1,5 @@
 from __future__ import annotations
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -26,9 +25,6 @@ def description(version):
         ## Jaeger {version} (yet AnothEr phaGe idEntifier) Deep-learning based
         bacteriophage discovery https://github.com/Yasas1994/Jaeger.git
     """
-
-
-
 
 
 def get_logger(log_path: Path, log_file: str, level: int) -> logging.Logger:
@@ -69,7 +65,9 @@ def get_logger(log_path: Path, log_file: str, level: int) -> logging.Logger:
         # Ensure directory exists
         if log_path is not None:
             log_path.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_path / Path(f"{current_date_time}_{log_file}"))
+        file_handler = logging.FileHandler(
+            log_path / Path(f"{current_date_time}_{log_file}")
+        )
         file_handler.setLevel(logging.DEBUG)  # file logs DEBUG and above
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)

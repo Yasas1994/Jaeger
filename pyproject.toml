@@ -5,12 +5,12 @@ build-backend = "pdm.backend"
 [tool.pdm]
 package-dir = "src"
 
-[tool.setuptools.package-data]
-data = ["*.h5", "*.json", "*.npy", "*.pkl", "*.fasta", ".env"]
+[tool.pdm.build]
+includes = ["src/jaeger/**/*.py", "src/jaeger/**/*.json", "src/jaeger/**/*.h5", "src/jaeger/**/*.npy", "src/jaeger/**/*.pkl", "src/jaeger/**/*.fasta", "src/jaeger/**/*.env", "src/jaeger/**/jaeger_fragment_graph/**", "src/jaeger/**/jaeger_fragment_graph/**/*"]
 
 [project]
 name = "jaeger-bio"
-version = "1.26.1b1"
+version = "1.26.2"
 description = "A quick and precise pipeline for detecting phages in sequence assemblies."
 readme = "README.md"
 authors = [

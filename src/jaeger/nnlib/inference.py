@@ -5,7 +5,15 @@ import math
 import tensorflow as tf
 import numpy as np
 from jaeger.utils.misc import track_ms as track
-from jaeger.preprocess.latest.maps import CODON_ID, CODONS, AA_ID, MURPHY10_ID, PC5_ID, DICODONS, DICODON_ID
+from jaeger.preprocess.latest.maps import (
+    CODON_ID,
+    CODONS,
+    AA_ID,
+    MURPHY10_ID,
+    PC5_ID,
+    DICODONS,
+    DICODON_ID,
+)
 
 # Neural‐net building blocks
 from jaeger.nnlib.v2.layers import (
@@ -326,7 +334,7 @@ class DynamicInferenceModelBuilder:
             "MURPHY10_ID": MURPHY10_ID,
             "PC5_ID": PC5_ID,
             "DICODON": DICODONS,
-            "DICODON_ID": DICODON_ID
+            "DICODON_ID": DICODON_ID,
         }
         _config = self.model_cfg.get("embedding")
         _config.update(self.model_cfg.get("string_processor"))
@@ -334,12 +342,12 @@ class DynamicInferenceModelBuilder:
 
         _config["codon"] = _map.get(_config.get("codon"))
         _config["codon_id"] = _map.get(_config.get("codon_id"))
-        _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
-        _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codon + 1
-        _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
+        _config["codon_depth"] = max(_config.get("codon_id")) + 1  # num_codons
+        _config["vocab_size"] = len(_config.get("codon_id")) + 1  # num_codon + 1
+        _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
         _config["seq_onehot"] = _config.get("seq_onehot", False)
         if _config["seq_onehot"] is False:
-             _config["codon_depth"] = 1
+            _config["codon_depth"] = 1
 
         return _config
 
@@ -371,8 +379,8 @@ class InferModel:
         # Unpack the data
         # set model to inference mode
         y_logits = self.inference_fn(
-                x.get(self.string_processor_config.get("input_type"))
-            )
+            x.get(self.string_processor_config.get("input_type"))
+        )
         return y_logits
 
     def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
@@ -460,9 +468,9 @@ class InferModel:
             "MURPHY10_ID": MURPHY10_ID,
             "PC5_ID": PC5_ID,
             "DICODON": DICODONS,
-            "DICODON_ID": DICODON_ID
+            "DICODON_ID": DICODON_ID,
         }
-        
+
         _config = yaml.safe_load(path.read_text()) or {}
         _model_cfg = _config.get("model")
         _config = _model_cfg.get("embedding")
@@ -471,9 +479,9 @@ class InferModel:
         if _config["codon"] is not None and _config["codon_id"] is not None:
             _config["codon"] = _map.get(_config.get("codon"))
             _config["codon_id"] = _map.get(_config.get("codon_id"))
-            _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
-            _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codons + 1
-            _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1  # num_codons
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1  # num_codons + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
             _config["seq_onehot"] = _config.get("seq_onehot", False)
             if _config["seq_onehot"] is False:
                 _config["codon_depth"] = 1

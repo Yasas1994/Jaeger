@@ -1,219 +1,268 @@
+# Running Jaeger
+
+This guide covers the main prediction workflow, output interpretation, prophage extraction, and available utility commands.
+
 ---
-#### Running Jaeger
+
+## Table of contents
+
+- [Basic prediction](#basic-prediction)
+- [Choosing a model](#choosing-a-model)
+- [Batch size and memory](#batch-size-and-memory)
+- [Output files](#output-files)
+- [Understanding the output table](#understanding-the-output-table)
+- [Prophage extraction](#prophage-extraction)
+- [Command-line reference](#command-line-reference)
+- [Python integration](#python-integration)
+
 ---
-##### CPU/GPU mode
-Once the environment is properly set up, using Jaeger is straightforward. The program can accept both compressed and uncompressed .fasta files containing the contigs as input. It will output a table containing the predictions and various statistics calculated during runtime. 
 
-```
-jaeger run -i input_file.fasta -o output_dir --batch 128
-```
+## Basic prediction
 
-To run jaeger with singularity
-```
-singularity run --bind /path/to/wd --nv jaeger.sif jaeger run -i path/to/wd/xxx.fna -o path/to/wd/out
-```
-##### multi-GPU mode
+The simplest way to run Jaeger:
 
-We provide a new program that allows users to automatically run multiple instances of Jaeger on several GPUs allowing maximum utilization of state-of-the-art hardware. This program accepts a file with a list of paths to all input FASTA files. **--ngpu** flag can be used to set the number of GPUs at your disposal. **--maxworkers** flag can be used to set the number of samples that should be processed parallaly per GPU. All other arguments remains similar to 'Jaeger' program.
-
-
-```
-# to generate a list of fasta files in a dir
-ls ./files/*.fna | xargs realpath > input_file_list
-
-# to process eight samples in parallel on two GPUs 
-jaeger_parallel -i input_file_list -o output_dir --batch 128 --maxworkers 4 --ngpu 2
+```bash
+jaeger predict -i contigs.fasta -o output_dir
 ```
 
-##### Selecting the batch parameter 
-
-You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 96 is good enough for a graphics card with 4 Gb of memory.
-
-
-#### What is in the output?
-
-All predictions are summarized in a table located at ```output_dir/<input_file>_default.jaeger.tsv```
-
-```
-┌───────────────────────────────────┬────────┬────────────┬─────────┬───┬─────────────┬────────────────┬──────────────────┬───────────────┐
-│ contig_id                         ┆ length ┆ prediction ┆ entropy ┆ … ┆ Archaea_var ┆ window_summary ┆ terminal_repeats ┆ repeat_length │
-╞═══════════════════════════════════╪════════╪════════════╪═════════╪═══╪═════════════╪════════════════╪══════════════════╪═══════════════╡
-│ NODE_1109_length_9622_cov_23.163… ┆ 9622   ┆ Phage      ┆ 0.43    ┆ … ┆ 0.143       ┆ 1V1n2V         ┆ null             ┆ null          │
-│ NODE_1181_length_9275_cov_26.864… ┆ 9275   ┆ Phage      ┆ 0.327   ┆ … ┆ 0.504       ┆ 4V             ┆ null             ┆ null          │
-│ NODE_123_length_36569_cov_24.228… ┆ 36569  ┆ Phage      ┆ 0.503   ┆ … ┆ 1.554       ┆ 9V1n7V         ┆ null             ┆ null          │
-│ NODE_149_length_32942_cov_23.754… ┆ 32942  ┆ Phage      ┆ 0.458   ┆ … ┆ 3.229       ┆ 3V1n1n11V      ┆ null             ┆ null          │
-│ NODE_231_length_24276_cov_21.832… ┆ 24276  ┆ Phage      ┆ 0.502   ┆ … ┆ 1.467       ┆ 1V1n3V1n5V     ┆ null             ┆ null          │
-└───────────────────────────────────┴────────┴────────────┴─────────┴───┴─────────────┴────────────────┴──────────────────┴───────────────┘
-
+Run on CPU explicitly:
+```bash
+jaeger predict -i contigs.fasta -o output_dir --cpu
 ```
 
-This table provides information about various contigs in a metagenomic assembly. Each row represents a single contig, and the columns provide information about the contig's ID, length, the number of windows identified as prokaryotic, viral, eukaryotic, and archaeal, the prediction of the contig (Phage or Non-phage), the score of the contig for each category (bacterial, viral, eukaryotic and archaeal), and a summary of the windows. The table can be used to identify potential phage sequences in the metagenomic assembly based on the prediction column. The score columns can be used to further evaluate the confidence of the prediction and the window summary column can be used to understand the count of windows that contributed to the final prediction.
+Run with Apptainer/Singularity:
+```bash
+apptainer run --nv jaeger.sif jaeger predict -i contigs.fasta -o output_dir
+```
 
-##### List of all output fields
-| Field | Explanation | Expected range |
-|----------|----------|----------|
-| contig_id  | header of the fasta record  | -  |
-| length  | length of the sequence  | length >= fsize  |
-| prediction  | final prediction for the sequence  | phage or non-phage  |
-| entropy  | entropy of the softmax distribution | 0 (low uncertainity) - 2 (high uncertainity) |
-| reliability_score | reliability score for the squence | 0 (high uncertainity) - 1 (low uncertainity) |
-| #_xxx_windows  | number of windows predicted as xxx  | -  |
-| #_xxx_score  | mean of logits of all windows  |   -  |
-| #_xxx_var  | variance of logits of all windows  | -  |
-| window_summary  | graphical summary of windows classified as phage and non-phage  |  -  |
+### Common options
 
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-i, --input` | Input FASTA file (required) | — |
+| `-o, --output` | Output directory (required) | — |
+| `--batch` | Parallel batch size | 96 |
+| `--cpu` | Force CPU execution | False |
+| `--workers` | Number of CPU threads | 4 |
+| `--fsize` | Sliding window length | 2000 |
+| `--stride` | Step size between windows | 2000 |
+| `-f, --overwrite` | Overwrite existing output | False |
 
+---
 
-#### Options
+## Choosing a model
 
+Jaeger ships with a `default` model. Additional models can be downloaded and selected via the `-m` flag.
+
+```bash
+# List all available models
+jaeger download --list
+
+# Download a specific model
+jaeger download --model_name jaeger_57341_1.5M_fragment --path ~/jaeger_models
+
+# Use the downloaded model
+jaeger predict -i contigs.fasta -o output_dir -m jaeger_57341_1.5M_fragment
+```
+
+To register a custom model path:
+```bash
+jaeger register-models --path ~/my_custom_models
+```
+
+---
+
+## Batch size and memory
+
+The `--batch` option controls how many sequences are processed in parallel. If you encounter out-of-memory (OOM) errors, reduce this value.
+
+| GPU memory | Suggested `--batch` |
+|------------|---------------------|
+| 4 GB | 32–64 |
+| 8 GB | 64–96 |
+| 16 GB | 96–128 |
+| 24+ GB | 128–256 |
+
+You can also limit GPU memory allocation:
+```bash
+jaeger predict -i contigs.fasta -o output_dir --mem 8
+```
+
+---
+
+## Output files
+
+After running Jaeger, the output directory contains:
+
+```
+output_dir/
+├── <input>_jaeger.tsv           # Main predictions table
+├── <input>_phages_jaeger.tsv    # Subset of phage-only predictions
+└── <input>_jaeger.log           # Runtime log
+```
+
+When prophage extraction is enabled (`-p`):
+
+```
+output_dir/
+├── <input>_jaeger.tsv
+├── <input>_phages_jaeger.tsv
+├── <input>_jaeger.log
+└── <sample_name>_prophages/
+    ├── prophages_jaeger.tsv     # Prophage coordinates
+    └── plots/
+        └── *.pdf                # Circular genome visualizations
+```
+
+---
+
+## Understanding the output table
+
+The main TSV file (`<input>_jaeger.tsv`) contains one row per contig:
+
+| Column | Description | Interpretation |
+|--------|-------------|----------------|
+| `contig_id` | FASTA header | — |
+| `length` | Sequence length | ≥ `fsize` |
+| `prediction` | Final call | `phage` or `bacteria` |
+| `entropy` | Softmax entropy | 0 (confident) → 2 (uncertain) |
+| `reliability_score` | Model confidence | 0 (uncertain) → 1 (confident) |
+| `host_contam` | Potential host contamination | `True` / `False` |
+| `prophage_contam` | Potential prophage contamination | `True` / `False` |
+| `G+C` | GC content | 0–1 |
+| `N%` | Fraction of N bases | 0–1 |
+| `prediction_2` | Secondary prediction | e.g., `bacteria` |
+| `#_bacteria_windows` | Windows classified as bacteria | — |
+| `bacteria_score` | Mean logit for bacteria windows | — |
+| `bacteria_var` | Variance of bacteria logits | — |
+| `#_phage_windows` | Windows classified as phage | — |
+| `phage_score` | Mean logit for phage windows | — |
+| `phage_var` | Variance of phage logits | — |
+| `#_eukarya_windows` | Windows classified as eukarya | — |
+| `eukarya_score` | Mean logit for eukarya windows | — |
+| `eukarya_var` | Variance of eukarya logits | — |
+| `#_archaea_windows` | Windows classified as archaea | — |
+| `archaea_score` | Mean logit for archaea windows | — |
+| `archaea_var` | Variance of archaea logits | — |
+| `window_summary` | Pattern of V (phage) / n (non-phage) windows | e.g., `5V1n2V` |
+| `terminal_repeats` | Detected terminal repeat type | `DTR`, `ITR`, or `null` |
+| `repeat_length` | Length of terminal repeat | bp |
+
+### Filtering tips
+
+- High-confidence phages: `prediction == "phage"` and `reliability_score > 0.5`
+- Uncertain calls: `entropy > 1.0` or `reliability_score < 0.3`
+- Potential prophages: `prophage_contam == True`
+
+---
+
+## Prophage extraction
+
+Enable prophage detection with the `-p` flag:
+
+```bash
+jaeger predict -p -i genome.fna -o output_dir
+```
+
+Tune sensitivity with `-s` (0–4, higher = more sensitive):
+```bash
+jaeger predict -p -i genome.fna -o output_dir -s 2.0
+```
+
+Set minimum contig length for prophage scanning:
+```bash
+jaeger predict -p -i genome.fna -o output_dir --lc 100000
+```
+
+The `plots/` directory contains circular genome visualizations with prophage regions highlighted.
+
+---
+
+## Command-line reference
+
+### Main commands
+
+```
+jaeger [COMMAND] [OPTIONS]
+```
+
+| Command | Purpose |
+|---------|---------|
+| `jaeger predict` | Run phage detection on a FASTA file |
+| `jaeger health` | Check installation and hardware |
+| `jaeger download` | Download pre-trained models |
+| `jaeger register-models` | Register custom model directories |
+| `jaeger train` | Train new models from scratch |
+| `jaeger utils` | Auxiliary tools (see below) |
+| `jaeger taxonomy` | Experimental taxonomy prediction |
+
+### `jaeger predict` full help
 
 ````
-jaeger run --help
+Usage: jaeger predict [OPTIONS]
+
+  Runs Jaeger on a dataset
+
+Options:
+  -i, --input PATH         Path to input file  [required]
+  -o, --output TEXT        Path to output directory  [required]
+  --fsize INTEGER          Length of the sliding window  [default: 2000]
+  --stride INTEGER         The gap between two the sliding windows
+                           (stride==fsize)  [default: 2000]
+  -m, --model TEXT         Select a deep-learning model to use.  [default:
+                           default]
+  --model_path TEXT        Give the path to a model. overrides --model
+  --config PATH            Path to Jaeger config file (e.g., when using
+                           Apptainer or Docker)
+  -p, --prophage           Extract and report prophage-like regions
+  -s, --sensitivity FLOAT  Sensitivity of the prophage extraction algorithm
+                           (0-4)  [default: 1.5]
+  --lc INTEGER             Minimum contig length for prophage extraction
+                           [default: 500000]
+  --rc FLOAT               Minimum reliability score required to accept
+                           predictions  [default: 0.1]
+  --pc INTEGER             Minimum phage score required to accept predictions
+                           [default: 3]
+  --batch INTEGER          Parallel batch size, lower if GPU runs out of
+                           memory  [default: 96]
+  --workers INTEGER        Number of threads to use  [default: 4]
+  --getalllogits           Writes window-wise scores to a .npy file
+  --getsequences           Writes the putative phage sequences to a .fasta
+                           file
+  --cpu                    Ignore available GPUs and explicitly run on CPU
+  --physicalid INTEGER     Set default GPU device ID for multi-GPU systems
+                           [default: 0]
+  --mem INTEGER            GPU memory limit  [default: 4]
+  --getalllabels           Get predicted labels for Non-Viral contigs
+  -v, --verbose            Verbosity level: -vv debug, -v info  [default: 1]
+  -f, --overwrite          Overwrite existing files
+  --help                   Show this message and exit.
 ````
-````
 
-## Jaeger (yet AnothEr phaGe idEntifier) Deep-learning based bacteriophage discovery 
-https://github.com/Yasas1994/Jaeger.git
-usage: jaeger run  -i INPUT -o OUTPUT
+### Utility commands (`jaeger utils`)
 
-options:
-  -h, --help            show this help message and exit
-  -i INPUT, --input INPUT
-                        path to input file
-  -o OUTPUT, --output OUTPUT
-                        path to output directory
-  --fsize [FSIZE]       length of the sliding window (value must be 2^n). default:2048
-  --stride [STRIDE]     stride of the sliding window. default:2048 (stride==fsize)
-  -m {default,experimental_1,experimental_2}, --model {default,experimental_1,experimental_2}
-                        select a deep-learning model to use. default:default
-  -p, --prophage        extract and report prophage-like regions. default:False
-  -s [SENSITIVITY], --sensitivity [SENSITIVITY]
-                        sensitivity of the prophage extraction algorithm (between 0 - 4). default: 1.5
-  --lc [LC]             minimum contig length to run prophage extraction algorithm. default: 500000 bp
-  --rc [RC]             minium reliability score required to accept predictions. default: 0.2
-  --pc [PC]             minium phage score required to accept predictions. default: 3
-  --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:96
-  --workers [WORKERS]   number of threads to use. default:4
-  --getalllogits        writes window-wise scores to a .npy file
-  --getsequences        writes the putative phage sequences to a .fasta file
-  --cpu                 ignore available gpus and explicitly run jaeger on cpu. default: False
-  --physicalid [PHYSICALID]
-                        sets the default gpu device id (for multi-gpu systems). default: 0
-  --getalllabels        get predicted labels for Non-Viral contigs. default: False
-  -v, --verbose         Verbosity level : -vvv warning, -vv info, -v debug, (default info)
-
-Misc. Options:
-  -f, --overwrite       Overwrite existing files
-
-
-````
----
-#### Python Library
----
-Jaeger can be integrated into python scripts using the jaeger python library as follows.
-currently the predict function accepts 4 different input types.
-1) Nucleotide sequence -> str
-2) List of Nucleotide sequences -> list(str,str,..)
-3) python file object -> (io.TextIOWrapper)
-4) python generator object that yields Nucleotide sequences as str (types.GeneratorType)
-5) Biopython Seq object
-
-```python
-from jaeger.api import Predictions
-
-model=Predictor()
-predictions=model.predict(input,stride=2048,fragsize=2048,batch=100)
-model.predict()
-
-```
-
-returns a dictionary of lists in the following format
-
-```python
-{'contig_id': ['seq_0', 'seq_1'],
- 'length': [19000, 10503],
- '#num_prok_windows': [0, 0],
- '#num_vir_windows': [9, 0],
- '#num_fun_windows': [0, 5],
- '#num_arch_windows': [0, 0],
- 'prediction': ['Phage', 'Non-phage'],
- 'bac_score': [-1.9552012549506292, -1.9441368103027343],
- 'vir_score': [6.6312947273254395, -3.097817325592041],
- 'fun_score': [-5.712721400790745, -0.6870137214660644],
- 'arch_score': [-2.4369852013058133, -0.8941479325294495],
- 'window_summary': ['9V', '5n']}
- 
-```
-This dictionary can be easily converted to a pandas dataframe using DataFrame.from_dict() method
-```python
-import pandas as pd
-df = DataFrame.from_dict(predictions)
-```
----
-#### Notes
----
-* The program expects the input file to be in .fasta format.
-* The program uses a sliding window approach to scan the input sequences, so the stride argument determines how far the window will move after each scan.
-* The batch argument determines how many sequences will be processed in parallel.
-* The program is compatible with both CPU and GPU. By default, it will run on the GPU, but if the --cpu option is provided, it will use the specified number of threads for inference.
-* The program uses a pre-trained neural network model for phage genome prediction.
-* The --getalllabels option will output predicted labels for Non-Viral contigs, which can be useful for further analysis.
-It's recommended to use the output of this program in conjunction with other methods for phage genome identification.
-
+| Subcommand | Purpose |
+|------------|---------|
+| `jaeger utils dataset` | Generate non-redundant fragment databases for training |
+| `jaeger utils fragment` | Simulate metagenome assemblies from genomes |
+| `jaeger utils convert` | Convert between CSV and FASTA formats |
+| `jaeger utils mask` | Mask or mutate positions in FASTA files |
+| `jaeger utils ood-data` | Generate out-of-distribution (shuffled) sequences |
+| `jaeger utils combine-models` | Combine multiple models into an ensemble |
+| `jaeger utils stats` | Calculate statistics from Jaeger output |
 
 ---
 
-#### Predicting prophages with Jaeger
----
+## Python integration
 
-```
-jaeger run -p -i NC_002695.fna -o outdir 
-```
-The outdir will contain the following files
-```
-|____Escherichia_coli_O157-H7_prophages
-| |____plots
-| | |____NC_002695_Escherichia_coli_O157-H7_jaeger.pdf
-| |____prophages_jaeger.tsv
-|____Escherichia_coli_O157-H7_jaeger.log
-|____Escherichia_coli_O157-H7_default_jaeger.tsv
-```
-
-users can find the following visulaization in the ```plots``` directory <br><br>
-
-<p align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Yasas1994/Jaeger/assets/34155351/3efcd886-e45a-454f-9f61-53f954932b84"  width="500">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/Yasas1994/Jaeger/assets/34155351/6acc1561-2c36-42c5-94ba-523721e902a5"  width="500">
-  <img alt="dark mode" src="https://github.com/Yasas1994/Jaeger/assets/34155351/3efcd886-e45a-454f-9f61-53f954932b84">
-</picture>
-</p>
-
- <br><br>
-
-
-list of prophage coordinates can be found in ```prophages_jaeger.tsv```
-```
-┌─────────────┬────────────┬──────────┬──────────┬───┬──────────┬────────┬────────────┬────────────┐
-│ contig_id   ┆ alignment_ ┆ identiti ┆ identity ┆ … ┆ gc%      ┆ reject ┆ attL       ┆ attR       │
-│             ┆ length     ┆ es       ┆          ┆   ┆          ┆        ┆            ┆            │
-╞═════════════╪════════════╪══════════╪══════════╪═══╪══════════╪════════╪════════════╪════════════╡
-│ NC_002695   ┆ 16.0       ┆ 16.0     ┆ 1.0      ┆ … ┆ 0.435049 ┆ false  ┆ GCACCATTTA ┆ GCACCATTTA │
-│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ AATCAA     ┆ AATCAA     │
-│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
-│ NC_002695   ┆ 15.0       ┆ 15.0     ┆ 1.0      ┆ … ┆ 0.493497 ┆ false  ┆ GCTTTTTTAT ┆ GCTTTTTTAT │
-│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ ACTAA      ┆ ACTAA      │
-│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
-│ NC_002695   ┆ 60.0       ┆ 60.0     ┆ 1.0      ┆ … ┆ 0.511819 ┆ false  ┆ TGGCGGAAGC ┆ TGGCGGAAGC │
-│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ GCAGAGATTC ┆ GCAGAGATTC │
-│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆ GAACTCTGGA ┆ GAACTCTGGA │
-│             ┆            ┆          ┆          ┆   ┆          ┆        ┆ AC…        ┆ AC…        │
-│ NC_002695   ┆ 16.0       ┆ 16.0     ┆ 1.0      ┆ … ┆ 0.499516 ┆ false  ┆ TTCTTTATTA ┆ TTCTTTATTA │
-│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ CCGGCG     ┆ CCGGCG     │
-│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
-│ NC_002695   ┆ 14.0       ┆ 14.0     ┆ 1.0      ┆ … ┆ 0.529465 ┆ false  ┆ CGTCATCAAG ┆ CGTCATCAAG │
-│ Escherichia ┆            ┆          ┆          ┆   ┆          ┆        ┆ TGCA       ┆ TGCA       │
-│ coli O157-… ┆            ┆          ┆          ┆   ┆          ┆        ┆            ┆            │
-└─────────────┴────────────┴──────────┴──────────┴───┴──────────┴────────┴────────────┴────────────┘
-
-```
+> **Note:** The Python API (`jaeger.api`) is currently experimental and not available in the latest release. For programmatic access, use the CLI via `subprocess`:
+>
+> ```python
+> import subprocess
+> subprocess.run([
+>     "jaeger", "predict",
+>     "-i", "input.fasta",
+>     "-o", "output_dir",
+>     "--batch", "128"
+> ])
+> ```

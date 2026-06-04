@@ -104,11 +104,17 @@ if [[ -f "${REPO_ROOT}/.cz.toml" ]]; then
     echo "  ✓ .cz.toml"
 fi
 
-# 3. recipes/jaeger-bio/meta.yaml
+# 3. recipes/jaeger-bio/meta.yaml — version only (deps updated separately)
 META_YAML="${REPO_ROOT}/recipes/jaeger-bio/meta.yaml"
 if [[ -f "${META_YAML}" ]]; then
     sed_i "s/{% set version = \"[^\"]*\" %}/{% set version = \"${NEW_VERSION}\" %}/" "${META_YAML}"
-    echo "  ✓ recipes/jaeger-bio/meta.yaml"
+    echo "  ✓ recipes/jaeger-bio/meta.yaml (version)"
+fi
+
+# 3b. Sync meta.yaml run dependencies from pyproject.toml
+UPDATE_DEPS_SCRIPT="${REPO_ROOT}/.github/scripts/update-meta-deps.py"
+if [[ -f "${UPDATE_DEPS_SCRIPT}" ]] && [[ -f "${REPO_ROOT}/pyproject.toml" ]]; then
+    (cd "${REPO_ROOT}" && python3 "${UPDATE_DEPS_SCRIPT}")
 fi
 
 # 4. Singularity definitions — update pinned pip install version
@@ -122,13 +128,19 @@ for def_file in "${REPO_ROOT}"/singularity/*.def; do
     fi
 done
 
-# 5. README.md — update the header line "## Jaeger X.Y.Z"
+# 5. README.md
 README="${REPO_ROOT}/README.md"
 if [[ -f "$README" ]]; then
-    # Match "## Jaeger 1.1.30 (yet AnothEr..." style header
+    # 5a. Header line "## Jaeger X.Y.Z" (if present)
     if grep -q '^## Jaeger [0-9]\+\.[0-9]\+\.[0-9]\+' "$README" 2>/dev/null; then
         sed_i 's/^## Jaeger [0-9]\+\.[0-9]\+\.[0-9]\+[a-zA-Z0-9]*/## Jaeger '"${NEW_VERSION}"'/' "$README"
         echo "  ✓ README.md (header)"
+    fi
+
+    # 5b. Pinned install command: jaeger-bio==X.Y.Z
+    if grep -q 'jaeger-bio==[0-9]\+\.[0-9]\+\.[0-9]\+' "$README" 2>/dev/null; then
+        sed_i 's/jaeger-bio==[0-9]\+\.[0-9]\+\.[0-9]\+[a-zA-Z0-9]*/jaeger-bio=='"${NEW_VERSION}"'/g' "$README"
+        echo "  ✓ README.md (pinned install version)"
     fi
 fi
 

@@ -1,6 +1,7 @@
 import tensorflow as tf
 from jaeger.preprocess.latest.maps import CODON_ID, CODONS
 
+
 # map codons to amino acids
 def _map_codon(codons, codon_num):
     trimers = tf.constant(codons)
@@ -67,7 +68,7 @@ def process_string_train(
     mutate=False,
     mutation_rate=0.1,
     masking=False,
-    ngram_width = None,
+    ngram_width=None,
     input_type="translated",  # "translated", "nucleotide", "both"
     shuffle=False,
 ):
@@ -107,18 +108,18 @@ def process_string_train(
 
         # Determine offset for codon splitting
         if crop_size:
-            mod3 = tf.math.floormod(crop_size, 3)             # Tensor, not a Python int
+            mod3 = tf.math.floormod(crop_size, 3)  # Tensor, not a Python int
             forward_strand = tf.strings.bytes_split(x[1])[:crop_size]
-            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
-            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+            offset_lut = tf.constant([-2, -1, 0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)  # shape: same as string_length
         else:
             # Lengths as a Tensor
-            string_length = tf.strings.length(x[1])                 # shape: [...] (same as x1)
-            mod3 = tf.math.floormod(string_length, 3)             # Tensor, not a Python int
+            string_length = tf.strings.length(x[1])  # shape: [...] (same as x1)
+            mod3 = tf.math.floormod(string_length, 3)  # Tensor, not a Python int
 
             # Map {0: -2, 1: -1, 2: 0} using a lookup tensor + gather (works batched)
-            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
-            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+            offset_lut = tf.constant([-2, -1, 0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)  # shape: same as string_length
             forward_strand = tf.strings.bytes_split(x[1])
 
         # Apply mutations if requested
@@ -149,8 +150,12 @@ def process_string_train(
 
         # Translated representation
         if input_type in ["translated", "both"]:
-            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=ngram_width, separator="")
-            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=ngram_width, separator="")
+            tri_forward = tf.strings.ngrams(
+                forward_strand, ngram_width=ngram_width, separator=""
+            )
+            tri_reverse = tf.strings.ngrams(
+                reverse_strand, ngram_width=ngram_width, separator=""
+            )
 
             f1 = map_codon.lookup(tri_forward[0 : -3 + offset : ngram_width])
             f2 = map_codon.lookup(tri_forward[1 : -2 + offset : ngram_width])
@@ -202,9 +207,9 @@ def process_string_inference(
     fragsize=200,
     mutate=False,
     mutation_rate=0.1,
-    ngram_width = 3,
+    ngram_width=3,
     shuffle=False,
-    masking=False, # mask lowercase nucleotides
+    masking=False,  # mask lowercase nucleotides
     input_type="translated",  # "translated", "nucleotide", "both"
 ):
     """
@@ -229,18 +234,18 @@ def process_string_inference(
 
         # Determine offset for codon splitting
         if crop_size:
-            mod3 = tf.math.floormod(crop_size, 3)             # Tensor, not a Python int
+            mod3 = tf.math.floormod(crop_size, 3)  # Tensor, not a Python int
             forward_strand = tf.strings.bytes_split(x[0])[:crop_size]
-            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
-            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+            offset_lut = tf.constant([-2, -1, 0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)  # shape: same as string_length
         else:
             # Lengths as a Tensor
-            string_length = tf.strings.length(x[1])                 # shape: [...] (same as x1)
-            mod3 = tf.math.floormod(string_length, 3)             # Tensor, not a Python int
+            string_length = tf.strings.length(x[1])  # shape: [...] (same as x1)
+            mod3 = tf.math.floormod(string_length, 3)  # Tensor, not a Python int
 
             # Map {0: -2, 1: -1, 2: 0} using a lookup tensor + gather (works batched)
-            offset_lut = tf.constant([-2, -1,  0], dtype=tf.int32)
-            offset = tf.gather(offset_lut, mod3)                  # shape: same as string_length
+            offset_lut = tf.constant([-2, -1, 0], dtype=tf.int32)
+            offset = tf.gather(offset_lut, mod3)  # shape: same as string_length
             forward_strand = tf.strings.bytes_split(x[0])
 
         # Apply mutations if requested
@@ -258,7 +263,6 @@ def process_string_inference(
 
         reverse_strand = map_complement.lookup(forward_strand[::-1])
 
-
         outputs = {}
         if masking is False:
             forward_strand = tf.strings.upper(forward_strand)
@@ -268,12 +272,18 @@ def process_string_inference(
             nuc1 = map_nucleotide.lookup(forward_strand)
             nuc2 = map_nucleotide.lookup(reverse_strand)
             nuc = tf.stack([nuc1, nuc2], axis=0)
-            outputs["nucleotide"] = tf.one_hot(nuc, depth=4, dtype=tf.float32, on_value=1, off_value=0)
+            outputs["nucleotide"] = tf.one_hot(
+                nuc, depth=4, dtype=tf.float32, on_value=1, off_value=0
+            )
 
         # Translated representation
         if input_type in ["translated", "both"]:
-            tri_forward = tf.strings.ngrams(forward_strand, ngram_width=ngram_width, separator="")
-            tri_reverse = tf.strings.ngrams(reverse_strand, ngram_width=ngram_width, separator="")
+            tri_forward = tf.strings.ngrams(
+                forward_strand, ngram_width=ngram_width, separator=""
+            )
+            tri_reverse = tf.strings.ngrams(
+                reverse_strand, ngram_width=ngram_width, separator=""
+            )
 
             f1 = map_codon.lookup(tri_forward[0 : -3 + offset : ngram_width])
             f2 = map_codon.lookup(tri_forward[1 : -2 + offset : ngram_width])

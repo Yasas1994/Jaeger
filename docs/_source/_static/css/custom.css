@@ -1,30 +1,37 @@
 /* Must be at the very top, before any other rules */
 @import url("https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,opsz,wght@0,6..12,200..1000;1,6..12,200..1000&display=swap");
 
-::-moz-selection {
-    background: #efeff4;
-}
-
-::selection {
-    background: #efeff4;
-}
-
-.theme-toggle-container {
-    display: none;
-}
-
+/* ========== Catppuccin Latte (Light) ========== */
 body {
     font-family: "Nunito Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 15px;
     font-weight: 400;
 }
 
+/* Selection colors */
+::selection {
+    background: #b4befe;
+    color: #4c4f69;
+}
+
+::-moz-selection {
+    background: #b4befe;
+    color: #4c4f69;
+}
+
+/* Hide theme toggle since we handle it via Furo's built-in toggle */
+.theme-toggle-container {
+    display: none;
+}
+
+/* Headings */
 h1 {
     font-size: 1.95rem;
     font-weight: 800;
     margin-bottom: 2.25rem;
     padding-bottom: 1.35rem;
-    border-bottom: 1px solid #eeebee;
+    border-bottom: 1px solid #ccd0da;
+    color: #4c4f69;
 }
 
 h2 {
@@ -34,36 +41,47 @@ h2 {
     margin-top: 1.8rem;
     scroll-margin-top: 0.5rem;
     padding-bottom: 0.3rem;
-    /* border-bottom: 1px solid #eeebee; */
+    color: #4c4f69;
 }
 
 h3 {
-    font-size: 0.75rem;
+    font-size: 1.1rem;
     font-weight: 800;
     margin-bottom: 0.6rem;
     margin-top: 1.25rem;
     scroll-margin-top: 0.5rem;
+    color: #5c5f77;
 }
 
 h4 {
-    font-size: 0.5rem;
-    font-weight: 500;
+    font-size: 0.95rem;
+    font-weight: 700;
     font-style: italic;
     margin-bottom: 0.6rem;
     scroll-margin-top: 0.5rem;
+    color: #6c6f85;
 }
 
+/* Tables */
 table {
     font-size: 15px;
     white-space: nowrap;
 }
 
+table td, table th {
+    white-space: normal !important;
+    word-wrap: break-word;
+}
+
+/* Lists */
 ul li {
     padding: 0.01rem;
 }
 
+/* Admonitions */
 .admonition {
     font-size: 15px;
+    border-radius: 8px;
 }
 
 p.admonition-title {
@@ -71,10 +89,12 @@ p.admonition-title {
     font-weight: 800;
 }
 
+/* Tabs */
 label.sd-tab-label {
     font-size: 100%;
 }
 
+/* Sidebar */
 .brand {
     font-weight: 800;
 }
@@ -92,7 +112,61 @@ label.sd-tab-label {
     text-transform: none;
     font-weight: 800;
 }
-table td, table th {
-    white-space: normal !important;
-    word-wrap: break-word;
+
+/* ========== Catppuccin Mocha (Dark) Overrides ========== */
+@media (prefers-color-scheme: dark) {
+    ::selection {
+        background: #b4befe;
+        color: #1e1e2e;
+    }
+
+    ::-moz-selection {
+        background: #b4befe;
+        color: #1e1e2e;
+    }
+
+    h1 {
+        border-bottom: 1px solid #313244;
+        color: #cdd6f4;
+    }
+
+    h2 {
+        color: #cdd6f4;
+    }
+
+    h3 {
+        color: #bac2de;
+    }
+
+    h4 {
+        color: #a6adc8;
+    }
+}
+
+/* Furo dark mode class override */
+body[data-theme="dark"] ::selection {
+    background: #b4befe;
+    color: #1e1e2e;
+}
+
+body[data-theme="dark"] ::-moz-selection {
+    background: #b4befe;
+    color: #1e1e2e;
+}
+
+body[data-theme="dark"] h1 {
+    border-bottom: 1px solid #313244;
+    color: #cdd6f4;
+}
+
+body[data-theme="dark"] h2 {
+    color: #cdd6f4;
+}
+
+body[data-theme="dark"] h3 {
+    color: #bac2de;
+}
+
+body[data-theme="dark"] h4 {
+    color: #a6adc8;
 }
