@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict
 import yaml
 import math
@@ -379,7 +380,7 @@ class InferModel:
         # Unpack the data
         # set model to inference mode
         y_logits = self.inference_fn(
-            x.get(self.string_processor_config.get("input_type"))
+            inputs=x.get(self.string_processor_config.get("input_type"))
         )
         return y_logits
 
@@ -471,10 +472,17 @@ class InferModel:
             "DICODON_ID": DICODON_ID,
         }
 
-        _config = yaml.safe_load(path.read_text()) or {}
+        if path is None:
+            # Legacy models without project.yaml — return minimal defaults
+            return {"input_type": "translated"}
+
+        _config = yaml.safe_load(Path(path).read_text()) or {}
         _model_cfg = _config.get("model")
         _config = _model_cfg.get("embedding")
         _config.update(_model_cfg.get("string_processor"))
+
+        # Set input_type from embedding type (e.g., "translated", "nucleotide", "both")
+        _config["input_type"] = _config.get("type", "translated")
 
         if _config["codon"] is not None and _config["codon_id"] is not None:
             _config["codon"] = _map.get(_config.get("codon"))
@@ -482,6 +490,13 @@ class InferModel:
             _config["codon_depth"] = max(_config.get("codon_id")) + 1  # num_codons
             _config["vocab_size"] = len(_config.get("codon_id")) + 1  # num_codons + 1
             _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
+            # Infer seq_onehot from embedding input_shape if not explicitly set.
+            # input_shape like [6, None, 64] means one-hot with depth=64;
+            # [6, None] means embedding lookup (no one-hot).
+            input_shape = _model_cfg.get("embedding", {}).get("input_shape")
+            if _config.get("seq_onehot") is None and input_shape is not None:
+                # input_shape is [frames, timesteps, codon_depth] for one-hot
+                _config["seq_onehot"] = len(input_shape) == 3 and input_shape[-1] is not None and input_shape[-1] > 1
             _config["seq_onehot"] = _config.get("seq_onehot", False)
             if _config["seq_onehot"] is False:
                 _config["codon_depth"] = 1
