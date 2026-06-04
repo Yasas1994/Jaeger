@@ -1,9 +1,7 @@
 """Tests for the inference pipeline (InferModel and _load_string_processor_config)."""
 
 from pathlib import Path
-import tempfile
 
-import numpy as np
 import pytest
 import tensorflow as tf
 import yaml
@@ -11,6 +9,7 @@ import yaml
 # Skip all tests if tensorflow is not available
 try:
     import tensorflow as tf
+
     HAS_TF = True
 except ImportError:
     HAS_TF = False
@@ -49,11 +48,13 @@ class TestLoadStringProcessorConfig:
         graph_dir = tmp_path / "test_graph"
         _create_dummy_savedmodel(graph_dir)
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         assert model.string_processor_config["input_type"] == "translated"
 
@@ -82,11 +83,13 @@ class TestLoadStringProcessorConfig:
         graph_dir = tmp_path / "test_graph"
         _create_dummy_savedmodel(graph_dir)
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         assert model.string_processor_config["input_type"] == "translated"
 
@@ -117,11 +120,13 @@ class TestLoadStringProcessorConfig:
         graph_dir = tmp_path / "test_graph"
         _create_dummy_savedmodel(graph_dir)
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         assert model.string_processor_config["seq_onehot"] is True
         assert model.string_processor_config["codon_depth"] == 64
@@ -153,11 +158,13 @@ class TestLoadStringProcessorConfig:
         graph_dir = tmp_path / "test_graph"
         _create_dummy_savedmodel(graph_dir)
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         assert model.string_processor_config["seq_onehot"] is False
         assert model.string_processor_config["codon_depth"] == 1
@@ -189,11 +196,13 @@ class TestLoadStringProcessorConfig:
         graph_dir = tmp_path / "test_graph"
         _create_dummy_savedmodel(graph_dir)
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         assert model.string_processor_config["seq_onehot"] is False
         assert model.string_processor_config["codon_depth"] == 1
@@ -225,11 +234,13 @@ class TestLoadStringProcessorConfig:
         _create_dummy_savedmodel(graph_dir)
 
         # Pass paths as strings
-        model = InferModel({
-            "graph": str(graph_dir),
-            "classes": str(classes_file),
-            "project": str(project_file),
-        })
+        model = InferModel(
+            {
+                "graph": str(graph_dir),
+                "classes": str(classes_file),
+                "project": str(project_file),
+            }
+        )
 
         assert model.string_processor_config["input_type"] == "translated"
 
@@ -266,11 +277,13 @@ class TestInferModelPrediction:
         graph_dir = tmp_path / "test_graph"
         _create_savedmodel_with_keyword_input(graph_dir, input_shape=(None, 6, None, 4))
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         # Create dummy input batch
         dummy_input = {
@@ -294,18 +307,24 @@ class TestLegacyAndNewPipeline:
         _create_legacy_savedmodel(graph_dir)
 
         classes_file = tmp_path / "classes.yaml"
-        classes_file.write_text(yaml.safe_dump({
-            "classes": [
-                {"class": "bacteria", "label": 0},
-                {"class": "phage", "label": 1},
-            ]
-        }))
+        classes_file.write_text(
+            yaml.safe_dump(
+                {
+                    "classes": [
+                        {"class": "bacteria", "label": 0},
+                        {"class": "phage", "label": 1},
+                    ]
+                }
+            )
+        )
 
         # Legacy models don't have project.yaml
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+            }
+        )
 
         # Should load without error
         assert model.loaded_model is not None
@@ -344,11 +363,13 @@ class TestLegacyAndNewPipeline:
         graph_dir = tmp_path / "test_graph"
         _create_savedmodel_with_keyword_input(graph_dir, input_shape=(None, 6, None, 4))
 
-        model = InferModel({
-            "graph": graph_dir,
-            "classes": classes_file,
-            "project": project_file,
-        })
+        model = InferModel(
+            {
+                "graph": graph_dir,
+                "classes": classes_file,
+                "project": project_file,
+            }
+        )
 
         # Verify signature
         sig = model.loaded_model.signatures["serving_default"]
@@ -358,15 +379,20 @@ class TestLegacyAndNewPipeline:
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+
 def _create_dummy_savedmodel(export_dir: Path):
     """Create a minimal SavedModel for testing."""
     export_dir = Path(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
 
     class DummyModel(tf.Module):
-        @tf.function(input_signature=[
-            tf.TensorSpec(shape=(None, 6, None, 64), dtype=tf.float32, name="inputs")
-        ])
+        @tf.function(
+            input_signature=[
+                tf.TensorSpec(
+                    shape=(None, 6, None, 64), dtype=tf.float32, name="inputs"
+                )
+            ]
+        )
         def serving_default(self, inputs):
             return {
                 "prediction": tf.zeros([tf.shape(inputs)[0], 2]),
@@ -374,9 +400,9 @@ def _create_dummy_savedmodel(export_dir: Path):
             }
 
     model = DummyModel()
-    tf.saved_model.save(model, str(export_dir), signatures={
-        "serving_default": model.serving_default
-    })
+    tf.saved_model.save(
+        model, str(export_dir), signatures={"serving_default": model.serving_default}
+    )
 
 
 def _create_savedmodel_with_keyword_input(export_dir: Path, input_shape):
@@ -385,9 +411,11 @@ def _create_savedmodel_with_keyword_input(export_dir: Path, input_shape):
     export_dir.mkdir(parents=True, exist_ok=True)
 
     class KeywordInputModel(tf.Module):
-        @tf.function(input_signature=[
-            tf.TensorSpec(shape=input_shape, dtype=tf.float32, name="inputs")
-        ])
+        @tf.function(
+            input_signature=[
+                tf.TensorSpec(shape=input_shape, dtype=tf.float32, name="inputs")
+            ]
+        )
         def serving_default(self, inputs):
             batch_size = tf.shape(inputs)[0]
             return {
@@ -396,9 +424,9 @@ def _create_savedmodel_with_keyword_input(export_dir: Path, input_shape):
             }
 
     model = KeywordInputModel()
-    tf.saved_model.save(model, str(export_dir), signatures={
-        "serving_default": model.serving_default
-    })
+    tf.saved_model.save(
+        model, str(export_dir), signatures={"serving_default": model.serving_default}
+    )
 
 
 def _create_legacy_savedmodel(export_dir: Path):
@@ -407,11 +435,13 @@ def _create_legacy_savedmodel(export_dir: Path):
     export_dir.mkdir(parents=True, exist_ok=True)
 
     class LegacyModel(tf.Module):
-        @tf.function(input_signature=[
-            tf.TensorSpec(shape=(None, None), dtype=tf.float32, name="inputs_1"),
-            tf.TensorSpec(shape=(None, None), dtype=tf.float32, name="inputs_2"),
-            tf.TensorSpec(shape=(None, None), dtype=tf.float32, name="inputs_3"),
-        ])
+        @tf.function(
+            input_signature=[
+                tf.TensorSpec(shape=(None, None), dtype=tf.float32, name="inputs_1"),
+                tf.TensorSpec(shape=(None, None), dtype=tf.float32, name="inputs_2"),
+                tf.TensorSpec(shape=(None, None), dtype=tf.float32, name="inputs_3"),
+            ]
+        )
         def serving_default(self, inputs_1, inputs_2, inputs_3):
             batch_size = tf.shape(inputs_1)[0]
             return {
@@ -420,6 +450,6 @@ def _create_legacy_savedmodel(export_dir: Path):
             }
 
     model = LegacyModel()
-    tf.saved_model.save(model, str(export_dir), signatures={
-        "serving_default": model.serving_default
-    })
+    tf.saved_model.save(
+        model, str(export_dir), signatures={"serving_default": model.serving_default}
+    )

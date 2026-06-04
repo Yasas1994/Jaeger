@@ -496,7 +496,11 @@ class InferModel:
             input_shape = _model_cfg.get("embedding", {}).get("input_shape")
             if _config.get("seq_onehot") is None and input_shape is not None:
                 # input_shape is [frames, timesteps, codon_depth] for one-hot
-                _config["seq_onehot"] = len(input_shape) == 3 and input_shape[-1] is not None and input_shape[-1] > 1
+                _config["seq_onehot"] = (
+                    len(input_shape) == 3
+                    and input_shape[-1] is not None
+                    and input_shape[-1] > 1
+                )
             _config["seq_onehot"] = _config.get("seq_onehot", False)
             if _config["seq_onehot"] is False:
                 _config["codon_depth"] = 1
