@@ -49,11 +49,11 @@ def main():
 @click.option(
     "-v", "--verbose", count=True, help="Verbosity level: -vv debug, -v info", default=1
 )
-def test(**kwargs):
+def health(**kwargs):
     """Runs tests to check health of the installation."""
-    from jaeger.commands.test import test_core
+    from jaeger.commands.health import health_core
 
-    test_core(**kwargs)
+    health_core(**kwargs)
 
 
 @click.command(context_settings={'show_default': True})
@@ -1150,7 +1150,7 @@ def predict_tax(**kwargs):  # noqa: F811
         from jaeger.commands.taxonomy import predict_taxonomy
         predict_taxonomy(**kwargs)
 
-main.add_command(test)
+main.add_command(health)
 main.add_command(predict)
 main.add_command(train)
 main.add_command(register_models)
