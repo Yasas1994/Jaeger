@@ -17,9 +17,9 @@
 
 
 
-Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequences
+Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences
 ===============
-![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio) [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
+![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio)
 
 
 
@@ -39,7 +39,7 @@ If you use Jaeger in your work, please consider citing its preprint:
 
 To cite the code itself:
 
-* <b>Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences</b> [![DOI](https://zenodo.org/badge/379281156.svg)](https://zenodo.org/doi/10.5281/zenodo.13336194)
+* **Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences**
 
 ---
 
@@ -70,11 +70,11 @@ conda activate jaeger
 ````
 Test the installation with test data
 ```bash
-jaeger test
+jaeger health
 ```
 
 
-##### option 2 : Installing from pypi (recomended)
+##### option 2 : Installing from PyPI (recommended)
 
 ```bash
 # create a conda environment and activate  
@@ -95,7 +95,7 @@ pip install jaeger-bio[cpu]
 pip install jaeger-bio[darwin-arm]
 
 # test the installation
-jaeger test
+jaeger health
 ```
 
 ##### option 3 : Installing the dev version
@@ -121,11 +121,11 @@ pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[cpu] @ git+htt
 pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[darwin-arm] @ git+https://github.com/MGXlab/Jaeger@dev"
 
 # test the installation
-jaeger test
+jaeger health
 
 ```
 
-##### option 4 : Apptainer (singularity)
+##### option 4 : Apptainer (Singularity)
 If you're using Apptainer on a cluster, it's recommended to build the container on your local machine and then transfer it to the cluster.
 ```bash
 # get the container def
@@ -140,7 +140,7 @@ apptainer build jaeger.sif singularity/jaeger_singularity.def
 apptainer run --nv jaeger.sif jaeger --help
 
 # test the installation
-apptainer run --nv jaeger.sif jaeger test
+apptainer run --nv jaeger.sif jaeger health
 
 # list jaeger models available for download
 apptainer run --nv jaeger.sif download --list
@@ -166,7 +166,7 @@ Then to download the model and add it to the model path run
 ```bash
 jaeger download --path /path/to/store/models --model jaeger_38341_1.4M
 ```
-If you decide to change the model path later, or if you have a dir witg newly trained/tuned models
+If you decide to change the model path later, or if you have a directory with newly trained/tuned models
 register the path 
 ```bash
 jaeger register-models --path /new/model/path
@@ -191,7 +191,7 @@ apptainer run --nv jaeger.sif jaeger predict -i input_file.fasta -o output_dir -
 
 ##### Selecting the batch parameter 
 
-You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the --bactch option to a lower value. for example 96 is good enough for a graphics card with 4 Gb of memory.
+You can control the number of parallel computations using this parameter. By default it is set to 96. If you run into OOM errors, please consider setting the --batch option to a lower value. For example, 96 is good enough for a graphics card with 4 GB of memory.
 
 ---
 #### What is in the output?
@@ -241,8 +241,8 @@ options:
   -s [SENSITIVITY], --sensitivity [SENSITIVITY]
                         sensitivity of the prophage extraction algorithm (between 0 - 4). default: 1.5
   --lc [LC]             minimum contig length to run prophage extraction algorithm. default: 500000 bp
-  --rc [RC]             minium reliability score required to accept predictions. default: 0.2
-  --pc [PC]             minium phage score required to accept predictions. default: 3
+  --rc [RC]             minimum reliability score required to accept predictions. default: 0.2
+  --pc [PC]             minimum phage score required to accept predictions. default: 3
   --batch [BATCH]       parallel batch size, set to a lower value if your gpu runs out of memory. default:96
   --workers [WORKERS]   number of threads to use. default:4
   --getalllogits        writes window-wise scores to a .npy file
@@ -261,20 +261,19 @@ Misc. Options:
 ---
 #### Python Library
 ---
-Jaeger can be integrated into python scripts using the jaeger python library as follows.
-currently the predict function accepts 4 different input types.
-1) Nucleotide sequence -> str
-2) List of Nucleotide sequences -> list(str,str,..)
-3) python file object -> (io.TextIOWrapper)
-4) python generator object that yields Nucleotide sequences as str (types.GeneratorType)
-5) Biopython Seq object
+Jaeger can be integrated into Python scripts using the Jaeger Python library as follows.
+Currently, the predict function accepts 5 different input types.
+1. Nucleotide sequence -> str
+2. List of nucleotide sequences -> list[str, str, ...]
+3. Python file object -> io.TextIOWrapper
+4. Python generator object that yields nucleotide sequences as str (types.GeneratorType)
+5. Biopython Seq object
 
 ```python
-from jaeger.api import Predictions
+from jaeger.api import Predictor
 
-model=Predictor()
-predictions=model.predict(input,stride=2048,fragsize=2048,batch=100)
-model.predict()
+model = Predictor()
+predictions = model.predict(input, stride=2048, fragsize=2048, batch=100)
 
 ```
 
@@ -295,10 +294,10 @@ returns a dictionary of lists in the following format
  'window_summary': ['9V', '5n']}
  
 ```
-This dictionary can be easily converted to a pandas dataframe using DataFrame.from_dict() method
+This dictionary can be easily converted to a pandas DataFrame using the DataFrame.from_dict() method
 ```python
 import pandas as pd
-df = DataFrame.from_dict(predictions)
+df = pd.DataFrame.from_dict(predictions)
 ```
 ---
 #### Notes
@@ -329,7 +328,7 @@ The outdir will contain the following files
 |____Escherichia_coli_O157-H7_default_jaeger.tsv
 ```
 
-users can find the following visulaization in the ```plots``` directory <br><br>
+Users can find the following visualization in the `plots` directory <br><br>
 
 <p align="center">
 <picture>
@@ -374,7 +373,7 @@ list of prophage coordinates can be found in ```prophages_jaeger.tsv```
 You can use [phage_contig_annotator](https://github.com/Yasas1994/phage_contig_annotator) to annotate and visualize Jaeger predictions.
 
 ---
-#### Acknowlegements
+#### Acknowledgements
 ---
 
 This work was supported by the European Union’s Horizon 2020 research and innovation program, under the Marie Skłodowska-Curie Actions Innovative Training Networks grant agreement no. 955974 ([VIROINF](https://viroinf.eu/)), the European Research Council (ERC) Consolidator grant 865694 
