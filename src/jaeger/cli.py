@@ -18,6 +18,7 @@ from importlib.metadata import version
 from importlib.resources import files
 from jaeger.utils.misc import json_to_dict, add_data_to_json, AvailableModels
 import warnings
+from jaeger.commands.quantize import quantize_model
 
 warnings.filterwarnings("ignore")
 
@@ -174,6 +175,11 @@ def health(**kwargs):
     default=1,
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing files")
+@click.option(
+    "--quantized",
+    type=click.Choice(["dynamic", "float16", "full_int8"]),
+    help="Use quantized model for inference (dynamic|float16|full_int8)",
+)
 def predict(**kwargs):
     """
     Runs Jaeger on a dataset
@@ -892,6 +898,50 @@ def stats(**kwargs):
 
     stats_core(**kwargs)
     pass
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+            Quantize a Jaeger model for faster inference
+
+            usage
+            -----
+
+            jaeger utils quantize -m default -o ./quantized_models
+            jaeger utils quantize -m jaeger_57341_1.5M_fragment -o ./quantized --mode float16
+        """,
+)
+@click.option(
+    "-m",
+    "--model",
+    type=str,
+    required=True,
+    help="Model name to quantize",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Output directory for the quantized model",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["dynamic", "float16", "full_int8"]),
+    default="dynamic",
+    help="Quantization mode",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level",
+    default=1,
+)
+def quantize_cmd(**kwargs):
+    """Quantize a Jaeger model"""
+    quantize_model(**kwargs)
 
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
