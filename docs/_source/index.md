@@ -32,13 +32,13 @@ Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequenc
   <a href="https://anaconda.org/bioconda/jaeger-bio">
     <img src="https://img.shields.io/conda/dn/bioconda/jaeger-bio" alt="Conda downloads">
   </a>
-  <a href="https://badge.fury.io/py/jaeger-bio">
-    <img src="https://badge.fury.io/py/jaeger-bio.svg" alt="PyPI version">
+  <a href="https://pypi.org/project/jaeger-bio/">
+    <img src="https://img.shields.io/pypi/v/jaeger-bio.svg" alt="PyPI version">
   </a>
   <a href="https://pepy.tech/project/jaeger-bio">
     <img src="https://static.pepy.tech/badge/jaeger-bio" alt="Downloads">
   </a>
-  <a href="https://zenodo.org/doi/10.5281/zenodo.13336194">
+  <a href="https://doi.org/10.5281/zenodo.20534106">
     <img src="https://zenodo.org/badge/379281156.svg" alt="DOI">
   </a>
 </p>
