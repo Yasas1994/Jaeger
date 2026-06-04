@@ -42,7 +42,9 @@ def fragment_generator(
                 )  # move size filtering to a separate preprocessing step
                 sequence = record[1].strip().upper()
                 if dustmask:
-                    sequence = pydustmasker.DustMasker(sequence, window_size=64, score_threshold=20).mask()
+                    sequence = pydustmasker.DustMasker(
+                        sequence, window_size=64, score_threshold=20
+                    ).mask()
                 header = record[0].strip().replace(",", "___")
                 # logger.debug(sequence)
                 # sequence = str(record[1]).upper()

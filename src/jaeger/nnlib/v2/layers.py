@@ -418,7 +418,7 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
         kernel_regularizer=None,
         bias_regularizer=None,
         activity_regularizer=None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(activity_regularizer=activity_regularizer, **kwargs)
         self.return_gate = return_gate
@@ -441,19 +441,21 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
             bias_initializer=self.bias_initializer,
             kernel_regularizer=self.kernel_regularizer,
             bias_regularizer=self.bias_regularizer,
-            name=f"{self.name}_gate"
+            name=f"{self.name}_gate",
         )
         self.score_dense.build((input_shape[0], input_shape[1], d))
         super().build(input_shape)
 
     def call(self, x, training=None):
         # (B,F,L,D) -> max over L
-        per_frame = tf.reduce_max(x, axis=2)   # (B,F,D)
+        per_frame = tf.reduce_max(x, axis=2)  # (B,F,D)
 
-        logits = self.score_dense(per_frame)   # (B,F,1)
+        logits = self.score_dense(per_frame)  # (B,F,1)
 
         gates = tf.sigmoid(logits)
-        gates = gates / (tf.reduce_sum(gates, axis=1, keepdims=True) + tf.keras.backend.epsilon())
+        gates = gates / (
+            tf.reduce_sum(gates, axis=1, keepdims=True) + tf.keras.backend.epsilon()
+        )
 
         pooled = tf.reduce_sum(per_frame * gates, axis=1)  # (B,D)
 
@@ -462,7 +464,7 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
         return pooled
 
     def compute_output_shape(self, input_shape):
-        b, f, l, d = input_shape
+        b, f, seq_len, d = input_shape
         if self.return_gate:
             return (b, d), (b, f)
         return (b, d)
@@ -471,13 +473,23 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "return_gate": self.return_gate,
-            "kernel_initializer": tf.keras.initializers.serialize(self.kernel_initializer),
-            "bias_initializer": tf.keras.initializers.serialize(self.bias_initializer),
-            "kernel_regularizer": tf.keras.regularizers.serialize(self.kernel_regularizer),
-            "bias_regularizer": tf.keras.regularizers.serialize(self.bias_regularizer),
-        })
+        config.update(
+            {
+                "return_gate": self.return_gate,
+                "kernel_initializer": tf.keras.initializers.serialize(
+                    self.kernel_initializer
+                ),
+                "bias_initializer": tf.keras.initializers.serialize(
+                    self.bias_initializer
+                ),
+                "kernel_regularizer": tf.keras.regularizers.serialize(
+                    self.kernel_regularizer
+                ),
+                "bias_regularizer": tf.keras.regularizers.serialize(
+                    self.bias_regularizer
+                ),
+            }
+        )
         return config
 
     def get_build_config(self):
@@ -487,7 +499,7 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
     def build_from_config(self, config):
         # re-create child layer from saved config
         self.score_dense = tf.keras.layers.Dense.from_config(config["score_dense"])
-    
+
 
 # class MaskedBatchNorm(tf.keras.layers.Layer):
 #     """
@@ -605,13 +617,16 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
 #         })
 #         return config
 
+
 class MaskedBatchNorm(tf.keras.layers.Layer):
     """
     Masked Batch Normalization that supports arbitrary input rank and optional return
     of normalized mean difference vectors. Masked positions are excluded from statistics.
     """
 
-    def __init__(self, epsilon=1e-5, momentum=0.9, return_nmd=False, dtype=None, **kwargs):
+    def __init__(
+        self, epsilon=1e-5, momentum=0.9, return_nmd=False, dtype=None, **kwargs
+    ):
         # Let Keras / mixed_precision policy control dtype if provided
         if dtype is not None:
             kwargs["dtype"] = dtype
@@ -671,8 +686,12 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
         if ndims is None:
             raise ValueError("Input rank must be statically known for MaskedBatchNorm.")
 
-        reduce_axes = list(range(0, max(ndims - 1, 0)))   # batch stats: all except channel
-        example_axes = list(range(1, max(ndims - 1, 1)))  # per-example: skip batch & channel
+        reduce_axes = list(
+            range(0, max(ndims - 1, 0))
+        )  # batch stats: all except channel
+        example_axes = list(
+            range(1, max(ndims - 1, 1))
+        )  # per-example: skip batch & channel
 
         use_mask = mask is not None
         if use_mask:
@@ -689,7 +708,9 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
                 mean_batch, self._vec_broadcast_shape(ndims, mean_batch)
             )
             variance_batch = (
-                tf.reduce_sum(mask_f * tf.square(x - mean_broadcast_batch), axis=reduce_axes)
+                tf.reduce_sum(
+                    mask_f * tf.square(x - mean_broadcast_batch), axis=reduce_axes
+                )
                 / valid_elements
             )
         else:
@@ -716,8 +737,12 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
             mean_to_use = mm
             var_to_use = mv
 
-        mean_broadcast = tf.reshape(mean_to_use, self._vec_broadcast_shape(ndims, mean_to_use))
-        var_broadcast  = tf.reshape(var_to_use,  self._vec_broadcast_shape(ndims, var_to_use))
+        mean_broadcast = tf.reshape(
+            mean_to_use, self._vec_broadcast_shape(ndims, mean_to_use)
+        )
+        var_broadcast = tf.reshape(
+            var_to_use, self._vec_broadcast_shape(ndims, var_to_use)
+        )
         inv_std = tf.math.rsqrt(var_broadcast + tf.cast(self.epsilon, tf.float32))
 
         # Normalize + affine in float32
@@ -735,13 +760,13 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
 
         # NMD in float32, then cast
         if use_mask:
-            per_ex_sum   = tf.reduce_sum(masked_inputs, axis=example_axes)    # (B, C)
-            per_ex_count = tf.reduce_sum(mask_f,        axis=example_axes) + self.epsilon
-            mean_channel = per_ex_sum / per_ex_count                          # (B, C)
+            per_ex_sum = tf.reduce_sum(masked_inputs, axis=example_axes)  # (B, C)
+            per_ex_count = tf.reduce_sum(mask_f, axis=example_axes) + self.epsilon
+            mean_channel = per_ex_sum / per_ex_count  # (B, C)
         else:
-            mean_channel = tf.reduce_mean(x, axis=example_axes)              # (B, C)
+            mean_channel = tf.reduce_mean(x, axis=example_axes)  # (B, C)
 
-        nmd_f32 = mean_channel - mean_to_use                                 # (B, C) - (C,)
+        nmd_f32 = mean_channel - mean_to_use  # (B, C) - (C,)
         nmd = tf.cast(nmd_f32, self.compute_dtype)
 
         return output, nmd
@@ -755,12 +780,15 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "epsilon": self.epsilon,
-            "momentum": self.momentum,
-            "return_nmd": self.return_nmd,
-        })
+        config.update(
+            {
+                "epsilon": self.epsilon,
+                "momentum": self.momentum,
+                "return_nmd": self.return_nmd,
+            }
+        )
         return config
+
 
 # class MaskedConv1D(tf.keras.layers.Layer):
 #     """
@@ -913,6 +941,7 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
 #         else:
 #             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
+
 class MaskedConv1D(tf.keras.layers.Layer):
     """
     Masked 1D convolution that accepts an optional mask tensor and sets
@@ -934,7 +963,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         kernel_initializer="glorot_uniform",
         bias_initializer="zeros",
         kernel_regularizer=None,
-        dtype=None,   # keep for compatibility, but usually leave None under MP
+        dtype=None,  # keep for compatibility, but usually leave None under MP
         **kwargs,
     ):
         if dtype is not None:
@@ -1102,7 +1131,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
 #         return_nmd=False,
 #         **kwargs,
 #     ):
-        
+
 #         super().__init__()
 #         self.supports_masking = True
 #         self.filters = kwargs.get('filters')
@@ -1143,10 +1172,10 @@ class MaskedConv1D(tf.keras.layers.Layer):
 #             x, x_nmd = self.bn2(x)
 #         else:
 #             x = self.bn2(x)
-        
+
 #         if self.conv3 is not None:
 #             x = self.add([x, self.bn3(self.conv3(inputs))])
-#         else:       
+#         else:
 #             x = self.add([x, inputs])
 #         if self.return_nmd:
 #             return self.activation(x), x_nmd
@@ -1177,6 +1206,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
 
 
 #     # Todo: implement output mask computation -> return the mask computed by the last layer?
+
 
 class ResidualBlock(tf.keras.layers.Layer):
     """The Residual block of ResNet models."""
@@ -1317,7 +1347,9 @@ class ResidualBlock(tf.keras.layers.Layer):
             {
                 "use_1x1conv": hasattr(self, "conv3") and self.conv3 is not None,
                 "block_number": self.block_number,
-                "activation": tf.keras.activations.serialize(self.activation_layer.activation),
+                "activation": tf.keras.activations.serialize(
+                    self.activation_layer.activation
+                ),
                 "return_nmd": self.return_nmd,
                 "filters": self.filters,
                 "kernel_size": self.kernel_size,
@@ -1343,6 +1375,7 @@ class ResidualBlock(tf.keras.layers.Layer):
 
 # To do: implement a method to set epsilon considering the data type of the tensors passed to the layers
 # if not implemented correctly, this can lead to overflow/underflow issues.
+
 
 class MetricModel(tf.keras.Model):
     def __init__(self, *args, **kwargs):
@@ -1438,6 +1471,7 @@ class MetricModel(tf.keras.Model):
             self.regularization_loss_tracker,
             self.gradient_tracker,
         ]
+
 
 class SinusoidalPositionEmbedding(tf.keras.layers.Layer):
     def __init__(self, max_wavelength=10000, **kwargs):
@@ -1571,7 +1605,8 @@ class TransformerEncoder(tf.keras.layers.Layer):
             }
         )
         return cfg
-    
+
+
 def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
     """
     Build a sequential stack of ResidualBlock layers as a Keras functional submodel.
@@ -1595,7 +1630,9 @@ def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
         block_name = f"{name}_{i}"
         block_number = f"{name.split('_')[-1]}{i}"
 
-        block = ResidualBlock(block_number=block_number, name=block_name, **block_kwargs)
+        block = ResidualBlock(
+            block_number=block_number, name=block_name, **block_kwargs
+        )
 
         if return_nmd:
             x, nmd = block(x)
@@ -1604,4 +1641,3 @@ def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
 
     outputs = [x, nmd] if return_nmd else x
     return tf.keras.Model(inputs=inputs, outputs=outputs, name=name)
-        

@@ -56,7 +56,7 @@ def health(**kwargs):
     health_core(**kwargs)
 
 
-@click.command(context_settings={'show_default': True})
+@click.command(context_settings={"show_default": True})
 @click.option(
     "-i",
     "--input",
@@ -91,9 +91,7 @@ def health(**kwargs):
 @click.option(
     "--model_path",
     default=None,
-    help=(
-        "Give the path to a model. overrides --model"
-    ),
+    help=("Give the path to a model. overrides --model"),
 )
 @click.option(
     "--config",
@@ -137,9 +135,7 @@ def health(**kwargs):
     default=96,
     help="Parallel batch size, lower if GPU runs out of memory",
 )
-@click.option(
-    "--workers", type=int, default=4, help="Number of threads to use"
-)
+@click.option("--workers", type=int, default=4, help="Number of threads to use")
 @click.option(
     "--getalllogits", is_flag=True, help="Writes window-wise scores to a .npy file"
 )
@@ -207,7 +203,7 @@ def predict(**kwargs):
         run_core(**kwargs)
 
 
-@click.command(context_settings={'show_default': True})
+@click.command(context_settings={"show_default": True})
 @click.option(
     "-c",
     "--config",
@@ -236,7 +232,7 @@ def tune(**kwargs):
     tune_core(**kwargs)
 
 
-@click.command(context_settings={'show_default': True})
+@click.command(context_settings={"show_default": True})
 @click.option(
     "-c",
     "--config",
@@ -354,7 +350,7 @@ def train(**kwargs):
         raise click.UsageError(
             f"{', '.join('--' + flag for flag in selected)} are mutually exclusive. Please specify only one."
         )
-    
+
     if kwargs.get("from_last_checkpoint") and kwargs.get("force"):
         raise click.UsageError(
             "--from_last_checkpoint and --force are mutually exclusive. Please specify only one."
@@ -365,7 +361,7 @@ def train(**kwargs):
     train_fragment_core(**kwargs)
 
 
-@click.command(context_settings={'show_default': True})
+@click.command(context_settings={"show_default": True})
 @click.option(
     "-p",
     "--path",
@@ -400,7 +396,7 @@ def register_models(**kwargs):
     add_data_to_json(path, str(model_path), list_key="model_paths")
 
 
-@click.command(context_settings={'show_default': True})
+@click.command(context_settings={"show_default": True})
 @click.option(
     "-p",
     "--path",
@@ -417,10 +413,11 @@ def register_models(**kwargs):
     help="Path to jager config file (useful when using Apptainer or Docker)",
 )
 @click.option(
-    "-m", "--model_name",
+    "-m",
+    "--model_name",
     required=False,
     default=None,
-    help="identifier of the model to download"
+    help="identifier of the model to download",
 )
 @click.option(
     "-l",
@@ -481,7 +478,7 @@ def download(path, model_name, list_models, **kwargs):
         add_data_to_json(config_path, str(model_path), list_key="model_paths")
     except Exception:
         logger.warning(
-            "failed to add model path to jaeger config. Seems like you are running jaeger inside a container. please explicitly define the model path in a config file `jaeger predict --config " \
+            "failed to add model path to jaeger config. Seems like you are running jaeger inside a container. please explicitly define the model path in a config file `jaeger predict --config "
             "wget -O config.json https://raw.githubusercontent.com/Yasas1994/Jaeger/dev/src/jaeger/data/config.json"
         )
 
@@ -523,13 +520,9 @@ def utils(obj):
     required=False,
     help="Path to jaeger predictions of the input (optional)",
 )
-@click.option("-o", 
-              "--output", 
-              type=str, 
-              required=True, 
-              help="Path to output file")
+@click.option("-o", "--output", type=str, required=True, help="Path to output file")
 @click.option("--dinuc", is_flag=True, required=False, help="dinuc shuffle")
-@click.option("-k", type=int, default=1, required=False, help="kmer size" )
+@click.option("-k", type=int, default=1, required=False, help="kmer size")
 @click.option(
     "--itype",
     type=click.Choice(["FASTA", "CSV"], case_sensitive=False),
@@ -542,7 +535,6 @@ def utils(obj):
     required=True,
     help="out file type",
 )
-
 @click.option(
     "--num_tandem_repeats",
     type=int,
@@ -550,7 +542,6 @@ def utils(obj):
     required=False,
     help="generate n random tandem repeats",
 )
-
 @click.option(
     "--class_col",
     type=int,
@@ -558,24 +549,24 @@ def utils(obj):
     required=False,
     help="csv col with class id (when --itype CSV)",
 )
-
 @click.option(
     "--seq_col",
-    type=int, 
+    type=int,
     default=None,
     required=False,
     help="csv col with sequence (when --itype CSV)",
 )
 def ood_data(**kwargs):
     from jaeger.commands.utils import shuffle_core
+
     if kwargs.get("itype") == "CSV":
         seq_col = kwargs.get("seq_col")
         class_col = kwargs.get("class_col")
 
-        if not (seq_col is not  None and class_col is not None):
+        if not (seq_col is not None and class_col is not None):
             raise click.UsageError(
                 "When --itype CSV is used, both --seq-col and --class-col must be provided."
-        )
+            )
 
     shuffle_core(**kwargs)
 
@@ -670,7 +661,7 @@ def mask(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
     from jaeger.commands.utils import mask_core
 
-    if kwargs.get('maxperc') < kwargs.get('minperc'):
+    if kwargs.get("maxperc") < kwargs.get("minperc"):
         raise click.BadParameter("maxperc can not be lower than minperc")
 
     mask_core(**kwargs)
@@ -745,8 +736,7 @@ def mask(**kwargs):
 )
 @click.option(
     "--intype",
-    type=click.Choice(["CSV", "FASTA"], 
-    case_sensitive=False),
+    type=click.Choice(["CSV", "FASTA"], case_sensitive=False),
     required=True,
     help="input type",
     default="CSV",
@@ -759,7 +749,7 @@ def mask(**kwargs):
 )
 @click.option(
     "--seq_col",
-    type=int, 
+    type=int,
     required=True,
     help="csv col with sequence",
 )
@@ -786,8 +776,13 @@ def dataset(**kwargs):
 
     match intype:
         case "CSV":
-            if not (kwargs.get("class_col") is not None and kwargs.get("seq_col") is not None):
-                raise click.UsageError("For CSV input, you must specify both --seq_col and --class_col.")
+            if not (
+                kwargs.get("class_col") is not None
+                and kwargs.get("seq_col") is not None
+            ):
+                raise click.UsageError(
+                    "For CSV input, you must specify both --seq_col and --class_col."
+                )
         case "FASTA":
             if kwargs.get("class") is None:
                 raise click.UsageError("For FASTA input, you must specify --class.")
@@ -796,6 +791,7 @@ def dataset(**kwargs):
 
     dataset_core(**kwargs)
     pass
+
 
 @utils.command(
     context_settings=dict(ignore_unknown_options=True, show_default=True),
@@ -830,6 +826,7 @@ def convert(**kwargs):
     convert_core(**kwargs)
     pass
 
+
 @utils.command(
     context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""Combine multiple model graphs into an ensemble model. Outputs can be summarized with majority voting,
@@ -847,25 +844,27 @@ def convert(**kwargs):
     type=click.Path(exists=True),
     required=True,
     help="Path to saved model",
-    multiple=True
+    multiple=True,
 )
-@click.option("-o", "--output", type=str, required=True, help="Path to save the ensemble model")
+@click.option(
+    "-o", "--output", type=str, required=True, help="Path to save the ensemble model"
+)
 @click.option(
     "-c",
     "--comb",
     type=click.Choice(["MV", "SUM", "MEAN", "NONE"], case_sensitive=False),
     required=True,
-    help="how to summarize the model outputs " \
-    "MV: majority voting" \
-    "SUM: sum of logits" \
-    "MEAN: Mean of logits" \
+    help="how to summarize the model outputs "
+    "MV: majority voting"
+    "SUM: sum of logits"
+    "MEAN: Mean of logits"
     "NONE: Do not aggregate",
 )
 def combine_models(**kwargs):
-
     from jaeger.commands.utils_models import combine_models_core
 
     combine_models_core(**kwargs)
+
 
 @utils.command(
     context_settings=dict(ignore_unknown_options=True, show_default=True),
@@ -887,13 +886,13 @@ def combine_models(**kwargs):
     help="Path to input .tsv file",
 )
 @click.option("-o", "--output", type=str, required=True, help="Path to output dir")
-
 def stats(**kwargs):
     """Calculate stats from Jaeger output"""
     from jaeger.commands.utils import stats_core
 
     stats_core(**kwargs)
     pass
+
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
@@ -902,7 +901,10 @@ def taxonomy(obj):
     exprimental taxonomy prediction pipeline
     """
     pass
-@taxonomy.command(context_settings=dict(ignore_unknown_options=True),
+
+
+@taxonomy.command(
+    context_settings=dict(ignore_unknown_options=True),
     help="""
             Build a taxonomy database
 
@@ -961,9 +963,7 @@ def taxonomy(obj):
 @click.option(
     "--model_path",
     default=None,
-    help=(
-        "Give the path to a model. overrides --model"
-    ),
+    help=("Give the path to a model. overrides --model"),
 )
 @click.option(
     "--config",
@@ -982,9 +982,7 @@ def taxonomy(obj):
     default=96,
     help="Parallel batch size, lower if GPU runs out of memory",
 )
-@click.option(
-    "--workers", type=int, default=4, help="Number of threads to use"
-)
+@click.option("--workers", type=int, default=4, help="Number of threads to use")
 @click.option(
     "--cpu",
     is_flag=True,
@@ -1025,15 +1023,17 @@ def build(**kwargs):
 
     """Run jaeger taxonomy database generation pipeline"""
     if model == "default":
-        raise click.BadParameter(
-            f"Model '{model}' is not supported"
-        )
+        raise click.BadParameter(f"Model '{model}' is not supported")
 
     else:
         from jaeger.commands.taxonomy import build_taxdb
+
         build_taxdb(**kwargs)
 
-@taxonomy.command('predict', context_settings=dict(ignore_unknown_options=True),
+
+@taxonomy.command(
+    "predict",
+    context_settings=dict(ignore_unknown_options=True),
     help="""
             Use exeperimental taxonomy prediction workflow
 
@@ -1099,9 +1099,7 @@ def build(**kwargs):
     default=96,
     help="Parallel batch size, lower if GPU runs out of memory",
 )
-@click.option(
-    "--workers", type=int, default=4, help="Number of threads to use"
-)
+@click.option("--workers", type=int, default=4, help="Number of threads to use")
 @click.option(
     "--cpu",
     is_flag=True,
@@ -1142,13 +1140,13 @@ def predict_tax(**kwargs):  # noqa: F811
 
     """Run jaeger taxonomy database generation pipeline"""
     if model == "default":
-        raise click.BadParameter(
-            f"Model '{model}' is not supported"
-        )
+        raise click.BadParameter(f"Model '{model}' is not supported")
 
     else:
         from jaeger.commands.taxonomy import predict_taxonomy
+
         predict_taxonomy(**kwargs)
+
 
 main.add_command(health)
 main.add_command(predict)

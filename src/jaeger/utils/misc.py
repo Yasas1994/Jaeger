@@ -1,7 +1,7 @@
 import logging
 import shutil
 from decimal import Decimal
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
 from pathlib import Path
 from typing import Dict, DefaultDict, Any
 import yaml
@@ -53,6 +53,7 @@ def track_ms(iterable, description="Working...", disable=False):
             yield item
             progress.update(task, advance=1)
 
+
 def clear_directory(path: Path):
     if path.exists() and path.is_dir():
         for item in path.iterdir():
@@ -60,6 +61,7 @@ def clear_directory(path: Path):
                 item.unlink()
             elif item.is_dir():
                 shutil.rmtree(item)
+
 
 def load_model_config(path: Path) -> Dict[str, Any]:
     """
@@ -89,7 +91,9 @@ def load_model_config(path: Path) -> Dict[str, Any]:
         if seed_value.lower() == "random":
             context["model"]["seed"] = random.randint(0, 2**32 - 1)
         else:
-            raise ValueError(f'"{seed_value}" is not a valid seed. Did you mean "random"?')
+            raise ValueError(
+                f'"{seed_value}" is not a valid seed. Did you mean "random"?'
+            )
 
     # Setup Jinja2 environment
     env = Environment()
@@ -350,7 +354,9 @@ class AvailableModels:
                 entries = list(model_dir.iterdir())
 
                 # Find the graph dir
-                graph_dirs = [e for e in entries if e.is_dir() and e.name.endswith("_graph")]
+                graph_dirs = [
+                    e for e in entries if e.is_dir() and e.name.endswith("_graph")
+                ]
                 for graph_dir in graph_dirs:
                     model_name = graph_dir.name.removesuffix("_graph")
                     models[model_name]["graph"] = graph_dir
@@ -373,8 +379,8 @@ class AvailableModels:
                     # Remove suffix like "_classes.yaml" or ".weights.h5" to get base model name
                     model_name = (
                         name.replace("_classes.yaml", "")
-                            .replace("_project.yaml", "")
-                            .replace(".weights.h5", "")
+                        .replace("_project.yaml", "")
+                        .replace(".weights.h5", "")
                     )
                     models[model_name][key] = f
 

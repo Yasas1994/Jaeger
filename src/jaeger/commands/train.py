@@ -12,7 +12,15 @@ import os
 # temporary fix
 os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 from jaeger.preprocess.latest.convert import process_string_train
-from jaeger.preprocess.latest.maps import CODONS, CODON_ID, MURPHY10_ID, AA_ID, PC5_ID, DICODONS, DICODON_ID
+from jaeger.preprocess.latest.maps import (
+    CODONS,
+    CODON_ID,
+    MURPHY10_ID,
+    AA_ID,
+    PC5_ID,
+    DICODONS,
+    DICODON_ID,
+)
 import yaml
 import json
 import shutil
@@ -28,7 +36,7 @@ from jaeger.nnlib.v2.layers import (
     ResidualBlock_wrapper,
     MetricModel,
     GatedFrameGlobalMaxPooling,
-    TransformerEncoder
+    TransformerEncoder,
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss, HierarchicalLoss
 from jaeger.utils.logging import get_logger
@@ -47,6 +55,7 @@ from icecream import ic
 logger = get_logger(log_file=None, log_path=None, level=3)
 ic.configureOutput(prefix="Jaeger |")
 
+
 def set_global_seed(seed: int = 42):
     # 1. Python built-in RNG
     random.seed(seed)
@@ -58,8 +67,9 @@ def set_global_seed(seed: int = 42):
     tf.random.set_seed(seed)
 
     # 4. (Optional) Make some TF behavior more deterministic
-    os.environ["TF_DETERMINISTIC_OPS"] = "1"   # for some GPU ops
+    os.environ["TF_DETERMINISTIC_OPS"] = "1"  # for some GPU ops
     os.environ["PYTHONHASHSEED"] = str(seed)
+
 
 def check_files(files: list[str]) -> list[str]:
     return [f for f in files if Path(f).is_file()]
@@ -68,6 +78,7 @@ def check_files(files: list[str]) -> list[str]:
 GRAPH_RE = re.compile(
     r"^jaeger_(?P<id>[0-9a-fA-F]+)_(?P<size>\d+(?:\.\d+)?[A-Z])_fragment_graph$"
 )
+
 
 def find_existing_graph_id(path: Path) -> Optional[str]:
     """
@@ -82,6 +93,7 @@ def find_existing_graph_id(path: Path) -> Optional[str]:
         if m:
             return m.group("id")
     return None
+
 
 class DynamicModelBuilder:
     """
@@ -113,17 +125,25 @@ class DynamicModelBuilder:
 
         # --- saving / checkpoints / run control ---
         self._saving_config = self._get_model_saving_configuration()
-        self._from_last_checkpoint: bool = bool(config.get("from_last_checkpoint", False))
+        self._from_last_checkpoint: bool = bool(
+            config.get("from_last_checkpoint", False)
+        )
         self._force: bool = bool(config.get("force", False))
         self._checkpoints: Dict[str, Path] = {}
 
         # --- output dimensions ---
         self.classifier_out_dim: int = int(self.model_cfg.get("classifier_out_dim", 0))
-        self.reliability_out_dim: int = int(self.model_cfg.get("reliability_out_dim", 0))
+        self.reliability_out_dim: int = int(
+            self.model_cfg.get("reliability_out_dim", 0)
+        )
 
         # --- losses & metrics (populated later) ---
-        self.loss_classifier_name = self.train_cfg.get("loss_classifier", "categorical_crossentropy" ).lower()
-        self.loss_reliability_name = self.train_cfg.get("loss_reliability", "binary_crossentropy").lower()
+        self.loss_classifier_name = self.train_cfg.get(
+            "loss_classifier", "categorical_crossentropy"
+        ).lower()
+        self.loss_reliability_name = self.train_cfg.get(
+            "loss_reliability", "binary_crossentropy"
+        ).lower()
         self.loss_classifier = None
         self.loss_reliability = None
         self.metrics_classifier: list[Any] = []
@@ -151,7 +171,7 @@ class DynamicModelBuilder:
         # --- training-specific initialization ---
         self._load_training_params()
         self._prepare_checkpoint_dirs()
-       
+
     def _prepare_checkpoint_dirs(self, config: dict = None) -> None:
         if not config:
             config = self.cfg
@@ -166,7 +186,9 @@ class DynamicModelBuilder:
             if path.exists():
                 if self._from_last_checkpoint:
                     # load from last checkpoint
-                    self._checkpoints[path.name] = self.get_latest_h5_with_metadata(path)
+                    self._checkpoints[path.name] = self.get_latest_h5_with_metadata(
+                        path
+                    )
 
                 elif self._force:
                     # delete existing checkpoints and start fresh
@@ -192,7 +214,7 @@ class DynamicModelBuilder:
 
         if should_exit:
             exit(1)
-    
+
     def get_latest_h5_with_metadata(
         self,
         path: str | Path,
@@ -233,9 +255,7 @@ class DynamicModelBuilder:
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
             rep_out = self._build_block(
-                x, 
-                self.model_cfg["representation_learner"],
-                prefix="rep"
+                x, self.model_cfg["representation_learner"], prefix="rep"
             )
             models["rep_model"] = tf.keras.Model(
                 inputs=self.inputs, outputs=rep_out, name="rep_model"
@@ -243,9 +263,7 @@ class DynamicModelBuilder:
             models["rep_model"].summary()
         # === 3. PRETRAINING ==
         if "projection" in self.model_cfg:
-            input_shape = (
-                self.model_cfg["projection"].get("input_shape"),
-            )
+            input_shape = (self.model_cfg["projection"].get("input_shape"),)
             inputs = tf.keras.Input(shape=input_shape, name="projection_input")
             x_projection = self._build_block(
                 inputs, self.model_cfg["projection"], prefix="projection"
@@ -254,7 +272,9 @@ class DynamicModelBuilder:
                 inputs=inputs, outputs=x_projection, name="projection_head"
             )
 
-            projection_dim = self.model_cfg["projection"]["hidden_layers"][-2]["config"].get("units")
+            projection_dim = self.model_cfg["projection"]["hidden_layers"][-2][
+                "config"
+            ].get("units")
 
             # combine with the representation learner
             x = models["rep_model"].output[0]
@@ -280,8 +300,7 @@ class DynamicModelBuilder:
             if self._checkpoints.get("projection", {}).get("path", False):
                 # loads weights from the last checkpoint
                 models["jaeger_projection"].load_weights(
-                    self._checkpoints.get("projection").get("path"),
-                    skip_mismatch=True
+                    self._checkpoints.get("projection").get("path"), skip_mismatch=True
                 )
                 logger.info(
                     f"Loaded projection model weights from {self._checkpoints.get('projection').get('path')}"
@@ -289,19 +308,13 @@ class DynamicModelBuilder:
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
-            input_shape = (
-                self.model_cfg["classifier"].get("input_shape"),
-            )
+            input_shape = (self.model_cfg["classifier"].get("input_shape"),)
             inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
             x_classifier = self._build_block(
-                inputs, 
-                self.model_cfg["classifier"], 
-                prefix="classifier"
+                inputs, self.model_cfg["classifier"], prefix="classifier"
             )
             models["classification_head"] = tf.keras.Model(
-                inputs=inputs, 
-                outputs=x_classifier, 
-                name="classification_head"
+                inputs=inputs, outputs=x_classifier, name="classification_head"
             )
             # combine with the representation learner
             x_rep = models["rep_model"].output[0]
@@ -312,8 +325,7 @@ class DynamicModelBuilder:
             if self._checkpoints.get("classifier", {}).get("path", False):
                 # loads weights from the last checkpoint
                 models["jaeger_classifier"].load_weights(
-                    self._checkpoints.get("classifier").get("path"),
-                    skip_mismatch=True
+                    self._checkpoints.get("classifier").get("path"), skip_mismatch=True
                 )
                 logger.info(
                     f"Loaded classification model weights from {self._checkpoints.get('classifier').get('path')}"
@@ -321,14 +333,10 @@ class DynamicModelBuilder:
 
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
-            input_shape = (
-                self.model_cfg["reliability_model"].get("input_shape"),
-            )
+            input_shape = (self.model_cfg["reliability_model"].get("input_shape"),)
             inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
             x_reliability = self._build_block(
-                inputs, 
-                self.model_cfg["reliability_model"], 
-                prefix="reliability"
+                inputs, self.model_cfg["reliability_model"], prefix="reliability"
             )
             models["reliability_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_reliability, name="reliability_head"
@@ -344,41 +352,59 @@ class DynamicModelBuilder:
                     # loads weights from the last checkpoint
                     models["jaeger_reliability"].load_weights(
                         self._checkpoints.get("reliability").get("path"),
-                        skip_mismatch=True
+                        skip_mismatch=True,
                     )
                     logger.info(
                         f"Loaded reliability model weights from {self._checkpoints.get('reliability').get('path')}"
                     )
             except Exception:
-                logger.warning("cound not load the weights to reliability model from checkpoint. trying to load weights partially")
+                logger.warning(
+                    "cound not load the weights to reliability model from checkpoint. trying to load weights partially"
+                )
                 models["jaeger_reliability"].load_weights(
-                        self._checkpoints.get("reliability").get("path"),
-                        skip_mismatch = True,
-                    )
-                self._checkpoints["reliability"] = {"path": None, "epoch": 0, "loss": None, "is_converged": False}
+                    self._checkpoints.get("reliability").get("path"),
+                    skip_mismatch=True,
+                )
+                self._checkpoints["reliability"] = {
+                    "path": None,
+                    "epoch": 0,
+                    "loss": None,
+                    "is_converged": False,
+                }
 
         # ==== 5. COMBINED MODEL ====
         rep_out = models["rep_model"].output
         if isinstance(rep_out, tuple):
             if len(rep_out) == 2:
                 x1, x2 = rep_out
-                reliability = models["reliability_head"](x2) # NMD
+                reliability = models["reliability_head"](x2)  # NMD
                 class_ = models["classification_head"](x1)
                 models["jaeger_model"] = tf.keras.Model(
                     inputs=models["rep_model"].input,
-                    outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2},
-                    name="Jaeger_model",
-            )
-            elif len(rep_out) == 3:
-                x1, x2, g = rep_out
-                reliability = models["reliability_head"](x2) # NMD
-                class_ = models["classification_head"](x1)
-                models["jaeger_model"] = tf.keras.Model(
-                    inputs=models["rep_model"].input,
-                    outputs={"prediction": class_, "reliability": reliability, "embedding": x1, "nmd": x2, "gate": g },
+                    outputs={
+                        "prediction": class_,
+                        "reliability": reliability,
+                        "embedding": x1,
+                        "nmd": x2,
+                    },
                     name="Jaeger_model",
                 )
-        #ic(models)
+            elif len(rep_out) == 3:
+                x1, x2, g = rep_out
+                reliability = models["reliability_head"](x2)  # NMD
+                class_ = models["classification_head"](x1)
+                models["jaeger_model"] = tf.keras.Model(
+                    inputs=models["rep_model"].input,
+                    outputs={
+                        "prediction": class_,
+                        "reliability": reliability,
+                        "embedding": x1,
+                        "nmd": x2,
+                        "gate": g,
+                    },
+                    name="Jaeger_model",
+                )
+        # ic(models)
 
         return models
 
@@ -413,8 +439,8 @@ class DynamicModelBuilder:
                             mask_zero=True,
                             embeddings_initializer=tf.keras.initializers.Orthogonal(),
                             embeddings_regularizer=self._regularizer.get(
-                        cfg.get("embedding_regularizer"),
-                    )(cfg.get("embedding_regularizer_w"))
+                                cfg.get("embedding_regularizer"),
+                            )(cfg.get("embedding_regularizer_w")),
                         )(inputs)
                     else:
                         x = tf.keras.layers.Dense(
@@ -423,8 +449,8 @@ class DynamicModelBuilder:
                             use_bias=False,
                             kernel_initializer=tf.keras.initializers.Orthogonal(),
                             kernel_regularizer=self._regularizer.get(
-                        cfg.get("embedding_regularizer"),
-                    )(cfg.get("embedding_regularizer_w"))
+                                cfg.get("embedding_regularizer"),
+                            )(cfg.get("embedding_regularizer_w")),
                         )(masked_inputs)
 
                 else:
@@ -444,7 +470,7 @@ class DynamicModelBuilder:
             x = tf.keras.layers.Add()([x, positional])
 
         return inputs, x
-    
+
     def _get_bias(self, data_path: str, kind: str, label_map: list):
         """
         initialize final layer bias connsidering the
@@ -453,18 +479,19 @@ class DynamicModelBuilder:
         """
 
         import polars as pl
-        def _sigmoid(f:Dict):
+
+        def _sigmoid(f: Dict):
             n, p = f.values()
             t = p / (p + n)
-            return np.log(t / (1-t))
-        
-        def _softmax(f:Dict):
+            return np.log(t / (1 - t))
+
+        def _softmax(f: Dict):
             f = np.array(list(f.values()))
-            return np.log(f/np.sum(f))
-        
-        def _correct_label_map(f:Dict, label_map: list):
-            _tmp = {i:0 for i in range(max(label_map)+1)}
-            for k,v in f.items():
+            return np.log(f / np.sum(f))
+
+        def _correct_label_map(f: Dict, label_map: list):
+            _tmp = {i: 0 for i in range(max(label_map) + 1)}
+            for k, v in f.items():
                 _tmp[label_map[k]] += v
             return _tmp
 
@@ -477,7 +504,7 @@ class DynamicModelBuilder:
         )
 
         counts_dict = dict(zip(counts_dict["column_1"], counts_dict["count"]))
-        counts_dict = {k:counts_dict[k] for k in  sorted(list(counts_dict.keys()))}
+        counts_dict = {k: counts_dict[k] for k in sorted(list(counts_dict.keys()))}
         if len(label_map) > 0:
             counts_dict = _correct_label_map(counts_dict, label_map)
         match kind:
@@ -486,7 +513,7 @@ class DynamicModelBuilder:
             case "sigmoid":
                 return _sigmoid(counts_dict)
 
-    def _build_block(self, x, cfg: Dict[str, Any], prefix:str):
+    def _build_block(self, x, cfg: Dict[str, Any], prefix: str):
         """
         Build representation learner from configuration.
         Input:  X
@@ -517,18 +544,38 @@ class DynamicModelBuilder:
 
             if "bias_initializer" in cfg_layer:
                 if "calculate_from" in cfg_layer.get("bias_initializer"):
-                    classifier_label_map = self.model_cfg.get("string_processor").get("classifier_labels_map", [])
-                    reliability_label_map = self.model_cfg.get("string_processor").get("reliability_labels_map", [])
+                    classifier_label_map = self.model_cfg.get("string_processor").get(
+                        "classifier_labels_map", []
+                    )
+                    reliability_label_map = self.model_cfg.get("string_processor").get(
+                        "reliability_labels_map", []
+                    )
                     if "relia" in prefix:
-                        path = self._get_reliability_fragment_paths().get('train').get('paths')[-1]
-                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, 
-                                                                                                     kind="sigmoid" if "binary" in self.loss_reliability_name else "softmax",
-                                                                                                     label_map=reliability_label_map))
+                        path = (
+                            self._get_reliability_fragment_paths()
+                            .get("train")
+                            .get("paths")[-1]
+                        )
+                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(
+                            self._get_bias(
+                                path,
+                                kind="sigmoid"
+                                if "binary" in self.loss_reliability_name
+                                else "softmax",
+                                label_map=reliability_label_map,
+                            )
+                        )
                     elif "classi" in prefix:
-                        path = self._get_fragment_paths().get('train').get('paths')[-1]
-                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(self._get_bias(path, 
-                                                                                                      kind="sigmoid" if "binary" in self.loss_classifier_name else "softmax",
-                                                                                                      label_map=classifier_label_map))
+                        path = self._get_fragment_paths().get("train").get("paths")[-1]
+                        cfg_layer["bias_initializer"] = tf.keras.initializers.Constant(
+                            self._get_bias(
+                                path,
+                                kind="sigmoid"
+                                if "binary" in self.loss_classifier_name
+                                else "softmax",
+                                label_map=classifier_label_map,
+                            )
+                        )
 
             # Handle residual blocks
             if "block_size" in cfg_layer:
@@ -540,10 +587,10 @@ class DynamicModelBuilder:
                         nmd.append(nmd_)
                     else:
                         x = layer_class(block_size, shape, **cfg_layer)(x)
-                    if 'filters' in cfg_layer:
-                        previous_channels = cfg_layer.get('filters')
-                    elif 'units' in cfg_layer:
-                        previous_channels = cfg_layer.get('units')
+                    if "filters" in cfg_layer:
+                        previous_channels = cfg_layer.get("filters")
+                    elif "units" in cfg_layer:
+                        previous_channels = cfg_layer.get("units")
                 continue
 
             # Handle return_nmd case
@@ -553,18 +600,18 @@ class DynamicModelBuilder:
                     nmd.append(nmd_)
                 else:
                     x = layer_class(**cfg_layer)(x)
-                if 'filters' in cfg_layer:
-                    previous_channels = cfg_layer.get('filters')
-                elif 'units' in cfg_layer:
-                    previous_channels = cfg_layer.get('units')
+                if "filters" in cfg_layer:
+                    previous_channels = cfg_layer.get("filters")
+                elif "units" in cfg_layer:
+                    previous_channels = cfg_layer.get("units")
                 continue
 
             x = layer_class(**cfg_layer)(x)
 
-            if 'filters' in cfg_layer:
-                previous_channels = cfg_layer.get('filters')
-            elif 'units' in cfg_layer:
-                previous_channels = cfg_layer.get('units')
+            if "filters" in cfg_layer:
+                previous_channels = cfg_layer.get("filters")
+            elif "units" in cfg_layer:
+                previous_channels = cfg_layer.get("units")
 
         # ===== Aggregation =====
         if "pooling" in cfg:
@@ -581,7 +628,7 @@ class DynamicModelBuilder:
                 x, g = pooler(return_gate=True, name=f"global_{pooling}pool")(x)
                 return (x, nmd, g) if nmd is not None else (x, g)
         return x
-    
+
     def _get_metrics(self, config):
         metrics = []
         _metrics = {
@@ -590,14 +637,13 @@ class DynamicModelBuilder:
             "sparse_categorical_accuracy": tf.keras.metrics.SparseCategoricalAccuracy,
             "categorical_crossentropy": tf.keras.metrics.CategoricalCrossentropy,
             "binary_crossentropy": tf.keras.metrics.BinaryCrossentropy,
-            "sparse_categorical_crossentropy": tf.keras.metrics.SparseCategoricalCrossentropy ,
+            "sparse_categorical_crossentropy": tf.keras.metrics.SparseCategoricalCrossentropy,
             "auc": tf.keras.metrics.AUC,
             "precision": tf.keras.metrics.Precision,
             "recall": tf.keras.metrics.Recall,
             "per_class_precision": PrecisionForClass,
             "per_class_recall": RecallForClass,
-            "per_class_specificity": SpecificityForClass
-
+            "per_class_specificity": SpecificityForClass,
         }
 
         for c in config:
@@ -639,23 +685,28 @@ class DynamicModelBuilder:
         )
         # load metrics from configuration
         if len(self.train_cfg.get("metrics_classifier", [])) > 0:
-            self.metrics_classifier = self._get_metrics(self.train_cfg.get("metrics_classifier"))
-        else:    
+            self.metrics_classifier = self._get_metrics(
+                self.train_cfg.get("metrics_classifier")
+            )
+        else:
             self.metrics_classifier = self._get_default_metrics(branch="classifier")
-        
+
         if len(self.train_cfg.get("metrics_reliability", [])) > 0:
-            self.metrics_reliability = self._get_metrics(self.train_cfg.get("metrics_reliability"))
-        else:    
+            self.metrics_reliability = self._get_metrics(
+                self.train_cfg.get("metrics_reliability")
+            )
+        else:
             self.metrics_reliability = self._get_default_metrics(branch="reliability")
-        
 
     def _get_default_metrics(self, branch):
         match branch:
             case "classifier":
                 return [tf.keras.metrics.CategoricalAccuracy(name="acc")]
             case "reliability":
-                return [tf.keras.metrics.AUC(name="auc", from_logits=True),
-                        tf.keras.metrics.BinaryAccuracy(name="acc")]
+                return [
+                    tf.keras.metrics.AUC(name="auc", from_logits=True),
+                    tf.keras.metrics.BinaryAccuracy(name="acc"),
+                ]
 
     def compile_model(self, model, train_branch="classifier"):
         """
@@ -701,16 +752,20 @@ class DynamicModelBuilder:
         saves models (graph, weights, classes and project configh) to the model directory of the train output.
         """
 
-
         path = Path(self._saving_config.get("path"))
         path.mkdir(parents=True, exist_ok=True)
 
         if metadata:
             metadata = Path(metadata).resolve()
-            metadata.write_text(json.dumps({"model_path" : str(path),
-                                            'experiment_path': str(path.parent),
-                                            } , 
-                                        indent=2))
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "model_path": str(path),
+                        "experiment_path": str(path.parent),
+                    },
+                    indent=2,
+                )
+            )
         graph_id = find_existing_graph_id(path)
 
         if any(path.iterdir()):
@@ -729,7 +784,9 @@ class DynamicModelBuilder:
 
         if self._saving_config.get("save_weights"):
             model.save_weights(path / f"{model_name}.weights.h5")
-            logger.info(f"model weights are written to {path / f'{model_name}.weights.h5'}")
+            logger.info(
+                f"model weights are written to {path / f'{model_name}.weights.h5'}"
+            )
 
         if self._saving_config.get("save_exec_graph"):
             # this way, you don't need the model configuration to rebuild the model
@@ -746,7 +803,7 @@ class DynamicModelBuilder:
                 default_flow_style=False,
             )
 
-        shutil.copy(self.cfg.get('config_path'), path /  f"{model_name}_project.yaml")
+        shutil.copy(self.cfg.get("config_path"), path / f"{model_name}_project.yaml")
 
     def get_callbacks(self, branch="classifier") -> List:
         cb_list = self.train_cfg.get("callbacks", dict())
@@ -769,7 +826,7 @@ class DynamicModelBuilder:
             "MURPHY10_ID": MURPHY10_ID,
             "PC5_ID": PC5_ID,
             "DICODON": DICODONS,
-            "DICODON_ID": DICODON_ID
+            "DICODON_ID": DICODON_ID,
         }
         _config = self.model_cfg.get("embedding")
         _config.update(self.model_cfg.get("string_processor"))
@@ -778,18 +835,18 @@ class DynamicModelBuilder:
         if _config["input_type"] == "translated":
             _config["codon"] = _map.get(_config.get("codon"))
             _config["codon_id"] = _map.get(_config.get("codon_id"))
-            _config["codon_depth"] = max(_config.get("codon_id")) + 1 # num_codons
-            _config["vocab_size"]  = len(_config.get("codon_id")) + 1 # num_codon + 1
-            _config["ngram_width"] = int(math.log( len(_config["codon"]) , 4))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1  # num_codons
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1  # num_codon + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
             if _config["seq_onehot"] is False:
                 _config["codon_depth"] = 1
         else:
             _config["codon"] = None
             _config["codon_id"] = None
             _config["codon_depth"] = None
-            _config["vocab_size"]  = 4
+            _config["vocab_size"] = 4
             _config["ngram_width"] = None
-        #ic(_config)
+        # ic(_config)
         return _config
 
     def _get_optimizer(self, name, kwargs) -> Any:
@@ -808,7 +865,7 @@ class DynamicModelBuilder:
         poolers = {
             "max": tf.keras.layers.GlobalMaxPooling2D,
             "average": tf.keras.layers.GlobalAveragePooling2D,
-            "gatedframe": GatedFrameGlobalMaxPooling
+            "gatedframe": GatedFrameGlobalMaxPooling,
         }
         return poolers[name]
 
@@ -818,7 +875,7 @@ class DynamicModelBuilder:
             "sparse_categorical_crossentropy": tf.keras.losses.SparseCategoricalCrossentropy,
             "binary_crossentropy": tf.keras.losses.BinaryCrossentropy,
             "mse": tf.keras.losses.MeanSquaredError,
-            "hierachical_loss" : HierarchicalLoss
+            "hierachical_loss": HierarchicalLoss,
         }
 
         return losses[name](**kwargs)
@@ -858,6 +915,7 @@ class DynamicModelBuilder:
     def _get_reliability_contig_paths(self) -> Dict:
         return self._get_paths("contig_reliability_data")
 
+
 def train_fragment_core(**kwargs):
     """
     trains fragment classification model and reliability prediction model.
@@ -867,16 +925,18 @@ def train_fragment_core(**kwargs):
 
     # with strategy.scope():
 
-    #ic(kwargs.get("config"))
-    #ic(kwargs.get("from_last_checkpoint"))
-    gpus = tf.config.list_physical_devices('GPU')
+    # ic(kwargs.get("config"))
+    # ic(kwargs.get("from_last_checkpoint"))
+    gpus = tf.config.list_physical_devices("GPU")
     num_gpus = len(gpus)
     logger.info(f"Physical GPUs detected: {num_gpus}")
 
     if num_gpus > 1:
         # Use all visible GPUs
         strategy = tf.distribute.MirroredStrategy()
-        logger.info(f"Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas")
+        logger.info(
+            f"Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas"
+        )
     elif num_gpus == 1:
         # Explicitly use the single GPU
         strategy = tf.distribute.OneDeviceStrategy(device="/GPU:0")
@@ -888,8 +948,8 @@ def train_fragment_core(**kwargs):
 
     if kwargs.get("mixed_precision", False):
         logger.info("experiemental: using mix precision floats for faster training")
-        policy = tf.keras.mixed_precision.Policy('mixed_float16')
-        #policy = tf.keras.mixed_precision.Policy('mixed_bfloat16')
+        policy = tf.keras.mixed_precision.Policy("mixed_float16")
+        # policy = tf.keras.mixed_precision.Policy('mixed_bfloat16')
         tf.keras.mixed_precision.set_global_policy(policy)
     multi_gpu = strategy.num_replicas_in_sync > 1
     # init a stratergy scope
@@ -899,7 +959,7 @@ def train_fragment_core(**kwargs):
         config["mix_precision"] = kwargs.get("mix_precision", False)
         config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
         config["force"] = kwargs.get("force")
-        
+
         # Initialize the model
         builder = DynamicModelBuilder(config)
         models = builder.build_fragment_classifier()
@@ -933,11 +993,9 @@ def train_fragment_core(**kwargs):
             if string_processor_config.get("input_type") == "translated":
                 padded_shape = {
                     # "translated" : (6, None,string_processor_config.get("codon_depth"))
-                    "translated": [
-                        6,
-                        None
-                    ] if string_processor_config.get("use_embedding_layer") is True else
-                    [
+                    "translated": [6, None]
+                    if string_processor_config.get("use_embedding_layer") is True
+                    else [
                         6,
                         None,
                         string_processor_config.get("codon_depth"),
@@ -953,8 +1011,12 @@ def train_fragment_core(**kwargs):
                         codons=string_processor_config.get("codon"),
                         codon_num=string_processor_config.get("codon_id"),
                         codon_depth=string_processor_config.get("codon_depth"),
-                        label_original=string_processor_config.get("classifier_labels", None),
-                        label_alternative=string_processor_config.get("classifier_labels_map", None),
+                        label_original=string_processor_config.get(
+                            "classifier_labels", None
+                        ),
+                        label_alternative=string_processor_config.get(
+                            "classifier_labels_map", None
+                        ),
                         ngram_width=string_processor_config.get("ngram_width"),
                         seq_onehot=string_processor_config.get("seq_onehot"),
                         crop_size=string_processor_config.get("crop_size"),
@@ -963,13 +1025,20 @@ def train_fragment_core(**kwargs):
                         mutate=string_processor_config.get("mutate"),
                         mutation_rate=string_processor_config.get("mutation_rate"),
                         num_classes=builder.classifier_out_dim,
-                        class_label_onehot=False if "binary" in builder.train_cfg.get("loss_classifier", "categorical_crossentropy").lower() else True,
+                        class_label_onehot=False
+                        if "binary"
+                        in builder.train_cfg.get(
+                            "loss_classifier", "categorical_crossentropy"
+                        ).lower()
+                        else True,
                         shuffle=string_processor_config.get("shuffle"),
                     ),
                     num_parallel_calls=tf.data.AUTOTUNE,
                 )
                 .shuffle(
-                    buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size,
+                    buffer_size=_data.cardinality()
+                    if _buffer_size == -1
+                    else _buffer_size,
                     # reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                 )
                 .padded_batch(
@@ -990,8 +1059,8 @@ def train_fragment_core(**kwargs):
         cls_converged = checkpoint and checkpoint.get("classifier", {}).get(
             "is_converged", False
         )
-        if  kwargs.get("only_save", False) is False:
-            if (not cls_converged and not kwargs.get("only_reliability_head", False)):
+        if kwargs.get("only_save", False) is False:
+            if not cls_converged and not kwargs.get("only_reliability_head", False):
                 train_args = {
                     "validation_data": train_data.get("validation").take(
                         builder.train_cfg.get("classifier_validation_steps")
@@ -1022,9 +1091,9 @@ def train_fragment_core(**kwargs):
                         "callbacks": builder.get_callbacks(branch="projection"),
                     }
                     if checkpoint:
-                        self_supervised_train_args["initial_epoch"] = checkpoint.get("projection", {}).get(
-                            "epoch", 0
-                        )
+                        self_supervised_train_args["initial_epoch"] = checkpoint.get(
+                            "projection", {}
+                        ).get("epoch", 0)
                     models.get("jaeger_projection").fit(
                         train_data.get("train").take(
                             builder.train_cfg.get("classifier_train_steps")
@@ -1035,9 +1104,8 @@ def train_fragment_core(**kwargs):
                 models.get("jaeger_classifier").fit(
                     train_data.get("train").take(
                         builder.train_cfg.get("classifier_train_steps"),
-                    
                     ),
-                    class_weight = builder.train_cfg.get("classifier_class_weights"),
+                    class_weight=builder.train_cfg.get("classifier_class_weights"),
                     **train_args,
                 )
                 # checkpoint_path = Path(builder.train_cfg.get("classifier_dir")) / "converged"
@@ -1067,9 +1135,10 @@ def train_fragment_core(**kwargs):
                         6,
                         # string_processor_config.get("crop_size") // 3 - 1,
                         # string_processor_config.get("codon_depth"),
-                        None
-                    ] if string_processor_config.get("use_embedding_layer") is True else
-                    [
+                        None,
+                    ]
+                    if string_processor_config.get("use_embedding_layer") is True
+                    else [
                         6,
                         string_processor_config.get("crop_size") // 3 - 1,
                         string_processor_config.get("codon_depth"),
@@ -1096,7 +1165,9 @@ def train_fragment_core(**kwargs):
                     num_parallel_calls=tf.data.AUTOTUNE,
                 )
                 .shuffle(
-                    buffer_size=_data.cardinality() if _buffer_size == -1 else _buffer_size,
+                    buffer_size=_data.cardinality()
+                    if _buffer_size == -1
+                    else _buffer_size,
                     # reshuffle_each_iteration=string_processor_config.get("reshuffle_each_iteration")
                 )
                 .padded_batch(
@@ -1116,8 +1187,8 @@ def train_fragment_core(**kwargs):
             "is_converged", False
         )
         if kwargs.get("only_save", False) is False:
-            #ic(kwargs.get("only_save", False))
-            if (not rel_converged and not kwargs.get("only_classification_head", False)):
+            # ic(kwargs.get("only_save", False))
+            if not rel_converged and not kwargs.get("only_classification_head", False):
                 train_args = {
                     "validation_data": rel_train_data.get("validation").take(
                         builder.train_cfg.get("reliability_validation_steps")
@@ -1135,7 +1206,7 @@ def train_fragment_core(**kwargs):
                     rel_train_data.get("train").take(
                         builder.train_cfg.get("reliability_train_steps")
                     ),
-                    class_weight = builder.train_cfg.get("reliability_class_weights"),
+                    class_weight=builder.train_cfg.get("reliability_class_weights"),
                     **train_args,
                 )
                 # checkpoint_path = Path(builder.train_cfg.get("reliability_dir")) / "converged"
@@ -1147,20 +1218,15 @@ def train_fragment_core(**kwargs):
         logger.info("testing the final model")
 
         models.get("jaeger_model").trainable = False
-        models.get("jaeger_model").predict(
-            train_data.get("validation").take(
-                100
-            )
-        )
+        models.get("jaeger_model").predict(train_data.get("validation").take(100))
         logger.info("training completed!")
         # ============= saving ===================================
         # saving model graph, weights, class map and train config
-        
+
         if kwargs.get("save_model", False):
             builder.save_model(
-                model=models.get("jaeger_model"), 
+                model=models.get("jaeger_model"),
                 num_params=model_num_params,
-                suffix="fragment", # use _fragment or contig
+                suffix="fragment",  # use _fragment or contig
                 metadata=kwargs.get("meta", None),
             )
-

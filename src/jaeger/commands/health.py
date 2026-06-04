@@ -1,4 +1,5 @@
 import os
+
 os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 import json
 import sys
@@ -67,6 +68,7 @@ def _get_jaeger_version() -> str:
     # Prefer local editable install's pyproject.toml
     try:
         import jaeger
+
         project_root = Path(jaeger.__file__).resolve().parent.parent.parent
         pyproject = project_root / "pyproject.toml"
         if pyproject.exists():
@@ -156,7 +158,9 @@ def _print_diagnostics(logger) -> None:
         weights = entry.get("weights", "N/A")
         num_classes = entry.get("num_classes", "N/A")
         vindex = entry.get("vindex", "N/A")
-        logger.info(f"  {key}:           weights={weights}, classes={num_classes}, vindex={vindex}")
+        logger.info(
+            f"  {key}:           weights={weights}, classes={num_classes}, vindex={vindex}"
+        )
 
     logger.info("=" * 60)
 

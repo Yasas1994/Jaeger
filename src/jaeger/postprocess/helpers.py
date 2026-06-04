@@ -22,7 +22,11 @@ def find_runs(x):  # sourcery skip: extract-method
 
     n = x.shape[0]
     if n == 0:
-        return np.array([], dtype=x.dtype), np.array([], dtype=int), np.array([], dtype=int)
+        return (
+            np.array([], dtype=x.dtype),
+            np.array([], dtype=int),
+            np.array([], dtype=int),
+        )
 
     # Find where the value changes
     loc_run_start = np.empty(n, dtype=bool)
@@ -55,8 +59,8 @@ def get_window_summary_legacy(x, phage_pos):
     represent cellular windows
 
     """
-    x = x.flatten() 
-    items, run_length, _ = find_runs(x== phage_pos)
+    x = x.flatten()
+    items, run_length, _ = find_runs(x == phage_pos)
     run_length = np.array(run_length, dtype=np.str_)
     tmp = np.empty(items.shape, dtype=np.str_)
     # print(phage_pos, items, run_length)
@@ -65,7 +69,8 @@ def get_window_summary_legacy(x, phage_pos):
     x = np.char.add(run_length, tmp)
     return "".join(x)
 
-def get_window_summary(x, class_map:dict[int,str], classes:list[str]):
+
+def get_window_summary(x, class_map: dict[int, str], classes: list[str]):
     """
     returns string representation of window-wise predictions
 
@@ -84,21 +89,24 @@ def get_window_summary(x, class_map:dict[int,str], classes:list[str]):
     represent cellular windows
 
     """
-    def vmap(i: str, classes:list):
+
+    def vmap(i: str, classes: list):
         if i.lower() in classes:
             return i[0].upper()
         return i[0].lower()
+
     class_sum_ = {k: vmap(v, classes=classes) for k, v in class_map.items()}
-    x = x.flatten() 
+    x = x.flatten()
     items, run_length, _ = find_runs(x)
     run_length = np.array(run_length, dtype=np.str_)
     tmp = np.empty(items.shape, dtype=np.str_)
     # print(phage_pos, items, run_length)
-    for k,v in class_sum_.items():
+    for k, v in class_sum_.items():
         tmp[items == k] = v
-        #tmp[items == phage_pos] = "V"
+        # tmp[items == phage_pos] = "V"
     x = np.char.add(run_length, tmp)
     return "".join(x)
+
 
 def update_dict(x, num_classes=4):
     # sourcery skip: remove-redundant-constructor-in-dict-union
@@ -158,9 +166,11 @@ def shanon_entropy(p):
 #     ex = np.exp(x)
 #     return shanon_entropy(ex / np.sum(ex, axis=-1).reshape(-1, 1))
 
+
 def binary_entropy(p, eps=1e-12):
     p = np.clip(p, eps, 1 - eps)
     return -(p * np.log2(p) + (1 - p) * np.log2(1 - p))
+
 
 def softmax_entropy(p, axis=-1, eps=1e-12):
     p = np.clip(p, eps, 1.0)
@@ -174,6 +184,7 @@ def logsumexp(x: np.ndarray, axis: int = -1) -> np.ndarray:
     xmax = np.max(x, axis=axis, keepdims=True)
     stable = x - xmax
     return xmax.squeeze(axis=axis) + np.log(np.sum(np.exp(stable), axis=axis))
+
 
 def energy(x: np.ndarray, axis: int = -1) -> np.ndarray:
     """

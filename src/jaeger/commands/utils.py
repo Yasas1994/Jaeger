@@ -9,12 +9,13 @@ import numpy as np
 from pathlib import Path
 from typing import List
 from rich.progress import track
-import random
 from math import log2, sqrt
 from scipy import stats
 import csv
 from jaeger.utils.logging import get_logger
+
 logger = get_logger(log_file=None, log_path=None, level=3)
+
 
 def shannon_entropy(seq: str) -> float:
     """
@@ -30,11 +31,13 @@ def shannon_entropy(seq: str) -> float:
         entropy -= p * log2(p)
     return entropy
 
-def generate_homopolymer(length: int, base: str = 'A') -> str:
+
+def generate_homopolymer(length: int, base: str = "A") -> str:
     """
     Generate a homopolymer (single-base repeat) of given length.
     """
     return base * length
+
 
 def generate_tandem_repeat(motif: str, copies: int) -> str:
     """
@@ -42,15 +45,16 @@ def generate_tandem_repeat(motif: str, copies: int) -> str:
     """
     return motif * copies
 
+
 def generate_random_tandem_repeats(
     num_sequences: int,
     motif_length_range: tuple = (3, 30),
     copy_number: int = 2000,
-    alphabet: List[str] = ['A', 'C', 'G', 'T']
+    alphabet: List[str] = ["A", "C", "G", "T"],
 ) -> List[str]:
     """
     Automatically generate a list of random tandem repeat sequences.
-    
+
     Parameters
     ----------
     num_sequences : int
@@ -61,7 +65,7 @@ def generate_random_tandem_repeats(
         Range of copy counts to repeat the motif.
     alphabet : list of str
         List of nucleotide characters to sample motifs from.
-    
+
     Returns
     -------
     List[str]
@@ -70,10 +74,11 @@ def generate_random_tandem_repeats(
     sequences = []
     for _ in range(num_sequences):
         motif_len = random.randint(*motif_length_range)
-        motif = ''.join(random.choices(alphabet, k=motif_len))
+        motif = "".join(random.choices(alphabet, k=motif_len))
         seq = generate_tandem_repeat(motif, copy_number)
         sequences.append(seq[:2048])
     return sequences
+
 
 def generate_biased_sequence(length: int, freqs: dict = None) -> str:
     """
@@ -81,13 +86,15 @@ def generate_biased_sequence(length: int, freqs: dict = None) -> str:
     freqs should be a dict like {'A':0.7, 'C':0.1, 'G':0.1, 'T':0.1}.
     """
     if freqs is None:
-        freqs = {'A': 0.7, 'C': 0.1, 'G': 0.1, 'T': 0.1}
+        freqs = {"A": 0.7, "C": 0.1, "G": 0.1, "T": 0.1}
     bases = list(freqs.keys())
     weights = list(freqs.values())
-    return ''.join(random.choices(bases, weights=weights, k=length))
+    return "".join(random.choices(bases, weights=weights, k=length))
 
-def generate_low_entropy_sequence(length: int, window_size: int, threshold: float,
-                                  max_attempts: int = 10000) -> str:
+
+def generate_low_entropy_sequence(
+    length: int, window_size: int, threshold: float, max_attempts: int = 10000
+) -> str:
     """
     Generate a random sequence and ensure all sliding windows have entropy below threshold.
     """
@@ -96,12 +103,15 @@ def generate_low_entropy_sequence(length: int, window_size: int, threshold: floa
         # check all windows
         valid = True
         for i in range(length - window_size + 1):
-            if shannon_entropy(seq[i:i+window_size]) >= threshold:
+            if shannon_entropy(seq[i : i + window_size]) >= threshold:
                 valid = False
                 break
         if valid:
             return seq
-    raise ValueError(f"Failed to generate low-entropy sequence after {max_attempts} attempts")
+    raise ValueError(
+        f"Failed to generate low-entropy sequence after {max_attempts} attempts"
+    )
+
 
 def shuffle_dna(seq: str) -> str:
     """Randomly shuffles a DNA sequence."""
@@ -109,64 +119,70 @@ def shuffle_dna(seq: str) -> str:
     random.shuffle(seq_list)
     return "".join(seq_list)
 
+
 def kmer_shuffle(seq: str, k: int) -> str:
     """Randomly shuffles a DNA sequence at the non-overlapping k-mer level"""
     # Trim sequence to nearest multiple of k
     trimmed_len = len(seq) - (len(seq) % k)
     trimmed_seq = seq[:trimmed_len]
-    
+
     # Split into non-overlapping k-mers
-    kmers = [trimmed_seq[i:i+k] for i in range(0, trimmed_len, k)]
-    
+    kmers = [trimmed_seq[i : i + k] for i in range(0, trimmed_len, k)]
+
     # Shuffle
     np.random.shuffle(kmers)
-    
+
     # Join and return
-    return ''.join(kmers)
+    return "".join(kmers)
+
 
 def kmer_mix_shuffle(seq1: str, seq2: str, k: int):
     """
-    Shuffle kmers from 2 sequences from 2 different classes to generate 
+    Shuffle kmers from 2 sequences from 2 different classes to generate
     """
     pass
 
+
 def shuffle_core(**kwargs):
     """
-    shuffle sequences while mainintaining the 
+    shuffle sequences while mainintaining the
     1. dinuc composition or
     2. break a seqeunce into k-mers -> shuffle -> concat
-    3. random shuffling 
+    3. random shuffling
     """
     if kwargs.get("dinuc"):
         shuffle_fn = dinuc_shuffle
     else:
+
         def shuffle_fn(x):
-            return kmer_shuffle(seq=x, k=kwargs.get('k', 1))
+            return kmer_shuffle(seq=x, k=kwargs.get("k", 1))
+
     n_tandem_repeats = kwargs.get("num_tandem_repeats")
     if kwargs.get("input_predictions"):
         logger.info("using jaeger predictions to generate the ood dataset")
         map_ = {
             0: "bacteria",
-            1: "phage", 
+            1: "phage",
             2: "eukarya",
             3: "archaea",
             4: "plasmid",
-            5: "virus"
+            5: "virus",
         }
         ip = pl.read_csv(
-                    kwargs.get("input_predictions"), truncate_ragged_lines=True, separator="\t", columns=[0,2] 
-                )
-        ip = ip.with_columns(
-            true_class = pl.col("contig_id").str.split("__class=").list.last()
+            kwargs.get("input_predictions"),
+            truncate_ragged_lines=True,
+            separator="\t",
+            columns=[0, 2],
         )
         ip = ip.with_columns(
-            true_class = pl.col("true_class").replace(map_)
+            true_class=pl.col("contig_id").str.split("__class=").list.last()
+        )
+        ip = ip.with_columns(true_class=pl.col("true_class").replace(map_))
+        ip = ip.with_columns(
+            is_correct=(pl.col("true_class") == pl.col("prediction")) * 1
         )
         ip = ip.with_columns(
-            is_correct = (pl.col("true_class") == pl.col("prediction")) * 1
-        )
-        ip = ip.with_columns(
-            contig_id = pl.col("contig_id").str.split("__class=").list.first()
+            contig_id=pl.col("contig_id").str.split("__class=").list.first()
         )
         correct = set(ip.filter(pl.col("is_correct") == 1)["contig_id"].to_list())
     match kwargs.get("itype"):
@@ -174,17 +190,24 @@ def shuffle_core(**kwargs):
             f = pl.read_csv(
                 kwargs.get("input"), truncate_ragged_lines=True, has_header=False
             )
-            f = f.select(['column_1', 'column_2', 'column_3'])
-            f = f.with_columns(pl.when(pl.col("column_3").is_in(correct))
-                    .then(pl.lit(1, dtype=pl.Int64))
-                    .otherwise(pl.lit(0, dtype=pl.Int64))
-                    .alias("column_1")
-               )
+            f = f.select(["column_1", "column_2", "column_3"])
             f = f.with_columns(
-                pl.when((pl.col('column_2').str.count_matches("N")  / pl.col('column_2').str.len_chars()) > 0.3)
-                    .then(pl.lit(0, dtype=pl.Int64))
-                    .otherwise(pl.col("column_1"))
-                    .alias("column_1")
+                pl.when(pl.col("column_3").is_in(correct))
+                .then(pl.lit(1, dtype=pl.Int64))
+                .otherwise(pl.lit(0, dtype=pl.Int64))
+                .alias("column_1")
+            )
+            f = f.with_columns(
+                pl.when(
+                    (
+                        pl.col("column_2").str.count_matches("N")
+                        / pl.col("column_2").str.len_chars()
+                    )
+                    > 0.3
+                )
+                .then(pl.lit(0, dtype=pl.Int64))
+                .otherwise(pl.col("column_1"))
+                .alias("column_1")
             )
             print(f.head())
             fs = f.with_columns(
@@ -196,22 +219,33 @@ def shuffle_core(**kwargs):
             print(fs.head())
             ft = pl.DataFrame()
             if n_tandem_repeats > 0:
-                ft = pl.from_dict(dict(
-                    column_1=np.array([0 for _ in range(n_tandem_repeats)], dtype=np.int64),
-                    column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
-                    column_3=[f'tandem_repeat_{i}' for i in range(n_tandem_repeats)]))
+                ft = pl.from_dict(
+                    dict(
+                        column_1=np.array(
+                            [0 for _ in range(n_tandem_repeats)], dtype=np.int64
+                        ),
+                        column_2=generate_random_tandem_repeats(
+                            num_sequences=n_tandem_repeats
+                        ),
+                        column_3=[
+                            f"tandem_repeat_{i}" for i in range(n_tandem_repeats)
+                        ],
+                    )
+                )
             print(ft.head())
-            logger.info(f"id : {len(f)} ood: {len(fs)} ood_tandem: {0 if ft.is_empty() else len(ft)}")
-
-            f = pl.concat([i for i in [f, fs, ft] if not  i.is_empty()], how='vertical').sample(
-                fraction=1.0, shuffle=True, with_replacement=False
+            logger.info(
+                f"id : {len(f)} ood: {len(fs)} ood_tandem: {0 if ft.is_empty() else len(ft)}"
             )
 
-            
+            f = pl.concat(
+                [i for i in [f, fs, ft] if not i.is_empty()], how="vertical"
+            ).sample(fraction=1.0, shuffle=True, with_replacement=False)
 
             match kwargs.get("otype"):
                 case "CSV":
-                    f.select(['column_1', 'column_2', 'column_3']).write_csv(kwargs.get("output"), include_header=False)
+                    f.select(["column_1", "column_2", "column_3"]).write_csv(
+                        kwargs.get("output"), include_header=False
+                    )
                 case "FASTA":
                     with open(kwargs.get("output"), "w") as fh:
                         for row in f.iter_rows(named=True):
@@ -221,19 +255,19 @@ def shuffle_core(**kwargs):
                             # use the 3rd column as header
                             fh.write(f">{seq_id}__class={label}\n")
                             for i in range(0, len(seq), 70):
-                                fh.write(seq[i:i+70] + "\n")
+                                fh.write(seq[i : i + 70] + "\n")
 
         case "FASTA":
-            input_path  = kwargs.get("input")
+            input_path = kwargs.get("input")
             output_path = kwargs.get("output")
-            otype       = kwargs.get("otype")  # "FASTA" or "CSV"
-            fasta_iter  = pyfastx.Fasta(input_path, build_index=False)
-            
+            otype = kwargs.get("otype")  # "FASTA" or "CSV"
+            fasta_iter = pyfastx.Fasta(input_path, build_index=False)
+
             # 1) pre‑generate your tandem dict
             tandem = dict(
                 column_1=[0 for _ in range(n_tandem_repeats)],
                 column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
-                column_3=[f"tandem_repeat_{i}" for i in range(n_tandem_repeats)]
+                column_3=[f"tandem_repeat_{i}" for i in range(n_tandem_repeats)],
             )
 
             # 2) collect ALL entries into a list
@@ -241,22 +275,20 @@ def shuffle_core(**kwargs):
 
             # 2a) from your input FASTA
             for name, seq in fasta_iter:
-                ncount     = seq.count("N")
-                lowcomplex = (len(seq) > 0 and (ncount / len(seq)) > 0.3)
+                ncount = seq.count("N")
+                lowcomplex = len(seq) > 0 and (ncount / len(seq)) > 0.3
                 not_in_correct = name not in correct
-                shuffled   = shuffle_fn(seq)
-                id_        = name.split("__class=")[0]
+                shuffled = shuffle_fn(seq)
+                id_ = name.split("__class=")[0]
                 orig_label = 0 if (lowcomplex or not_in_correct) else 1
 
                 # store tuples of (id, sequence, label)
-                entries.append((id_, seq,       orig_label))
-                entries.append((id_, shuffled,  0))
+                entries.append((id_, seq, orig_label))
+                entries.append((id_, shuffled, 0))
 
             # 2b) from your tandem dict
             for label, tandem_seq, tandem_id in zip(
-                tandem["column_1"],
-                tandem["column_2"],
-                tandem["column_3"]
+                tandem["column_1"], tandem["column_2"], tandem["column_3"]
             ):
                 entries.append((tandem_id, tandem_seq, label))
 
@@ -278,11 +310,12 @@ def write_fasta_entry(fh, header, seq, label):
     """
     fh.write(f">{header}class={label}\n")
     for i in range(0, len(seq), 70):
-        fh.write(seq[i:i+70] + "\n")
+        fh.write(seq[i : i + 70] + "\n")
+
 
 # def split_core(**kwargs):
 #     """
-#     sequencially sample random fragments from genomes (to mimic metagenome assemblies) for a given size 
+#     sequencially sample random fragments from genomes (to mimic metagenome assemblies) for a given size
 #     distribution
 #     """
 
@@ -371,7 +404,7 @@ def split_core(**kwargs):
 
     min_len = kwargs.get("minlen", 2000)
     max_len = kwargs.get("maxlen", 50000)
-    overlap = kwargs.get("overlap", 0)       # used only in sequential mode
+    overlap = kwargs.get("overlap", 0)  # used only in sequential mode
     shuffle = kwargs.get("shuffle", False)
     coverage = kwargs.get("coverage", None)  # per-genome coverage; if None → sequential
     circular = kwargs.get("circular", False)
@@ -409,7 +442,7 @@ def split_core(**kwargs):
         else:
             # ensure we don't go out of bounds
             start = random.randint(0, G - frag_len)
-            fragment = seq[start:start + frag_len]
+            fragment = seq[start : start + frag_len]
         return start, fragment
 
     with open(output_path, "w") as fh:
@@ -480,6 +513,7 @@ def split_core(**kwargs):
 
                     start = end - overlap
                     frag_id += 1
+
 
 def mask_core(**kwargs):
     import numpy as np
@@ -577,8 +611,9 @@ def mask_core(**kwargs):
                 current_perc += step
 
 
-
-def read_sequences(input_path: Path, intype: str, seq_col=None, class_col=None, class_id=None):
+def read_sequences(
+    input_path: Path, intype: str, seq_col=None, class_col=None, class_id=None
+):
     """Read sequences from a FASTA or CSV file."""
     records = []
     if intype == "FASTA":
@@ -611,7 +646,9 @@ def generate_fragments(records, frag_len=2048, overlap=1024):
                 offset = frag_len - (end - start)
                 start = start if offset == 0 else start - offset
                 frag = seq[start:end]
-                frag_name = f"{name}_frag{frag_id}_start{start}_len{len(frag)}_cls={cls}"
+                frag_name = (
+                    f"{name}_frag{frag_id}_start{start}_len{len(frag)}_cls={cls}"
+                )
                 fragments.append((frag_name, frag, cls))
                 frag_id += 1
                 if end == L:
@@ -626,7 +663,7 @@ def write_fasta(records, output_path):
         for name, seq, _ in records:
             fh.write(f">{name}\n")
             for i in range(0, len(seq), 70):
-                fh.write(seq[i:i+70] + "\n")
+                fh.write(seq[i : i + 70] + "\n")
 
 
 def run_mmseqs_cluster(frag_fasta, out_prefix, tmpdir, min_id, min_cov):
@@ -635,27 +672,30 @@ def run_mmseqs_cluster(frag_fasta, out_prefix, tmpdir, min_id, min_cov):
         sys.exit("Error: MMseqs2 not found in PATH.")
     subprocess.run(
         [
-            "mmseqs", "easy-cluster",
+            "mmseqs",
+            "easy-cluster",
             frag_fasta,
             out_prefix,
             tmpdir,
-            "--min-seq-id", str(min_id),
-            "-c", str(min_cov)
+            "--min-seq-id",
+            str(min_id),
+            "-c",
+            str(min_cov),
         ],
-        check=True
+        check=True,
     )
 
 
 def split_dataset(records, trainperc, valperc, testperc):
     """Split records into train, val, and test sets."""
-    
+
     random.shuffle(records)
     N = len(records)
     n_train = int(trainperc * N)
     n_val = int(valperc * N)
     train = records[:n_train]
-    val = records[n_train:n_train + n_val]
-    test = records[n_train + n_val:]
+    val = records[n_train : n_train + n_val]
+    test = records[n_train + n_val :]
     return train, val, test
 
 
@@ -665,13 +705,17 @@ def write_output(train, val, test, out_prefix, outtype="CSV"):
     for name, subset in subsets.items():
         if len(subset) > 0:
             if outtype == "FASTA":
-                out_file = out_prefix / out_prefix.with_name(f"{out_prefix.name}_{name}.fasta")
+                out_file = out_prefix / out_prefix.with_name(
+                    f"{out_prefix.name}_{name}.fasta"
+                )
                 write_fasta(subset, out_file)
             elif outtype == "CSV":
-                out_file = out_prefix / out_prefix.with_name(f"{out_prefix.name}_{name}.csv")
+                out_file = out_prefix / out_prefix.with_name(
+                    f"{out_prefix.name}_{name}.csv"
+                )
                 with open(out_file, "w", newline="") as fh:
                     writer = csv.writer(fh)
-                    #writer.writerow(["class", "sequence", "id"])
+                    # writer.writerow(["class", "sequence", "id"])
                     for seq_id, seq, cls in subset:
                         writer.writerow([cls, seq, seq_id])
             else:
@@ -713,10 +757,13 @@ def dataset_core(**kwargs):
     seq_col = kwargs.get("seq_col")
     class_id = kwargs.get("class")
 
-    assert abs(trainperc + valperc + testperc - 1.0) < 1e-6, "train+val+test must sum to 1" 
+    assert abs(trainperc + valperc + testperc - 1.0) < 1e-6, (
+        "train+val+test must sum to 1"
+    )
 
     def get_class(x):
-        return x.split('=')[-1]
+        return x.split("=")[-1]
+
     out_pref.mkdir(exist_ok=True, parents=True)
 
     # 1. Read input sequences
@@ -741,9 +788,15 @@ def dataset_core(**kwargs):
     if not rep_seq.exists():
         raise FileNotFoundError(f"Expected MMseqs2 rep file: {rep_seq}")
     if class_id:
-        reps = [(h, str(s), class_id) for h, s in pyfastx.Fasta(str(rep_seq), build_index=False)]
+        reps = [
+            (h, str(s), class_id)
+            for h, s in pyfastx.Fasta(str(rep_seq), build_index=False)
+        ]
     else:
-        reps = [(h, str(s), get_class(h)) for h, s in pyfastx.Fasta(str(rep_seq), build_index=False)]
+        reps = [
+            (h, str(s), get_class(h))
+            for h, s in pyfastx.Fasta(str(rep_seq), build_index=False)
+        ]
 
     # 5. Split datasets
     train, val, test = split_dataset(reps, trainperc, valperc, testperc)
@@ -751,13 +804,15 @@ def dataset_core(**kwargs):
     # 6. Write outputs
     write_output(train, val, test, out_pref, outtype)
 
-    print(f"{len(fragments)} fragments → {len(reps)} reps → "
-          f"{len(train)} train, {len(val)} val, {len(test)} test")
-    
+    print(
+        f"{len(fragments)} fragments → {len(reps)} reps → "
+        f"{len(train)} train, {len(val)} val, {len(test)} test"
+    )
 
 
 def convert_core(**kwargs):
     import pandas as pd
+
     """
     Convert between CSV and FASTA using pandas and pyfastx.
 
@@ -770,17 +825,19 @@ def convert_core(**kwargs):
     input_type : str
         Type of the input file: 'csv' or 'fasta'.
     """
-    input_path = Path(kwargs.get('input'))
-    output_path = Path(kwargs.get('output'))
-    input_type = kwargs.get('itype')
+    input_path = Path(kwargs.get("input"))
+    output_path = Path(kwargs.get("output"))
+    input_type = kwargs.get("itype")
     if input_type == "CSV":
         # CSV -> FASTA
-        df = pd.read_csv(input_path, usecols=[0,1,2], names=['class', 'sequence', 'id'], dtype=str)
-        with open(output_path, 'w') as fasta_out:
+        df = pd.read_csv(
+            input_path, usecols=[0, 1, 2], names=["class", "sequence", "id"], dtype=str
+        )
+        with open(output_path, "w") as fasta_out:
             for idx, row in df.iterrows():
-                seq_id = row['id'].strip()
-                cls_id = row['class'].strip()
-                seq = row['sequence'].strip()
+                seq_id = row["id"].strip()
+                cls_id = row["class"].strip()
+                seq = row["sequence"].strip()
                 fasta_out.write(f">{seq_id}__class={cls_id}\n{seq}\n")
         print(f"[✓] Converted CSV to FASTA: {output_path}")
 
@@ -789,18 +846,19 @@ def convert_core(**kwargs):
         fasta = pyfastx.Fasta(str(input_path), build_index=False)
         records = []
         for name, seq in fasta:
-            seq_id, cls_id = name.split('__class=')
+            seq_id, cls_id = name.split("__class=")
             records.append((cls_id, seq, seq_id))
-        df = pd.DataFrame(records, columns=['class', 'sequence', 'id'])
+        df = pd.DataFrame(records, columns=["class", "sequence", "id"])
         df.to_csv(output_path, index=False, header=False)
         print(f"[✓] Converted FASTA to CSV: {output_path}")
 
     else:
         raise ValueError("input_type must be 'CSV' or 'FASTA'")
 
+
 def significant_top_class(logits_class1, logits_class2, alpha=0.05):
     """
-    One-tailed paired t-test to check if top 1 class logits are significantly higher than top 2 class 
+    One-tailed paired t-test to check if top 1 class logits are significantly higher than top 2 class
     logits.
     """
     # Differences per window
@@ -812,13 +870,10 @@ def significant_top_class(logits_class1, logits_class2, alpha=0.05):
     p_one_tailed = p_two_tailed / 2 if t_stat > 0 else 1 - (p_two_tailed / 2)
 
     # Decision
-    significant = (p_one_tailed < alpha)
+    significant = p_one_tailed < alpha
 
-    return {
-        "t_stat": t_stat,
-        "p_value": p_one_tailed,
-        "significant": significant
-    }
+    return {"t_stat": t_stat, "p_value": p_one_tailed, "significant": significant}
+
 
 def welch_t_one_tailed(mean1, var1, n1, mean2, var2, n2, alternative="greater"):
     """
@@ -827,14 +882,14 @@ def welch_t_one_tailed(mean1, var1, n1, mean2, var2, n2, alternative="greater"):
                  "less" tests mean1 < mean2.
     """
     # Standard error
-    se = sqrt(var1/n1 + var2/n2)
+    se = sqrt(var1 / n1 + var2 / n2)
 
     # t-statistic
     t_stat = (mean1 - mean2) / se
 
     # Welch–Satterthwaite degrees of freedom
-    df_num = (var1/n1 + var2/n2)**2
-    df_denom = ((var1/n1)**2 / (n1 - 1)) + ((var2/n2)**2 / (n2 - 1))
+    df_num = (var1 / n1 + var2 / n2) ** 2
+    df_denom = ((var1 / n1) ** 2 / (n1 - 1)) + ((var2 / n2) ** 2 / (n2 - 1))
     df = df_num / df_denom
 
     # One-tailed p-value
@@ -847,11 +902,13 @@ def welch_t_one_tailed(mean1, var1, n1, mean2, var2, n2, alternative="greater"):
 
     return t_stat, df, p
 
+
 def stats_core(**kwargs):
     import matplotlib.pyplot as plt
 
     import seaborn as sns
     import pandas as pd
+
     """
     Calculate stats and create plots from jaeger output/s
     
@@ -860,8 +917,8 @@ def stats_core(**kwargs):
     3. class score distributions
 
     """
-    input_path = Path(kwargs.get('input'))
-    output_path = Path(kwargs.get('output'))
+    input_path = Path(kwargs.get("input"))
+    output_path = Path(kwargs.get("output"))
     output_path.mkdir(exist_ok=True, parents=True)
     pct_class = output_path / "class_percentages.png"
     pct_class_pval = output_path / "class_percentages_pval.png"
@@ -876,8 +933,16 @@ def stats_core(**kwargs):
     sns.set_context("paper", font_scale=1.2)
     if len(df) > 1:
         # Create the count plot
-        df["above_threshold"] = df["reliability_score"].apply(lambda x : "passed" if x >= 0.8 else "failed")
-        ax = sns.countplot(data=df, x="prediction", hue="above_threshold", palette="pastel", stat="percent")
+        df["above_threshold"] = df["reliability_score"].apply(
+            lambda x: "passed" if x >= 0.8 else "failed"
+        )
+        ax = sns.countplot(
+            data=df,
+            x="prediction",
+            hue="above_threshold",
+            palette="pastel",
+            stat="percent",
+        )
         # Annotate bars with percentage values (already in percent)
         for p in ax.patches:
             percentage = p.get_height()
@@ -900,8 +965,16 @@ def stats_core(**kwargs):
         plt.close()
 
         # Calculate per-class distribution of reliability scores
-        ax = sns.violinplot(df, x='prediction', y='reliability_score')
-        sns.stripplot(df, x='prediction', y='reliability_score', s=1, alpha=0.1, color='gray', ax=ax)
+        ax = sns.violinplot(df, x="prediction", y="reliability_score")
+        sns.stripplot(
+            df,
+            x="prediction",
+            y="reliability_score",
+            s=1,
+            alpha=0.1,
+            color="gray",
+            ax=ax,
+        )
         ax.set_ylabel("Reliability score")
         ax.set_xlabel("Class")
         ax.set_title("Per-class distribution of reliability scores")
@@ -911,8 +984,10 @@ def stats_core(**kwargs):
         plt.close()
 
         # Calculate per-class distribution of entropy
-        ax = sns.violinplot(df, x='prediction', y='entropy')
-        sns.stripplot(df, x='prediction', y='entropy', s=1, alpha=0.1, color='gray', ax=ax)
+        ax = sns.violinplot(df, x="prediction", y="entropy")
+        sns.stripplot(
+            df, x="prediction", y="entropy", s=1, alpha=0.1, color="gray", ax=ax
+        )
         ax.set_ylabel("Entropy")
         ax.set_xlabel("Class")
         ax.set_title("Per-class distribution of entropy")
@@ -923,8 +998,10 @@ def stats_core(**kwargs):
 
         # Calculate per-class distribution of energy
         if "energy" in df.columns:
-            ax = sns.violinplot(df, x='prediction', y='energy')
-            sns.stripplot(df, x='prediction', y='energy', s=1, alpha=0.1, color='gray', ax=ax)
+            ax = sns.violinplot(df, x="prediction", y="energy")
+            sns.stripplot(
+                df, x="prediction", y="energy", s=1, alpha=0.1, color="gray", ax=ax
+            )
             ax.set_ylabel("Energy")
             ax.set_xlabel("Class")
             ax.set_title("Per-class distribution of Energy")
@@ -935,33 +1012,67 @@ def stats_core(**kwargs):
 
         # Calculate perclass score distributions
         # Create the grid
-        df_long = pd.melt(df[['contig_id', 'length', 'prediction'] + [i for i in df.columns if i.endswith("_score") and i != "reliability_score"]], 
-                        id_vars=['contig_id', 'length', 'prediction'],
-                        var_name="score_class",
-                        value_name="scores")
-        g = sns.FacetGrid(df_long, row="prediction",hue="score_class", margin_titles=False, height=2, aspect=3.5)
-        g.map(sns.kdeplot, "scores",fill=True, common_norm=False, alpha=0.2, linewidth=0.5)
+        df_long = pd.melt(
+            df[
+                ["contig_id", "length", "prediction"]
+                + [
+                    i
+                    for i in df.columns
+                    if i.endswith("_score") and i != "reliability_score"
+                ]
+            ],
+            id_vars=["contig_id", "length", "prediction"],
+            var_name="score_class",
+            value_name="scores",
+        )
+        g = sns.FacetGrid(
+            df_long,
+            row="prediction",
+            hue="score_class",
+            margin_titles=False,
+            height=2,
+            aspect=3.5,
+        )
+        g.map(
+            sns.kdeplot,
+            "scores",
+            fill=True,
+            common_norm=False,
+            alpha=0.2,
+            linewidth=0.5,
+        )
         g.add_legend()
         # Add titles and adjust layout
         g.set_axis_labels("Score", "Density")
-        #g.set_titles("Per-class score distributions")
+        # g.set_titles("Per-class score distributions")
         g.savefig(clscores, dpi=150, bbox_inches="tight")
         plt.close()
         try:
-            # quantile bins 
+            # quantile bins
             bins = pd.qcut(df["length"], q=5)
 
             # Extract bin edges
             bin_edges = bins.cat.categories
 
             # Create labels with numeric min–max
-            labels = [f"{int(interval.left):,}–{int(interval.right):,}" for interval in bin_edges]
+            labels = [
+                f"{int(interval.left):,}–{int(interval.right):,}"
+                for interval in bin_edges
+            ]
 
             # Recreate qcut with readable labels
             df["length_bin"] = pd.qcut(df["length"], q=5, labels=labels)
             # Calculate per-class distribution of reliability scores
-            ax = sns.violinplot(df, x='length_bin', y='reliability_score')
-            sns.stripplot(df, x='length_bin', y='reliability_score', s=1, alpha=0.1, color='red', ax=ax)
+            ax = sns.violinplot(df, x="length_bin", y="reliability_score")
+            sns.stripplot(
+                df,
+                x="length_bin",
+                y="reliability_score",
+                s=1,
+                alpha=0.1,
+                color="red",
+                ax=ax,
+            )
             ax.set_ylabel("Reliability score")
             ax.set_xlabel("Length range")
             ax.set_title("Legth-wise (quantile) distribution of reliability scores")
@@ -973,29 +1084,44 @@ def stats_core(**kwargs):
         except Exception as e:
             logger.warning(e)
             logger.warning("Legth-wise (quantile) plot was not created")
-            
 
     # perform welch t-tests to check if there is a statistically significant difference
-    # between the top-k classes 
-    mean_scores = df[[i for i in df.columns if i.endswith("_score") and "reliability" not in i]].to_numpy()
+    # between the top-k classes
+    mean_scores = df[
+        [i for i in df.columns if i.endswith("_score") and "reliability" not in i]
+    ].to_numpy()
     var_scores = df[[i for i in df.columns if i.endswith("_var")]].to_numpy()
-    windows = df[[i for i in df.columns if i.endswith("_windows") and "reliability" not in i]].to_numpy().sum(axis=-1)
+    windows = (
+        df[[i for i in df.columns if i.endswith("_windows") and "reliability" not in i]]
+        .to_numpy()
+        .sum(axis=-1)
+    )
     rows = np.arange(mean_scores.shape[0])[:, None]
     sorted_indices = np.flip(np.argsort(mean_scores, axis=-1), axis=-1)
     sorted_means = mean_scores[rows, sorted_indices[:, :2]]
     sorted_vars = var_scores[rows, sorted_indices[:, :2]]
     pvals = []
-    for means,vars,n in zip(sorted_means, sorted_vars, windows):
-        _,_, p = welch_t_one_tailed(mean1=means[0], var1=vars[0], mean2=means[1], var2=vars[1], n1=n, n2=n)
+    for means, vars, n in zip(sorted_means, sorted_vars, windows):
+        _, _, p = welch_t_one_tailed(
+            mean1=means[0], var1=vars[0], mean2=means[1], var2=vars[1], n1=n, n2=n
+        )
         pvals.append(p)
     df["pval"] = pvals
 
-    df.to_csv(tsv_with_pvals, index=None, sep="\t", float_format="%.3f" )
-        # Create the count plot
+    df.to_csv(tsv_with_pvals, index=None, sep="\t", float_format="%.3f")
+    # Create the count plot
 
     if len(df) > 1:
-        df["above_pval_threshold"] = df["pval"].apply(lambda x : "passed" if x <= 0.05 else "failed")
-        ax = sns.countplot(data=df, x="prediction", hue="above_pval_threshold", palette="pastel", stat="percent")
+        df["above_pval_threshold"] = df["pval"].apply(
+            lambda x: "passed" if x <= 0.05 else "failed"
+        )
+        ax = sns.countplot(
+            data=df,
+            x="prediction",
+            hue="above_pval_threshold",
+            palette="pastel",
+            stat="percent",
+        )
         # Annotate bars with percentage values (already in percent)
         for p in ax.patches:
             percentage = p.get_height()

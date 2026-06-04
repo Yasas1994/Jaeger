@@ -85,7 +85,7 @@ class ArcFaceLoss(tf.keras.layers.Layer):
             # Assume labels already one-hot, just cast
             labels_one_hot = tf.cast(labels, compute_dtype)
         else:
-            labels = tf.reshape(labels, [-1])             # (batch_size,)
+            labels = tf.reshape(labels, [-1])  # (batch_size,)
             labels = tf.cast(labels, tf.int32)
             labels_one_hot = tf.one_hot(
                 labels, depth=self.num_classes, dtype=compute_dtype
@@ -114,14 +114,19 @@ class ArcFaceLoss(tf.keras.layers.Layer):
         # Always return float32 loss
         return loss
 
+
 class HierarchicalLoss(tf.keras.losses.Loss):
     def __init__(self, parent_of, groups, l_fine=1.0, l_coarse=1.5, name="hier_loss"):
-        super().__init__(name=name, reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE)
-        self.parent_of = tf.constant(parent_of, tf.int32)          # (6,)
-        self.groups = [tf.constant(g, tf.int32) for g in groups]   # list of tensors
+        super().__init__(
+            name=name, reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE
+        )
+        self.parent_of = tf.constant(parent_of, tf.int32)  # (6,)
+        self.groups = [tf.constant(g, tf.int32) for g in groups]  # list of tensors
         self.l_fine = float(l_fine)
         self.l_coarse = float(l_coarse)
-        self.ce = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction="none")
+        self.ce = tf.keras.losses.SparseCategoricalCrossentropy(
+            from_logits=True, reduction="none"
+        )
 
     def call(self, y_true, fine_logits):
         # accept sparse ids (N,) or one-hot (N,6)
@@ -136,9 +141,11 @@ class HierarchicalLoss(tf.keras.losses.Loss):
 
         # Coarse logits via logsumexp over each group's fine logits
         coarse_logits = tf.stack(
-            [tf.reduce_logsumexp(tf.gather(fine_logits, idxs, axis=1), axis=1)
-             for idxs in self.groups],
-            axis=1
+            [
+                tf.reduce_logsumexp(tf.gather(fine_logits, idxs, axis=1), axis=1)
+                for idxs in self.groups
+            ],
+            axis=1,
         )  # (N, 3)
 
         y_coarse = tf.gather(self.parent_of, y_true)  # (N,)

@@ -56,29 +56,31 @@ def logits_to_df(config: Any, cmdline_kwargs: Dict, **kwargs) -> Dict:
     ):
         if length >= cmdline_kwargs.get("lc"):
             # try:
-                value = np.exp(value) / np.sum(np.exp(value), axis=1).reshape(-1, 1)
-                # bac, phage, euk, arch
-                max_class = np.argmax(np.mean(value, axis=0))
-                host = lab[max_class]
-                t = pd.DataFrame(
-                    value,
-                    columns=list(config["all_labels"].values()),
-                )
-                t = t.assign(length=[i * cmdline_kwargs.get("fsize") for i in range(len(t))])
+            value = np.exp(value) / np.sum(np.exp(value), axis=1).reshape(-1, 1)
+            # bac, phage, euk, arch
+            max_class = np.argmax(np.mean(value, axis=0))
+            host = lab[max_class]
+            t = pd.DataFrame(
+                value,
+                columns=list(config["all_labels"].values()),
+            )
+            t = t.assign(
+                length=[i * cmdline_kwargs.get("fsize") for i in range(len(t))]
+            )
 
-                for k, v in lab.items():
-                    t[v] = np.convolve(value[:, k], np.ones(4), mode="same")
-                t["gc"] = gc
-                t["gc_skew"] = scale_range(
-                    np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"),
-                    min=-1,
-                    max=1,
-                )
+            for k, v in lab.items():
+                t[v] = np.convolve(value[:, k], np.ones(4), mode="same")
+            t["gc"] = gc
+            t["gc_skew"] = scale_range(
+                np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"),
+                min=-1,
+                max=1,
+            )
 
-                tmp[f"{key}"] = [t, host, length]
-            # except Exception as e:
-            #     logger.error(e)
-            #     logger.debug(traceback.format_exc())
+            tmp[f"{key}"] = [t, host, length]
+        # except Exception as e:
+        #     logger.error(e)
+        #     logger.debug(traceback.format_exc())
 
     return tmp
 
@@ -575,8 +577,7 @@ def prophage_report(
     if summaries:
         df = pd.DataFrame(summaries)
         df["contig_id"] = df["contig_id"].apply(lambda x: x.replace("___", ","))
-        df.to_csv(outdir / "prophages_jaeger.tsv", sep="\t", index=False, float_format='%.3f')
-        logger.info(
-            f"prophage cordinates saved at {outdir / 'prophages_jaeger.tsv'}"
+        df.to_csv(
+            outdir / "prophages_jaeger.tsv", sep="\t", index=False, float_format="%.3f"
         )
-
+        logger.info(f"prophage cordinates saved at {outdir / 'prophages_jaeger.tsv'}")
