@@ -153,7 +153,7 @@ apptainer run --nv jaeger.sif jaeger predict --model jaeger_57341_1.5M_fragment 
 ---
 #### Downloading models
 ---
-Starting from version 1.2.0, users will need to download the new models separately after installing Jaeger. However, for backward compatibility, Jaeger will still include the old model by default.
+Starting from version 1.26.0, users will need to download the new models separately after installing Jaeger. However, for backward compatibility, Jaeger will still include the old model by default.
 
 Use the --list flag to print out all models available for download
 ```bash
