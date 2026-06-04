@@ -182,6 +182,8 @@ def run_core(**kwargs):
 
     # Use quantized TFLite model if requested
     quantized_mode = kwargs.get("quantized")
+    use_xla = kwargs.get("xla", False)
+    
     if quantized_mode:
         # Look for quantized model in the same directory as the original model
         graph_dir = Path(model_info["graph"])
@@ -200,7 +202,9 @@ def run_core(**kwargs):
         model_info_tflite["tflite"] = tflite_path
         model = TFLiteInferModel(model_info_tflite)
     else:
-        model = InferModel(model_info)
+        if use_xla:
+            logger.info("Using XLA-compiled inference (first batch may be slow due to compilation)")
+        model = InferModel(model_info, use_xla=use_xla)
     
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(

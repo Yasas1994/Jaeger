@@ -278,22 +278,29 @@ class InferModel:
     (works with latest generation of models)
     """
 
-    def __init__(self, path_dict):
+    def __init__(self, path_dict, use_xla: bool = False):
         self.class_map = self._load_class_map(path_dict.get("classes"))
         self.loaded_model = tf.saved_model.load(path_dict.get("graph"))
         self.inference_fn = self.loaded_model.signatures["serving_default"]
         self.string_processor_config = self._load_string_processor_config(
             path_dict.get("project", None)
         )
+        self.use_xla = use_xla
+        self._predict_step = self._build_predict_step()
 
-    @tf.function(jit_compile=False)
-    def _predict_step(self, x):
-        # Unpack the data
-        # set model to inference mode
-        y_logits = self.inference_fn(
-            inputs=x.get(self.string_processor_config.get("input_type"))
-        )
-        return y_logits
+    def _build_predict_step(self):
+        """Build the prediction step function, optionally with XLA."""
+        inference_fn = self.inference_fn
+        input_type = self.string_processor_config.get("input_type")
+
+        def step(x):
+            y_logits = inference_fn(inputs=x.get(input_type))
+            return y_logits
+
+        if self.use_xla:
+            return tf.function(jit_compile=True)(step)
+        else:
+            return tf.function(jit_compile=False)(step)
 
     def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
         """

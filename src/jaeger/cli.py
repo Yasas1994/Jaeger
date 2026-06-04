@@ -186,6 +186,11 @@ def health(**kwargs):
     default="fp32",
     help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
 )
+@click.option(
+    "--xla",
+    is_flag=True,
+    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
+)
 def predict(**kwargs):
     """
     Runs Jaeger on a dataset
