@@ -21,7 +21,7 @@ conda activate jaeger
 
 test the installation with test data
 ```bash
-jaeger test
+jaeger health
 ```
 
 
@@ -92,7 +92,7 @@ cd Jaeger
 apptainer build jaeger.sif singularity/jaeger_singularity.def
 
 # to run jaeger
-apptainer run --nv jaeger.sif jaeger run -i input_file.fasta -o output_dir --batch 128
+apptainer run --nv jaeger.sif jaeger predict -i input_file.fasta -o output_dir --batch 128
 ```
 
 
