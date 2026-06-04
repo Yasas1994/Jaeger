@@ -59,8 +59,8 @@ exclude_patterns = []
 #
 html_theme = "furo"
 html_favicon = "_static/figures/jaeger_icon.svg"
-pygments_style = "tango"
-pygments_dark_style = "monokai"
+pygments_style = "catppuccin-latte"
+pygments_dark_style = "catppuccin-mocha"
 html_theme_options = {
     "sidebar_hide_name": True,
     "navigation_with_keys": True,
@@ -71,16 +71,54 @@ html_theme_options = {
         "font-stack--monospace": "ui-monospace,Cascadia Mono,Source Code Pro,Segoe UI Mono,Menlo,Monaco,Consolas,Courier New,monospace",
         "admonition-title-font-size": "0.9rem",
         "admonition-font-size": "0.9rem",
-        "color-brand-primary": "#379d6f",
-        "color-brand-content": "#379d6f",
+        # Catppuccin Latte
+        "color-brand-primary": "#1e66f5",
+        "color-brand-content": "#1e66f5",
+        "color-background-primary": "#eff1f5",
+        "color-background-secondary": "#e6e9ef",
+        "color-background-hover": "#ccd0da",
+        "color-border-primary": "#ccd0da",
+        "color-border-secondary": "#bcc0cc",
+        "color-foreground-primary": "#4c4f69",
+        "color-foreground-secondary": "#6c6f85",
+        "color-foreground-muted": "#8c8fa1",
+        "color-foreground-border": "#9ca0b0",
+        "color-api-background": "#e6e9ef",
+        "color-api-background-hover": "#ccd0da",
+        "color-api-overall": "#4c4f69",
+        "color-api-name": "#8839ef",
+        "color-api-pre-name": "#8839ef",
+        "color-api-paren": "#5c5f77",
+        "color-api-keyword": "#d20f39",
+        "color-highlight-on-target": "#df8e1d",
+        "color-admonition-background": "#e6e9ef",
     },
     "dark_css_variables": {
         "font-stack": "'Nunito Sans',system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen,Ubuntu,Cantarell,Fira Sans,Droid Sans,Helvetica Neue,sans-serif",
         "font-stack--monospace": "ui-monospace,Cascadia Mono,Source Code Pro,Segoe UI Mono,Menlo,Monaco,Consolas,Courier New,monospace",
         "admonition-title-font-size": "0.9rem",
         "admonition-font-size": "0.9rem",
-        "color-brand-primary": "#76e0a6",
-        "color-brand-content": "#76e0a6",
+        # Catppuccin Mocha
+        "color-brand-primary": "#89b4fa",
+        "color-brand-content": "#89b4fa",
+        "color-background-primary": "#1e1e2e",
+        "color-background-secondary": "#181825",
+        "color-background-hover": "#313244",
+        "color-border-primary": "#313244",
+        "color-border-secondary": "#45475a",
+        "color-foreground-primary": "#cdd6f4",
+        "color-foreground-secondary": "#a6adc8",
+        "color-foreground-muted": "#7f849c",
+        "color-foreground-border": "#6c7086",
+        "color-api-background": "#181825",
+        "color-api-background-hover": "#313244",
+        "color-api-overall": "#cdd6f4",
+        "color-api-name": "#cba6f7",
+        "color-api-pre-name": "#cba6f7",
+        "color-api-paren": "#bac2de",
+        "color-api-keyword": "#f38ba8",
+        "color-highlight-on-target": "#f9e2af",
+        "color-admonition-background": "#181825",
     },
     "footer_icons": [
         {
