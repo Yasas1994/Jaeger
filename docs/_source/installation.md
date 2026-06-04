@@ -2,16 +2,25 @@
 
 Jaeger can be installed via **Bioconda**, **PyPI**, **git**, or **Apptainer/Singularity**. Choose the method that best fits your environment.
 
----
+::::{tab-set}
 
-## Quick reference
+:::{tab-item} One-liner (recommended)
 
-| Method | Best for | GPU support | Command |
-|--------|----------|-------------|---------|
-| [Bioconda](#bioconda) | HPC / reproducible environments | Yes | `mamba install jaeger-bio` |
-| [PyPI](#pypi) | Development / latest features | Yes | `pip install jaeger-bio[gpu]` |
-| [Git](#git) | Contributors / bleeding edge | Yes | `pip install ".[gpu]"` |
-| [Apptainer](#apptainer) | Containerized HPC workflows | Yes | `apptainer build …` |
+The easiest way to install Jaeger is using the one-liner install script. It auto-detects your platform (GPU, CPU, or Apple Silicon) and installs the correct variant.
+
+```bash
+curl -sSL https://raw.githubusercontent.com/MGXlab/Jaeger/main/install.sh | bash
+```
+
+The script will:
+1. Detect whether you have an NVIDIA GPU, CPU-only, or Apple Silicon
+2. Create a `jaeger` conda environment with Python 3.11–3.12
+3. Install the correct package variant (`[gpu]`, `[cpu]`, or `[darwin-arm]`)
+4. Run `jaeger health` to verify the installation
+
+:::
+
+:::{tab-item}  bioconda
 
 ---
 
