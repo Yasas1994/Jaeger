@@ -39,7 +39,8 @@ If you use Jaeger in your work, please consider citing its preprint:
 
 To cite the code itself:
 
-* **Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences**
+* **Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences**  
+  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20534106.svg)](https://doi.org/10.5281/zenodo.20534106)
 
 ---
 
