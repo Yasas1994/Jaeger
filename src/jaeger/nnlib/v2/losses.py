@@ -8,7 +8,9 @@ class SupervisedContrastiveLoss(tf.keras.losses.Loss):
 
     def __call__(self, labels, feature_vectors, sample_weight=None):
         # Normalize feature vectors
-        labels = tf.math.argmax(labels, axis=-1)
+        # Handle both sparse (B,) and one-hot (B, C) labels
+        if len(labels.shape) > 1:
+            labels = tf.math.argmax(labels, axis=-1)
         feature_vectors_normalized = tf.math.l2_normalize(feature_vectors, axis=1)
         # Compute logits
         logits = tf.divide(

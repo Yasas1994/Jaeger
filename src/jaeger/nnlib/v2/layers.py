@@ -213,7 +213,7 @@ class MaskedMaxPooling1D(tf.keras.layers.Layer):
     def call(self, inputs, mask=None):
         # Reshape for MaskedMaxpooling1D
         input_shape = tf.shape(inputs)
-        self.input_dtype = inputs.dtype
+        self._input_dtype = inputs.dtype
         # batch_size = input_shape[0]
         # dim1 = input_shape[1]
         dim2 = input_shape[2]
@@ -257,7 +257,7 @@ class MaskedMaxPooling1D(tf.keras.layers.Layer):
         if mask is None:
             return None
         else:
-            mask = tf.cast(mask, dtype=self.input_dtype)
+            mask = tf.cast(mask, dtype=self._input_dtype)
             mask = tf.expand_dims(mask, axis=-1)
 
             pooled_mask = tf.nn.max_pool1d(
@@ -446,7 +446,7 @@ class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
         self.score_dense.build((input_shape[0], input_shape[1], d))
         super().build(input_shape)
 
-    def call(self, x, training=None):
+    def call(self, x, mask=None, training=None):
         # (B,F,L,D) -> max over L
         per_frame = tf.reduce_max(x, axis=2)  # (B,F,D)
 

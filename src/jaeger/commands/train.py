@@ -46,14 +46,21 @@ from jaeger.utils.misc import numerize, load_model_config, clear_directory
 
 # dev
 import numpy as np
-from icecream import ic
+
+try:
+    from icecream import ic
+
+    ic.configureOutput(prefix="Jaeger |")
+except ImportError:
+
+    def ic(*args, **kwargs):
+        pass
 
 # todo
 # prevent over writing existing experiments
 # train from last checkpoint
 
 logger = get_logger(log_file=None, log_path=None, level=3)
-ic.configureOutput(prefix="Jaeger |")
 
 
 def set_global_seed(seed: int = 42):
