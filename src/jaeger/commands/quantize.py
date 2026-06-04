@@ -7,6 +7,12 @@ Supports:
 
 Note: Quantization is performed via TensorFlow Lite conversion.
 The quantized model is saved as a TFLite model alongside metadata.
+
+Important:
+    TFLite models produced by this tool are primarily intended for
+    edge/mobile deployment where model size matters. On desktop GPUs,
+    TFLite inference may not be faster than the original SavedModel
+    due to fallback TF ops and interpreter overhead.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import click
 import numpy as np
 import tensorflow as tf
 import yaml
+from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
 from jaeger.utils.misc import AvailableModels
 
@@ -28,8 +35,6 @@ logger = logging.getLogger("Jaeger")
 
 def quantize_model(model: str, output: Path, mode: str, verbose: int):
     """Core quantization logic (non-CLI)."""
-    from jaeger.utils.logging import get_logger
-
     log = logging.getLogger("Jaeger")
     log.info(f"Quantizing model '{model}' with mode '{mode}'")
 
@@ -57,9 +62,17 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
             shutil.copy2(src, dst)
             log.info(f"Copied {key}: {src.name}")
 
-    # Perform quantization
+    # Perform quantization via frozen graph -> TFLite
+    # Frozen graph eliminates resource variables that TFLite cannot handle.
     log.info(f"Loading SavedModel from {graph_dir}")
-    converter = tf.lite.TFLiteConverter.from_saved_model(str(graph_dir))
+    loaded = tf.saved_model.load(str(graph_dir))
+    infer = loaded.signatures["serving_default"]
+
+    log.info("Freezing graph (converting variables to constants)...")
+    frozen_func = convert_variables_to_constants_v2(infer)
+
+    log.info(f"Converting to TFLite (mode={mode})...")
+    converter = tf.lite.TFLiteConverter.from_concrete_functions([frozen_func])
 
     if mode == "dynamic":
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -73,10 +86,6 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
         converter.inference_input_type = tf.int8
         converter.inference_output_type = tf.int8
 
-    # Disable resource variables (not supported by TFLite)
-    converter.experimental_enable_resource_variables = False
-
-    log.info("Converting model...")
     try:
         tflite_model = converter.convert()
     except Exception as e:
@@ -96,6 +105,10 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
         "quantization_mode": mode,
         "tflite_model": str(tflite_path.name),
         "model_format": "tflite",
+        "note": (
+            "TFLite model for edge deployment. "
+            "Resize interpreter input tensor at runtime for variable sequence lengths."
+        ),
     }
     info_path = quantized_dir / "quantization_info.yaml"
     info_path.write_text(yaml.safe_dump(info))
@@ -132,7 +145,12 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
     default=1,
 )
 def quantize(model: str, output: Path, mode: str, verbose: int):
-    """Quantize a Jaeger model for faster inference.
+    """Quantize a Jaeger model for edge deployment.
+
+    Converts a SavedModel to a quantized TensorFlow Lite model. The primary
+    benefit is reduced model size (e.g., ~6 MB -> ~1.6 MB with dynamic
+    quantization). Note that TFLite inference speed depends heavily on the
+    target hardware and may not exceed the original SavedModel on desktop GPUs.
 
     Examples:
         jaeger utils quantize -m default -o ./quantized_models
@@ -143,8 +161,11 @@ def quantize(model: str, output: Path, mode: str, verbose: int):
 
 def _resolve_model(model_name: str) -> dict | None:
     """Resolve model name to path dict."""
-    from importlib.resources import files; CONFIG_PATH = files("jaeger.data") / "config.json"; from jaeger.utils.misc import json_to_dict
+    from importlib.resources import files
 
+    from jaeger.utils.misc import json_to_dict
+
+    CONFIG_PATH = files("jaeger.data") / "config.json"
     model_paths = json_to_dict(CONFIG_PATH).get("model_paths", [])
     models = AvailableModels(path=model_paths)
     return models.info.get(model_name)
