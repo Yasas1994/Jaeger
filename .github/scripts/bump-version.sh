@@ -104,11 +104,17 @@ if [[ -f "${REPO_ROOT}/.cz.toml" ]]; then
     echo "  ✓ .cz.toml"
 fi
 
-# 3. recipes/jaeger-bio/meta.yaml
+# 3. recipes/jaeger-bio/meta.yaml — version only (deps updated separately)
 META_YAML="${REPO_ROOT}/recipes/jaeger-bio/meta.yaml"
 if [[ -f "${META_YAML}" ]]; then
     sed_i "s/{% set version = \"[^\"]*\" %}/{% set version = \"${NEW_VERSION}\" %}/" "${META_YAML}"
-    echo "  ✓ recipes/jaeger-bio/meta.yaml"
+    echo "  ✓ recipes/jaeger-bio/meta.yaml (version)"
+fi
+
+# 3b. Sync meta.yaml run dependencies from pyproject.toml
+UPDATE_DEPS_SCRIPT="${REPO_ROOT}/.github/scripts/update-meta-deps.py"
+if [[ -f "${UPDATE_DEPS_SCRIPT}" ]] && [[ -f "${REPO_ROOT}/pyproject.toml" ]]; then
+    (cd "${REPO_ROOT}" && python3 "${UPDATE_DEPS_SCRIPT}")
 fi
 
 # 4. Singularity definitions — update pinned pip install version
