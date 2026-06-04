@@ -2,8 +2,23 @@
 
 ## installing jaeger
 
-
 ::::{tab-set}
+
+:::{tab-item} One-liner (recommended)
+
+The easiest way to install Jaeger is using the one-liner install script. It auto-detects your platform (GPU, CPU, or Apple Silicon) and installs the correct variant.
+
+```bash
+curl -sSL https://raw.githubusercontent.com/MGXlab/Jaeger/main/install.sh | bash
+```
+
+The script will:
+1. Detect whether you have an NVIDIA GPU, CPU-only, or Apple Silicon
+2. Create a `jaeger` conda environment with Python 3.11–3.12
+3. Install the correct package variant (`[gpu]`, `[cpu]`, or `[darwin-arm]`)
+4. Run `jaeger health` to verify the installation
+
+:::
 
 :::{tab-item}  bioconda
 
