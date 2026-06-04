@@ -53,14 +53,14 @@ jobs:
 
       - name: Run pytest suite
         run: |
-          python -m pytest tests/test_suite/ -v --tb=short
+          python -m pytest tests/pytest/ -v --tb=short
 
       - name: Run smoke tests
         run: |
-          python tests/convert_test.py
-          python tests/layers.test.py
-          python tests/loss_test.py
-          python tests/train_test.py
+          python tests/smoke/convert_test.py
+          python tests/smoke/layers.test.py
+          python tests/smoke/loss_test.py
+          python tests/smoke/train_test.py
 
       - name: Test CLI health command
         run: |
