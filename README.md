@@ -19,7 +19,7 @@
 
 Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences
 ===============
-![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://badge.fury.io/py/jaeger-bio.svg)](https://badge.fury.io/py/jaeger-bio) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio)
+![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://img.shields.io/pypi/v/jaeger-bio.svg)](https://pypi.org/project/jaeger-bio/) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio)
 
 
 
@@ -40,7 +40,7 @@ If you use Jaeger in your work, please consider citing its preprint:
 To cite the code itself:
 
 * **Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences**  
-  [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20534106.svg)](https://doi.org/10.5281/zenodo.20534106)
+https://doi.org/10.5281/zenodo.20534106
 
 ---
 
