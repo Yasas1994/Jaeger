@@ -11,7 +11,7 @@ from importlib.metadata import version
 from pathlib import Path
 import tensorflow as tf
 
-from jaeger.nnlib.inference import InferModel
+from jaeger.nnlib.inference import InferModel, TFLiteInferModel
 from jaeger.preprocess.fasta import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
@@ -168,7 +168,28 @@ def run_core(**kwargs):
         fsize=kwargs.get("fsize"),
     )
 
-    model = InferModel(model_info)
+    # Use quantized TFLite model if requested
+    quantized_mode = kwargs.get("quantized")
+    if quantized_mode:
+        # Look for quantized model in the same directory as the original model
+        graph_dir = Path(model_info["graph"])
+        quantized_dir = graph_dir.parent / f"{model_name}_{quantized_mode}"
+        tflite_path = quantized_dir / f"{model_name}_{quantized_mode}.tflite"
+        
+        if not tflite_path.exists():
+            logger.error(
+                f"Quantized model not found at {tflite_path}. "
+                f"Run 'jaeger utils quantize -m {model_name} -o {graph_dir.parent} --mode {quantized_mode}' first."
+            )
+            sys.exit(1)
+        
+        logger.info(f"Using quantized model: {tflite_path}")
+        model_info_tflite = model_info.copy()
+        model_info_tflite["tflite"] = tflite_path
+        model = TFLiteInferModel(model_info_tflite)
+    else:
+        model = InferModel(model_info)
+    
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
         fragment_generator(
