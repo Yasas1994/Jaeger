@@ -388,9 +388,12 @@ class InferModel:
         """
         dataset: yields tuples (inputs_dict, meta0, meta1, …)
         Returns a dict of numpy arrays, each of shape (N, …)
+
+        To avoid GPU OOM on large datasets, each batch is moved to host
+        (CPU) memory immediately after inference.
         """
-        # accumulate TF tensors
-        acc: dict[str, list[tf.Tensor]] = defaultdict(list)
+        # accumulate NumPy arrays on CPU — prevents GPU memory growth
+        acc: dict[str, list[np.ndarray]] = defaultdict(list)
 
         # inline for speed
         inf_fn = self._predict_step
@@ -401,30 +404,29 @@ class InferModel:
             # call the tf.function
             logits = inf_fn(inputs)
 
-            # collect all logits tensors
+            # move logits to CPU immediately to bound GPU memory usage
             for k, t in logits.items():
-                acc[k].append(t)
+                acc[k].append(t.numpy())
 
-            # collect meta tensors
+            # meta data is already on CPU (strings / python objects)
             for idx, m in enumerate(meta):
                 acc[f"meta_{idx}"].append(m)
 
-        # now concatenate once per key, then move to NumPy
+        # concatenate NumPy arrays on CPU
         result: dict[str, np.ndarray] = {}
-        for k, tensor_list in acc.items():
-            # tf.concat stays on device, one pass
-            cat = tf.concat(tensor_list, axis=0)
-            # then one host-device copy per key
-            result[k] = cat.numpy()
+        for k, arr_list in acc.items():
+            result[k] = np.concatenate(arr_list, axis=0)
         return result
 
     def evaluate(self, dataset, no_progress: bool = False) -> dict[str, float]:
         """
         dataset: yields tuples (inputs_dict, y_true_onehot)
         Returns loss and accuracy
+
+        Moves each batch to CPU immediately to avoid GPU OOM.
         """
-        logits_acc: list[tf.Tensor] = []
-        true_acc: list[tf.Tensor] = []
+        logits_acc: list[np.ndarray] = []
+        true_acc: list[np.ndarray] = []
 
         inf_fn = self._predict_step
 
@@ -432,12 +434,13 @@ class InferModel:
             dataset, description="[cyan]Evaluating…", disable=no_progress
         ):
             logits = inf_fn(inputs)["prediction"]
-            logits_acc.append(logits)
-            true_acc.append(y_true)
+            # move to CPU immediately
+            logits_acc.append(logits.numpy())
+            true_acc.append(y_true.numpy())
 
-        # bulk-concatenate and to NumPy once
-        logits = tf.concat(logits_acc, axis=0).numpy()
-        y_true = tf.concat(true_acc, axis=0).numpy()
+        # concatenate on CPU
+        logits = np.concatenate(logits_acc, axis=0)
+        y_true = np.concatenate(true_acc, axis=0)
 
         # loss & accuracy
         loss = tf.keras.losses.categorical_crossentropy(
