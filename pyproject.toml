@@ -6,7 +6,7 @@ build-backend = "pdm.backend"
 package-dir = "src"
 
 [tool.pdm.build]
-includes = ["src/jaeger/**/*.py", "src/jaeger/**/*.json", "src/jaeger/**/*.h5", "src/jaeger/**/*.npy", "src/jaeger/**/*.pkl", "src/jaeger/**/*.fasta", "src/jaeger/**/*.env", "src/jaeger/**/jaeger_fragment_graph/**/*"]
+includes = ["src/jaeger/**/*.py", "src/jaeger/**/*.json", "src/jaeger/**/*.h5", "src/jaeger/**/*.npy", "src/jaeger/**/*.pkl", "src/jaeger/**/*.fasta", "src/jaeger/**/*.env", "src/jaeger/**/jaeger_fragment_graph/**", "src/jaeger/**/jaeger_fragment_graph/**/*"]
 
 [project]
 name = "jaeger-bio"
