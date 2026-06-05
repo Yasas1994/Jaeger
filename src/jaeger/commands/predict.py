@@ -293,7 +293,7 @@ def run_core(**kwargs):
 
         if kwargs.get("getalllabels"):
             pass
-        data, _ = pred_to_dict(
+        data, data_full = pred_to_dict(
             y_pred,
             class_map=model.class_map,
             fsize=kwargs.get("fsize"),
@@ -309,6 +309,116 @@ def run_core(**kwargs):
         )
 
         logger.info(f"processed {num_written}/{num} sequences")
+
+        # --- Prophage extraction ---
+        if kwargs.get("prophage"):
+            from jaeger.postprocess.prophages import (
+                logits_to_df_v2,
+                plot_scores,
+                plot_scores_linear,
+                prophage_report,
+                segment,
+            )
+
+            try:
+                if logits_df := logits_to_df_v2(
+                    class_map=model.class_map,
+                    cmdline_kwargs=kwargs,
+                    headers=data_full["headers"],
+                    predictions=data_full["predictions"],
+                    lengths=data_full["lengths"],
+                    gc_skews=data_full["gc_skews"],
+                    gcs=data_full["gcs"],
+                ):
+                    logger.info("identifying prophages")
+                    pro_dir = OUTPUT_DIR / f"{file_base}_prophages"
+                    plots_dir = pro_dir / "plots"
+                    for d in [pro_dir, plots_dir]:
+                        d.mkdir(parents=True, exist_ok=True)
+
+                    phage_cord = segment(
+                        logits_df,
+                        outdir=plots_dir,
+                        cutoff_length=kwargs.get("lc"),
+                        sensitivity=kwargs.get("sensitivity"),
+                        identifier="phage",
+                    )
+                    plot_type = kwargs.get("plot_type", "circular")
+                    if plot_type in ("circular", "both"):
+                        plot_scores(
+                            logits_df,
+                            config={
+                                "all_labels": {
+                                    i: c
+                                    for i, c in enumerate(
+                                        model.class_map.get("class", [])
+                                    )
+                                }
+                            },
+                            model=model_name,
+                            fsize=kwargs.get("fsize"),
+                            infile_base=file_base,
+                            outdir=plots_dir,
+                            phage_cordinates=phage_cord,
+                        )
+                    if plot_type in ("linear", "both"):
+                        plot_scores_linear(
+                            logits_df,
+                            config={
+                                "all_labels": {
+                                    i: c
+                                    for i, c in enumerate(
+                                        model.class_map.get("class", [])
+                                    )
+                                }
+                            },
+                            model=model_name,
+                            fsize=kwargs.get("fsize"),
+                            infile_base=file_base,
+                            outdir=plots_dir,
+                            phage_cordinates=phage_cord,
+                        )
+                    prophage_report(
+                        fsize=kwargs.get("fsize"),
+                        filehandle=str(input_file_path),
+                        prophage_cordinates=phage_cord,
+                        outdir=pro_dir,
+                    )
+                else:
+                    logger.info("no prophage regions found")
+            except Exception as e:
+                logger.error(
+                    f"an error {e} occurred during the prophage prediction step"
+                )
+                logger.debug(traceback.format_exc())
+
+        # --- Write phage sequences to FASTA ---
+        if kwargs.get("getsequences"):
+            from jaeger.postprocess.collect import write_fasta_from_results
+
+            output_fasta_file = f"{file_base}_phages_jaeger.fasta"
+            output_fasta_file_path = OUTPUT_DIR / output_fasta_file
+            write_fasta_from_results(
+                input_fasta=input_file_path,
+                output_tsv=output_phage_table_path,
+                output_fasta=output_fasta_file_path,
+            )
+            logger.info(f"{output_fasta_file} created")
+
+        # --- Write window-wise logits ---
+        if kwargs.get("getalllogits"):
+            import numpy as np
+
+            output_logits = f"{file_base}_jaeger.npy"
+            output_logits_path = OUTPUT_DIR / output_logits
+            logger.info(f"writing window-wise scores to {output_logits}")
+            np.save(
+                output_logits_path,
+                dict(zip(data_full["headers"], data_full["predictions"])),
+                allow_pickle=True,
+            )
+            logger.info(f"{output_logits} created")
+
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
         logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
         logger.info(

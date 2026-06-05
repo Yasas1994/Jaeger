@@ -69,19 +69,82 @@ def logits_to_df(config: Any, cmdline_kwargs: Dict, **kwargs) -> Dict:
             )
 
             for k, v in lab.items():
-                t[v] = np.convolve(value[:, k], np.ones(4), mode="same")
-            t["gc"] = gc
-            t["gc_skew"] = scale_range(
-                np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"),
-                min=-1,
-                max=1,
-            )
+                conv = np.convolve(value[:, k], np.ones(4), mode="same")
+                # trim/pad to match the number of windows
+                if len(conv) > len(t):
+                    conv = conv[: len(t)]
+                elif len(conv) < len(t):
+                    conv = np.pad(conv, (0, len(t) - len(conv)), mode="edge")
+                t[v] = conv
+            t["gc"] = gc[: len(t)] if len(gc) > len(t) else gc
+            gc_skew_conv = np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same")
+            if len(gc_skew_conv) > len(t):
+                gc_skew_conv = gc_skew_conv[: len(t)]
+            elif len(gc_skew_conv) < len(t):
+                gc_skew_conv = np.pad(
+                    gc_skew_conv, (0, len(t) - len(gc_skew_conv)), mode="edge"
+                )
+            t["gc_skew"] = scale_range(gc_skew_conv, min=-1, max=1)
 
             tmp[f"{key}"] = [t, host, length]
         # except Exception as e:
         #     logger.error(e)
         #     logger.debug(traceback.format_exc())
 
+    return tmp
+
+
+def logits_to_df_v2(
+    class_map: dict,
+    cmdline_kwargs: dict,
+    headers: np.ndarray,
+    predictions: list[np.ndarray],
+    lengths: np.ndarray,
+    gc_skews: list[np.ndarray],
+    gcs: list[np.ndarray],
+) -> dict:
+    """Convert logits to a dict of dataframes for prophage region identification.
+
+    Compatible with the new SavedModel / TFLite / ONNX pipeline.
+    Uses ``class_map`` (with ``class`` and ``index`` keys) instead of the
+    legacy ``config["all_labels"]`` dict.
+
+    Returns:
+        Dict mapping contig_id -> [DataFrame, host_label, length]
+    """
+    indices = class_map.get("index", [])
+    classes = class_map.get("class", [])
+    lab = {int(i): c for i, c in zip(indices, classes)}
+
+    tmp = {}
+    for key, value, length, gc_skew, gc in zip(
+        headers, predictions, lengths, gc_skews, gcs
+    ):
+        if length >= cmdline_kwargs.get("lc", 500_000):
+            value = np.exp(value) / np.sum(np.exp(value), axis=1).reshape(-1, 1)
+            max_class = np.argmax(np.mean(value, axis=0))
+            host = lab.get(max_class, "unknown")
+            t = pd.DataFrame(value, columns=list(lab.values()))
+            t = t.assign(
+                length=[i * cmdline_kwargs.get("fsize", 2000) for i in range(len(t))]
+            )
+            for k, v in lab.items():
+                conv = np.convolve(value[:, k], np.ones(4), mode="same")
+                if len(conv) > len(t):
+                    conv = conv[: len(t)]
+                elif len(conv) < len(t):
+                    conv = np.pad(conv, (0, len(t) - len(conv)), mode="edge")
+                t[v] = conv
+            t["gc"] = gc[: len(t)] if len(gc) > len(t) else gc
+            gc_skew_conv = np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same")
+            if len(gc_skew_conv) > len(t):
+                gc_skew_conv = gc_skew_conv[: len(t)]
+            elif len(gc_skew_conv) < len(t):
+                gc_skew_conv = np.pad(
+                    gc_skew_conv, (0, len(t) - len(gc_skew_conv)), mode="edge"
+                )
+            t["gc_skew"] = scale_range(gc_skew_conv, min=-1, max=1)
+            tmp[f"{key}"] = [t, host, length]
     return tmp
 
 
@@ -135,7 +198,7 @@ def plot_scores(
         outer_track.xticks_by_interval(
             minor_ticks_interval, tick_length=1, show_label=False, label_size=11
         )
-        colors = ["gray", "green", "red", "teal", "brown"]
+        colors = ["gray", "green", "red", "teal", "brown", "purple", "cyan", "pink"]
         patches = []
 
         for j, v in enumerate(lab.values()):
@@ -163,16 +226,17 @@ def plot_scores(
                         lw=1,
                     )
             else:
+                color = colors[j % len(colors)]
                 aux_track = sector.add_track((78, 87), r_pad_ratio=0.1)
                 aux_track.fill_between(
                     tmp["length"],
                     tmp[v].to_numpy(),
                     vmin=0,
                     vmax=4,
-                    color=colors[j],
+                    color=color,
                     alpha=0.7,
                 )
-                patches.append(Patch(color=colors[j], label=v))
+                patches.append(Patch(color=color, label=v))
 
         # Plot G+C
         gc_content_track = sector.add_track((55, 70))
@@ -278,6 +342,162 @@ def plot_scores(
                 )
             )
         )
+        plt.close()
+
+
+def plot_scores_linear(
+    logits_df: pd.DataFrame,
+    config: Any,
+    model: str,
+    fsize: int,
+    infile_base: str,
+    outdir: Path,
+    phage_cordinates: Dict,
+) -> None:
+    """
+    Creates a linear genome plot of the host genome including putative
+    prophages identified by Jaeger.
+
+    Args:
+    ----
+        logits_df: DataFrame containing the logits.
+        config: Dictionary containing configuration settings.
+        model: Model identifier string.
+        fsize: Fragment size in bp.
+        infile_base: Base name of the input file.
+        outdir: Output directory for saving the plot.
+        phage_cordinates: Dictionary of phage coordinates.
+
+    Returns:
+    -------
+        None
+    """
+    lab = {int(k): v for k, v in config["all_labels"].items()}
+    colors = ["gray", "green", "red", "teal", "brown", "purple", "pink", "olive"]
+
+    for contig_id in logits_df.keys():
+        tmp, host, length = logits_df[contig_id]
+        fig, axes = plt.subplots(
+            nrows=4,
+            ncols=1,
+            figsize=(14, 10),
+            sharex=True,
+            gridspec_kw={"height_ratios": [2, 2, 1.5, 1.5], "hspace": 0.05},
+        )
+        ax_phage, ax_aux, ax_gc, ax_skew = axes
+
+        # --- Phage score track (top) ---
+        ax_phage.fill_between(
+            tmp["length"],
+            tmp["phage"].to_numpy(),
+            color="orange",
+            alpha=0.8,
+            label="phage score",
+        )
+        # Highlight prophage regions
+        for cords in phage_cordinates.get(contig_id, [[], []])[0]:
+            pcs = np.arange(cords[0], cords[-1]) * fsize
+            ax_phage.fill_between(
+                pcs,
+                np.ones_like(pcs) * 4,
+                color="magenta",
+                alpha=0.25,
+                label="putative prophage"
+                if cords[0] == phage_cordinates[contig_id][0][0][0]
+                else "",
+            )
+        ax_phage.set_ylim(0, 4)
+        ax_phage.set_ylabel("Phage score", fontsize=10)
+        ax_phage.set_title(
+            f"{contig_id.replace('___', ',')}",
+            fontdict={"size": 12, "weight": "bold"},
+        )
+        ax_phage.legend(loc="upper right", fontsize=8)
+        ax_phage.grid(True, linestyle=":", alpha=0.4)
+
+        # --- Auxiliary class scores ---
+        patches = []
+        for j, v in enumerate(lab.values()):
+            if v == "phage":
+                continue
+            ax_aux.plot(
+                tmp["length"],
+                tmp[v].to_numpy(),
+                color=colors[j % len(colors)],
+                alpha=0.7,
+                linewidth=1.2,
+                label=v,
+            )
+            patches.append(Patch(color=colors[j % len(colors)], label=v))
+        ax_aux.set_ylim(0, 4)
+        ax_aux.set_ylabel("Class scores", fontsize=10)
+        ax_aux.legend(loc="upper right", fontsize=8)
+        ax_aux.grid(True, linestyle=":", alpha=0.4)
+
+        # --- GC content track ---
+        gc_centered = tmp["gc"] - tmp["gc"].mean()
+        positive_gc = np.where(gc_centered > 0, gc_centered, 0)
+        negative_gc = np.where(gc_centered < 0, gc_centered, 0)
+        abs_max_gc = np.max(np.abs(gc_centered))
+        vmin_gc, vmax_gc = -abs_max_gc, abs_max_gc
+
+        ax_gc.fill_between(
+            tmp["length"],
+            positive_gc,
+            0,
+            color="blue",
+            alpha=0.5,
+            label=r"$> \overline{G+C}$",
+        )
+        ax_gc.fill_between(
+            tmp["length"],
+            negative_gc,
+            0,
+            color="black",
+            alpha=0.7,
+            label=r"$< \overline{G+C}$",
+        )
+        ax_gc.set_ylim(vmin_gc, vmax_gc)
+        ax_gc.set_ylabel("G+C dev.", fontsize=10)
+        ax_gc.legend(loc="upper right", fontsize=8)
+        ax_gc.grid(True, linestyle=":", alpha=0.4)
+
+        # --- GC skew track ---
+        positive_skew = np.where(tmp["gc_skew"] > 0, tmp["gc_skew"], 0)
+        negative_skew = np.where(tmp["gc_skew"] < 0, tmp["gc_skew"], 0)
+        abs_max_skew = np.max(np.abs(tmp["gc_skew"]))
+        vmin_skew, vmax_skew = -abs_max_skew, abs_max_skew
+
+        ax_skew.fill_between(
+            tmp["length"],
+            positive_skew,
+            0,
+            color="olive",
+            alpha=0.7,
+            label="Positive GC skew",
+        )
+        ax_skew.fill_between(
+            tmp["length"],
+            negative_skew,
+            0,
+            color="purple",
+            alpha=0.7,
+            label="Negative GC skew",
+        )
+        ax_skew.set_ylim(vmin_skew, vmax_skew)
+        ax_skew.set_ylabel("GC skew", fontsize=10)
+        ax_skew.set_xlabel("Genome position (bp)", fontsize=10)
+        ax_skew.legend(loc="upper right", fontsize=8)
+        ax_skew.grid(True, linestyle=":", alpha=0.4)
+
+        # Format x-axis
+        ax_skew.xaxis.set_major_formatter(
+            plt.FuncFormatter(lambda x, _: f"{x / 1e6:.1f} Mb")
+        )
+
+        out_path = outdir / f"{infile_base}_jaeger_{contig_id.split(' ')[0]}_linear.pdf"
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+        logger.info(f"linear prophage plot saved at {out_path}")
         plt.close()
 
 

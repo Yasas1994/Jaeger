@@ -495,14 +495,16 @@ def write_output(data: Dict, reliability_cutoff: float = 0.5, phage_score=1, **k
     )
 
     # Save only phage-related sequences
-    # df.query(
-    #     f'(prediction == "phage") and (phage_score > {phage_score}) and (reliability_score > {reliability_cutoff})'
-    # ).to_csv(
-    #     kwargs.get("output_phage_table_path"),
-    #     sep="\t",
-    #     index=False,
-    #     float_format="%.3f",
-    # )
+    phage_df = df.query(
+        f'(prediction == "phage") and (phage_score > {phage_score}) and (reliability_score > {reliability_cutoff})'
+    )
+    if not phage_df.empty:
+        phage_df.to_csv(
+            kwargs.get("output_phage_table_path"),
+            sep="\t",
+            index=False,
+            float_format="%.3f",
+        )
     return len(df)
     # logger.info("Summary generation completed!")
     # except Exception as e:
@@ -527,10 +529,11 @@ def write_fasta_from_results(
     """
 
     logger.info(f"generating fasta file {output_fasta}")
-    phages = set(pd.read_table(output_tsv)["contig_id"].to_list())
-    phage_fasta = open(output_fasta, "w")
-    for record in pyfastx.Fasta(input_fasta, build_index=False):
-        if record[0] in phages:
-            phage_fasta.write(f">{record[0]}\n")
-            for i in range(0, len(record), width):
-                phage_fasta.write(f">{record[0][i : i + width]}\n")
+    phages = set(pd.read_table(str(output_tsv))["contig_id"].to_list())
+    with open(str(output_fasta), "w") as phage_fasta:
+        for record in pyfastx.Fasta(str(input_fasta), build_index=False):
+            if record[0] in phages:
+                phage_fasta.write(f">{record[0]}\n")
+                seq = record[1]
+                for i in range(0, len(seq), width):
+                    phage_fasta.write(f"{seq[i : i + width]}\n")
