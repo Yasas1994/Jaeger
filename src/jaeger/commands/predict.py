@@ -185,20 +185,20 @@ def run_core(**kwargs):
     use_xla = kwargs.get("xla", False)
     use_onnx = kwargs.get("onnx", False)
     use_onnx_int8 = kwargs.get("int8", False)
-    
+
     if quantized_mode:
         # Look for quantized model in the same directory as the original model
         graph_dir = Path(model_info["graph"])
         quantized_dir = graph_dir.parent / f"{model_name}_{quantized_mode}"
         tflite_path = quantized_dir / f"{model_name}_{quantized_mode}.tflite"
-        
+
         if not tflite_path.exists():
             logger.error(
                 f"Quantized model not found at {tflite_path}. "
                 f"Run 'jaeger utils quantize -m {model_name} -o {graph_dir.parent} --mode {quantized_mode}' first."
             )
             sys.exit(1)
-        
+
         logger.info(f"Using quantized model: {tflite_path}")
         model_info_tflite = model_info.copy()
         model_info_tflite["tflite"] = tflite_path
@@ -219,25 +219,27 @@ def run_core(**kwargs):
         else:
             onnx_dir = graph_dir.parent / f"{model_name}_onnx"
             onnx_path = onnx_dir / f"{model_name}.onnx"
-            
+
             if not onnx_path.exists():
                 logger.error(
                     f"ONNX model not found at {onnx_path}. "
                     f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx' first."
                 )
                 sys.exit(1)
-            
+
             logger.info(f"Using ONNX model: {onnx_path}")
-        
+
         model_info_onnx = model_info.copy()
         model_info_onnx["onnx"] = onnx_path
 
         model = ONNXEngine(model_info_onnx)
     else:
         if use_xla:
-            logger.info("Using XLA-compiled inference (first batch may be slow due to compilation)")
+            logger.info(
+                "Using XLA-compiled inference (first batch may be slow due to compilation)"
+            )
         model = InferModel(model_info, use_xla=use_xla)
-    
+
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
         fragment_generator(

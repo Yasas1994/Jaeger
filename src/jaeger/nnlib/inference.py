@@ -20,7 +20,6 @@ from jaeger.preprocess.latest.maps import (
 from jaeger.nnlib.v2.layers import (
     GeLU,
     ReLU,
-    MaskedBatchNorm,
     MaskedConv1D,
     ResidualBlock,
 )
@@ -143,8 +142,6 @@ class DynamicInferenceModelBuilder:
     def _build_embedding(self, cfg: Dict[str, Any]):
         """Builds the embedding layer based on config."""
         input_shape = cfg.get("input_shape")
-        frames = cfg.get("frames", 6)
-        embedding_size = cfg.get("embedding_size", 128)
         seq_type = cfg.get("type", "translated")
 
         if seq_type == "translated":
@@ -206,9 +203,9 @@ class DynamicInferenceModelBuilder:
                     kernel_size=ksize,
                     dilation_rate=dilation,
                     strides=strides if j == 0 else 1,
-                    kernel_regularizer=self._regularizer.get(reg, tf.keras.regularizers.L2)(
-                        reg_w
-                    ),
+                    kernel_regularizer=self._regularizer.get(
+                        reg, tf.keras.regularizers.L2
+                    )(reg_w),
                     name=f"resblock_{i}_{j}",
                 )(x)
             if pooling == "max":
@@ -253,7 +250,9 @@ class DynamicInferenceModelBuilder:
             )(x)
             x = self.Activation(name=f"activation_dense_{i}")(x)
             if layer_cfg.get("dropout_rate", 0) > 0:
-                x = tf.keras.layers.Dropout(layer_cfg["dropout_rate"], name=f"dropout_{i}")(x)
+                x = tf.keras.layers.Dropout(
+                    layer_cfg["dropout_rate"], name=f"dropout_{i}"
+                )(x)
 
         # Output layer
         x = tf.keras.layers.Dense(
@@ -708,7 +707,10 @@ class ONNXEngine:
                 )
                 for candidate in candidates:
                     # Only load actual shared objects (not .a or .la)
-                    if not candidate.name.endswith(".so") and ".so." not in candidate.name:
+                    if (
+                        not candidate.name.endswith(".so")
+                        and ".so." not in candidate.name
+                    ):
                         continue
                     try:
                         ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)

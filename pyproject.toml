@@ -61,3 +61,9 @@ gpu = [
 cpu = [
     "tensorflow >=2.18, <2.19",
 ]
+onnx = [
+    "onnxruntime-gpu >=1.26",
+    "tf2onnx >=1.17",
+    "sympy >=1.13",
+    "onnx >=1.16",
+]

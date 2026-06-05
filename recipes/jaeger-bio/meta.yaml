@@ -7,6 +7,7 @@ package:
 
 source:
   url: "https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name | replace('-', '_') }}-{{ version }}.tar.gz"
+  # NOTE: update sha256 after releasing to PyPI
   sha256: 4cd0bdf87f4f52731d46508d7cd4852dd9dc6b2eab1e75dd14ed423dab333a07
 
 build:
@@ -42,6 +43,11 @@ requirements:
     - pyyaml >=6.0.2
     - jinja2 >=3.1
     - pydustmasker >=1.0.3
+    # Optional: for ONNX inference and quantization
+    # - onnxruntime-gpu >=1.26
+    # - tf2onnx >=1.17
+    # - sympy >=1.13
+    # - onnx >=1.16
 
 test:
   imports:

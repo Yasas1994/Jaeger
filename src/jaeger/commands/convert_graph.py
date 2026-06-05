@@ -25,7 +25,9 @@ import click
 import numpy as np
 import tensorflow as tf
 import yaml
-from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+from tensorflow.python.framework.convert_to_constants import (
+    convert_variables_to_constants_v2,
+)
 
 from jaeger.utils.misc import AvailableModels
 
@@ -93,7 +95,9 @@ def convert_graph(
     log.info(f"Conversion complete. Output: {converted_dir}")
 
 
-def _convert_xla(graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger):
+def _convert_xla(
+    graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger
+):
     """Convert SavedModel to XLA-optimized SavedModel.
 
     XLA (Accelerated Linear Algebra) uses JIT compilation to fuse operations
@@ -126,7 +130,9 @@ def _convert_xla(graph_dir: Path, output_dir: Path, model_name: str, log: loggin
 
         @tf.function(
             input_signature=[
-                tf.TensorSpec(shape=(None, 6, None, 64), dtype=tf.float32, name="inputs")
+                tf.TensorSpec(
+                    shape=(None, 6, None, 64), dtype=tf.float32, name="inputs"
+                )
             ]
         )
         def serving_default(self, inputs):
@@ -137,7 +143,9 @@ def _convert_xla(graph_dir: Path, output_dir: Path, model_name: str, log: loggin
     log.info("XLA model saved")
 
 
-def _convert_tflite(graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger):
+def _convert_tflite(
+    graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger
+):
     """Convert SavedModel to TFLite (same as quantize but without quantization)."""
     log.info("Loading SavedModel for TFLite conversion...")
     loaded = tf.saved_model.load(str(graph_dir))
@@ -179,7 +187,7 @@ def _convert_onnx(
             on TensorRT's INT8 tensor cores. Requires a calibration step.
     """
     try:
-        import tf2onnx
+        import tf2onnx  # noqa: F401
     except ImportError:
         log.error(
             "tf2onnx is not installed. Install it with:\n"
@@ -193,13 +201,21 @@ def _convert_onnx(
 
     # Use tf2onnx to convert
     import subprocess
+
     cmd = [
-        sys.executable, "-m", "tf2onnx.convert",
-        "--saved-model", str(graph_dir),
-        "--output", str(onnx_path),
-        "--opset", "13",
-        "--signature", "serving_default",
-        "--tag", "serve",
+        sys.executable,
+        "-m",
+        "tf2onnx.convert",
+        "--saved-model",
+        str(graph_dir),
+        "--output",
+        str(onnx_path),
+        "--opset",
+        "13",
+        "--signature",
+        "serving_default",
+        "--tag",
+        "serve",
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -207,11 +223,14 @@ def _convert_onnx(
         log.error(f"ONNX conversion failed:\n{result.stderr}")
         sys.exit(1)
 
-    log.info(f"Saved ONNX model: {onnx_path} ({onnx_path.stat().st_size / 1024 / 1024:.1f} MB)")
+    log.info(
+        f"Saved ONNX model: {onnx_path} ({onnx_path.stat().st_size / 1024 / 1024:.1f} MB)"
+    )
 
     # Verify the model
     try:
         import onnx
+
         onnx_model = onnx.load(str(onnx_path))
         onnx.checker.check_model(onnx_model)
         log.info("ONNX model validation passed")
@@ -376,7 +395,9 @@ def _build_calibration_inputs(
         _tmp_info = {"graph": graph_dir, "classes": None, "project": None}
         _tmp_infer = InferModel.__new__(InferModel)
         _tmp_infer.class_map = {}
-        _tmp_infer.string_processor_config = _tmp_infer._load_string_processor_config(None)
+        _tmp_infer.string_processor_config = _tmp_infer._load_string_processor_config(
+            None
+        )
 
         # We need the project YAML to get the real config. Try to find it next
         # to the SavedModel directory.
@@ -421,9 +442,6 @@ def _build_calibration_inputs(
         dataset = dataset.map(process_fn, num_parallel_calls=tf.data.AUTOTUNE)
         dataset = dataset.batch(1).prefetch(tf.data.AUTOTUNE)
 
-        # Run the original SavedModel to get calibrated inputs
-        loaded = tf.saved_model.load(str(graph_dir))
-        infer = loaded.signatures["serving_default"]
         input_type = spc.get("input_type", "translated")
 
         for inputs_dict in dataset.take(num_samples):
@@ -477,7 +495,9 @@ def _synthetic_one_hot_samples(
     return samples
 
 
-def _convert_tensorrt(graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger):
+def _convert_tensorrt(
+    graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger
+):
     """Convert SavedModel to TensorRT-optimized SavedModel.
 
     Requires TensorFlow built with TensorRT support. Most pip-installed

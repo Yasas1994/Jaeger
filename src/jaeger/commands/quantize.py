@@ -26,7 +26,9 @@ import click
 import numpy as np
 import tensorflow as tf
 import yaml
-from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+from tensorflow.python.framework.convert_to_constants import (
+    convert_variables_to_constants_v2,
+)
 
 from jaeger.utils.misc import AvailableModels
 
