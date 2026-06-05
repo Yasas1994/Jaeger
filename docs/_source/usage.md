@@ -113,7 +113,7 @@ output_dir/
 └── <sample_name>_prophages/
     ├── prophages_jaeger.tsv     # Prophage coordinates
     └── plots/
-        └── *.pdf                # Circular genome visualizations
+        └── *.pdf                # Genome visualizations (circular and/or linear)
 ```
 
 ---
@@ -176,7 +176,27 @@ Set minimum contig length for prophage scanning:
 jaeger predict -p -i genome.fna -o output_dir --lc 100000
 ```
 
-The `plots/` directory contains circular genome visualizations with prophage regions highlighted.
+The `plots/` directory contains genome visualizations with prophage regions highlighted. By default, circular plots are generated. Use `--plot-type` to select linear plots, both, or none.
+
+### Plot types
+
+| `--plot-type` | Description |
+|---------------|-------------|
+| `circular` | Circular genome map (default) |
+| `linear` | Horizontal 4-panel linear plot |
+| `both` | Generate both circular and linear plots |
+| `none` | Skip plot generation (report only) |
+
+```bash
+# Generate linear plots instead of circular
+jaeger predict -p -i genome.fna -o output_dir --plot-type linear
+
+# Generate both circular and linear plots
+jaeger predict -p -i genome.fna -o output_dir --plot-type both
+
+# Skip plots, generate TSV report only
+jaeger predict -p -i genome.fna -o output_dir --plot-type none
+```
 
 ---
 
@@ -221,6 +241,8 @@ Options:
                            (0-4)  [default: 1.5]
   --lc INTEGER             Minimum contig length for prophage extraction
                            [default: 500000]
+  --plot-type [circular|linear|both|none]
+                           Prophage plot type  [default: circular]
   --rc FLOAT               Minimum reliability score required to accept
                            predictions  [default: 0.1]
   --pc INTEGER             Minimum phage score required to accept predictions
