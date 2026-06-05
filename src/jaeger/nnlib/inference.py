@@ -582,7 +582,12 @@ class ONNXEngine:
         jaeger utils convert-graph -m <model> -o <dir> --mode onnx
     """
 
-    def __init__(self, path_dict, providers: list[str] | None = None):
+    def __init__(
+        self,
+        path_dict,
+        providers: list[str] | None = None,
+        provider_options: list[dict] | None = None,
+    ):
         self.class_map = self._load_class_map(path_dict.get("classes"))
         self.string_processor_config = self._load_string_processor_config(
             path_dict.get("project", None)
@@ -610,24 +615,62 @@ class ONNXEngine:
                 "  pip install onnxruntime      # for CPU only"
             )
 
+        # Detect INT8 quantized models so we can avoid TensorRT, which has
+        # limited support for arbitrary quantized ONNX subgraphs.
+        is_int8 = self._is_int8_model(str(onnx_path))
+
         # Auto-select providers if not specified
         if providers is None:
             available = ort.get_available_providers()
-            # Prefer TensorRT > CUDA > CPU
-            preferred = [
-                "TensorrtExecutionProvider",
-                "CUDAExecutionProvider",
-                "CPUExecutionProvider",
-            ]
+            if is_int8:
+                # TensorRT's ONNX parser has strict requirements for quantized
+                # ops (symmetric quantization, no dynamic shapes, etc.). INT8
+                # ONNX models run reliably on the CUDA execution provider.
+                preferred = [
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
+            else:
+                # Prefer TensorRT > CUDA > CPU for FP32/FP16 models
+                preferred = [
+                    "TensorrtExecutionProvider",
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
             providers = [p for p in preferred if p in available]
             if not providers:
                 providers = ["CPUExecutionProvider"]
 
         self.providers = providers
-        self.session = ort.InferenceSession(str(onnx_path), providers=providers)
+        sess_options = ort.SessionOptions()
+        if provider_options is None:
+            provider_options = [{} for _ in providers]
+        self.session = ort.InferenceSession(
+            str(onnx_path),
+            sess_options=sess_options,
+            providers=providers,
+            provider_options=provider_options,
+        )
 
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [o.name for o in self.session.get_outputs()]
+
+    @staticmethod
+    def _is_int8_model(onnx_path: str) -> bool:
+        """Heuristic: check if ONNX model contains INT8 quantized tensors."""
+        try:
+            import onnx
+
+            model = onnx.load(onnx_path)
+            for init in model.graph.initializer:
+                if init.data_type == onnx.TensorProto.INT8:
+                    return True
+            for node in model.graph.node:
+                if node.op_type in ("QuantizeLinear", "DequantizeLinear"):
+                    return True
+            return False
+        except Exception:
+            return False
 
     @staticmethod
     def _preload_cuda_libs():

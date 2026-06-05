@@ -197,6 +197,11 @@ def health(**kwargs):
     is_flag=True,
     help="Use ONNX Runtime for inference. Requires converting the model first with 'jaeger utils convert-graph --mode onnx'.",
 )
+@click.option(
+    "--int8",
+    is_flag=True,
+    help="Use INT8 quantized ONNX model (use with --onnx). Requires 'jaeger utils convert-graph --mode onnx --int8'.",
+)
 def predict(**kwargs):
     """
     Runs Jaeger on a dataset
@@ -973,6 +978,7 @@ def quantize_cmd(**kwargs):
 
             jaeger utils convert-graph -m default -o ./optimized --mode xla
             jaeger utils convert-graph -m default -o ./optimized --mode onnx
+            jaeger utils convert-graph -m default -o ./optimized --mode onnx --int8
         """,
 )
 @click.option(
@@ -996,15 +1002,20 @@ def quantize_cmd(**kwargs):
     help="Conversion mode",
 )
 @click.option(
+    "--int8",
+    is_flag=True,
+    help="Apply static INT8 quantization (ONNX mode only)",
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
     help="Verbosity level",
     default=1,
 )
-def convert_graph_cmd(model, output, mode, verbose):
+def convert_graph_cmd(model, output, mode, int8, verbose):
     """Convert a Jaeger SavedModel to an optimized inference graph."""
-    convert_graph(model, output, mode, verbose)
+    convert_graph(model, output, mode, verbose, int8=int8)
 
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))

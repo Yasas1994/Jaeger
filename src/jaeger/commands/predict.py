@@ -184,6 +184,7 @@ def run_core(**kwargs):
     quantized_mode = kwargs.get("quantized")
     use_xla = kwargs.get("xla", False)
     use_onnx = kwargs.get("onnx", False)
+    use_onnx_int8 = kwargs.get("int8", False)
     
     if quantized_mode:
         # Look for quantized model in the same directory as the original model
@@ -203,21 +204,34 @@ def run_core(**kwargs):
         model_info_tflite["tflite"] = tflite_path
         model = TFLiteInferModel(model_info_tflite)
     elif use_onnx:
-        # Look for ONNX model
+        # Look for ONNX model (FP32 or INT8)
         graph_dir = Path(model_info["graph"])
-        onnx_dir = graph_dir.parent / f"{model_name}_onnx"
-        onnx_path = onnx_dir / f"{model_name}.onnx"
+        if use_onnx_int8:
+            onnx_dir = graph_dir.parent / f"{model_name}_onnx_int8"
+            onnx_path = onnx_dir / f"{model_name}_int8.onnx"
+            if not onnx_path.exists():
+                logger.error(
+                    f"INT8 ONNX model not found at {onnx_path}. "
+                    f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx --int8' first."
+                )
+                sys.exit(1)
+            logger.info(f"Using INT8 ONNX model: {onnx_path}")
+        else:
+            onnx_dir = graph_dir.parent / f"{model_name}_onnx"
+            onnx_path = onnx_dir / f"{model_name}.onnx"
+            
+            if not onnx_path.exists():
+                logger.error(
+                    f"ONNX model not found at {onnx_path}. "
+                    f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx' first."
+                )
+                sys.exit(1)
+            
+            logger.info(f"Using ONNX model: {onnx_path}")
         
-        if not onnx_path.exists():
-            logger.error(
-                f"ONNX model not found at {onnx_path}. "
-                f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx' first."
-            )
-            sys.exit(1)
-        
-        logger.info(f"Using ONNX model: {onnx_path}")
         model_info_onnx = model_info.copy()
         model_info_onnx["onnx"] = onnx_path
+
         model = ONNXEngine(model_info_onnx)
     else:
         if use_xla:

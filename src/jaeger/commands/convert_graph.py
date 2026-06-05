@@ -10,6 +10,7 @@ Usage:
     jaeger utils convert-graph -m default -o ./optimized --mode xla
     jaeger utils convert-graph -m default -o ./optimized --mode tflite
     jaeger utils convert-graph -m default -o ./optimized --mode onnx
+    jaeger utils convert-graph -m default -o ./optimized --mode onnx --int8
     jaeger utils convert-graph -m default -o ./optimized --mode tensorrt
 """
 
@@ -31,7 +32,13 @@ from jaeger.utils.misc import AvailableModels
 logger = logging.getLogger("Jaeger")
 
 
-def convert_graph(model: str, output: Path, mode: str, verbose: int):
+def convert_graph(
+    model: str,
+    output: Path,
+    mode: str,
+    verbose: int,
+    int8: bool = False,
+):
     """Core graph conversion logic (non-CLI)."""
     log = logging.getLogger("Jaeger")
     log.info(f"Converting model '{model}' with mode '{mode}'")
@@ -47,7 +54,8 @@ def convert_graph(model: str, output: Path, mode: str, verbose: int):
     output.mkdir(parents=True, exist_ok=True)
 
     # Create output subdirectory
-    converted_dir = output / f"{model}_{mode}"
+    suffix = "_int8" if (mode == "onnx" and int8) else ""
+    converted_dir = output / f"{model}_{mode}{suffix}"
     if converted_dir.exists():
         shutil.rmtree(converted_dir)
     converted_dir.mkdir(parents=True)
@@ -65,7 +73,7 @@ def convert_graph(model: str, output: Path, mode: str, verbose: int):
     elif mode == "tflite":
         _convert_tflite(graph_dir, converted_dir, model, log)
     elif mode == "onnx":
-        _convert_onnx(graph_dir, converted_dir, model, log)
+        _convert_onnx(graph_dir, converted_dir, model, log, int8=int8)
     elif mode == "tensorrt":
         _convert_tensorrt(graph_dir, converted_dir, model, log)
     else:
@@ -76,6 +84,7 @@ def convert_graph(model: str, output: Path, mode: str, verbose: int):
     info = {
         "original_graph": str(graph_dir),
         "conversion_mode": mode,
+        "int8_quantization": bool(int8) if mode == "onnx" else None,
         "output_dir": str(converted_dir),
     }
     info_path = converted_dir / "conversion_info.yaml"
@@ -148,7 +157,13 @@ def _convert_tflite(graph_dir: Path, output_dir: Path, model_name: str, log: log
     log.info(f"Saved TFLite model: {tflite_path} ({len(tflite_model) / 1024:.1f} KB)")
 
 
-def _convert_onnx(graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger):
+def _convert_onnx(
+    graph_dir: Path,
+    output_dir: Path,
+    model_name: str,
+    log: logging.Logger,
+    int8: bool = False,
+):
     """Convert SavedModel to ONNX format.
 
     ONNX models can be run with ONNX Runtime, which supports multiple
@@ -157,6 +172,11 @@ def _convert_onnx(graph_dir: Path, output_dir: Path, model_name: str, log: loggi
 
     This is the recommended approach for TensorRT acceleration when
     using pip-installed TensorFlow.
+
+    Args:
+        int8: If True, apply static INT8 quantization using ONNX Runtime's
+            quantization tools. This produces a smaller model that can run
+            on TensorRT's INT8 tensor cores. Requires a calibration step.
     """
     try:
         import tf2onnx
@@ -197,6 +217,264 @@ def _convert_onnx(graph_dir: Path, output_dir: Path, model_name: str, log: loggi
         log.info("ONNX model validation passed")
     except Exception as e:
         log.warning(f"ONNX validation warning: {e}")
+
+    if int8:
+        _quantize_onnx_int8(onnx_path, graph_dir, output_dir, model_name, log)
+
+
+def _quantize_onnx_int8(
+    onnx_path: Path,
+    graph_dir: Path,
+    output_dir: Path,
+    model_name: str,
+    log: logging.Logger,
+):
+    """Apply static INT8 quantization to an ONNX model.
+
+    Uses ONNX Runtime's quantization tools with a calibration dataset
+    derived from real DNA sequences. The quantized model is saved in the
+    output directory as ``{model_name}_int8.onnx``.
+    """
+    try:
+        from onnxruntime.quantization import (
+            CalibrationDataReader,
+            QuantFormat,
+            QuantType,
+            quantize_static,
+        )
+    except ImportError as e:
+        log.error(
+            "ONNX Runtime quantization tools are not available. "
+            f"Install with: pip install onnxruntime-gpu sympy\n{e}"
+        )
+        sys.exit(1)
+
+    import onnx
+
+    log.info("Preparing ONNX model for INT8 quantization...")
+
+    # Run ONNX shape inference first. This is required for both quantization
+    # and for TensorRT/CUDA providers to resolve tensor shapes.
+    try:
+        inferred_path = onnx_path.with_suffix(".inferred.onnx")
+        onnx_model = onnx.load(str(onnx_path))
+        inferred_model = onnx.shape_inference.infer_shapes(onnx_model)
+        onnx.save(inferred_model, str(inferred_path))
+        input_model_path = str(inferred_path)
+        preprocessed_path = inferred_path
+    except Exception as e:
+        log.warning(f"ONNX shape inference failed, using original model: {e}")
+        input_model_path = str(onnx_path)
+        preprocessed_path = None
+
+    # Determine input shape from the model
+    onnx_model = onnx.load(input_model_path)
+    input_tensor = onnx_model.graph.input[0]
+    input_shape = [dim.dim_value for dim in input_tensor.type.tensor_type.shape.dim]
+    # Replace dynamic axes with representative values
+    batch = input_shape[0] if input_shape[0] > 0 else 1
+    frames = input_shape[1] if input_shape[1] > 0 else 6
+    seq_len = input_shape[2] if input_shape[2] > 0 else 500
+    depth = input_shape[3] if len(input_shape) > 3 and input_shape[3] > 0 else 64
+    input_name = input_tensor.name
+
+    log.info(
+        f"Calibration input shape: ({batch}, {frames}, {seq_len}, {depth}); "
+        f"name={input_name}"
+    )
+
+    # Build a calibration dataset from real DNA fragments so the INT8
+    # ranges reflect the actual input distribution.
+    calibration_inputs = _build_calibration_inputs(
+        graph_dir=graph_dir,
+        target_shape=(batch, frames, seq_len, depth),
+        num_samples=100,
+        log=log,
+    )
+
+    class _Calibrator(CalibrationDataReader):
+        def __init__(self, input_name: str, inputs: list[np.ndarray]):
+            self.input_name = input_name
+            self.inputs = inputs
+            self._idx = 0
+
+        def get_next(self):
+            if self._idx >= len(self.inputs):
+                return None
+            item = {self.input_name: self.inputs[self._idx]}
+            self._idx += 1
+            return item
+
+    calibrator = _Calibrator(input_name, calibration_inputs)
+
+    quantized_path = output_dir / f"{model_name}_int8.onnx"
+
+    log.info("Running INT8 static quantization (this may take a while)...")
+    try:
+        quantize_static(
+            model_input=input_model_path,
+            model_output=str(quantized_path),
+            calibration_data_reader=calibrator,
+            quant_format=QuantFormat.QDQ,
+            activation_type=QuantType.QInt8,
+            weight_type=QuantType.QInt8,
+            extra_options={
+                "ActivationSymmetric": True,
+                "WeightSymmetric": True,
+            },
+        )
+    except Exception as e:
+        log.error(f"INT8 quantization failed: {e}")
+        if preprocessed_path and preprocessed_path.exists():
+            preprocessed_path.unlink()
+        sys.exit(1)
+
+    # Clean up preprocessed intermediate
+    if preprocessed_path and preprocessed_path.exists():
+        preprocessed_path.unlink()
+
+    log.info(
+        f"Saved INT8 ONNX model: {quantized_path} "
+        f"({quantized_path.stat().st_size / 1024 / 1024:.1f} MB)"
+    )
+
+
+def _build_calibration_inputs(
+    graph_dir: Path,
+    target_shape: tuple[int, int, int, int],
+    num_samples: int,
+    log: logging.Logger,
+) -> list[np.ndarray]:
+    """Generate calibration inputs by running real DNA through the SavedModel.
+
+    Falls back to Gaussian noise if the real-data path fails.
+    """
+    from importlib.resources import files
+
+    batch, frames, seq_len, depth = target_shape
+    inputs: list[np.ndarray] = []
+
+    # Try to use bundled test FASTA for realistic calibration data
+    test_fasta = files("jaeger.data") / "test" / "test_contigs.fasta"
+    if not test_fasta.exists():
+        log.warning(
+            "No bundled test FASTA found; falling back to synthetic one-hot calibration data. "
+            "INT8 accuracy may be degraded."
+        )
+        return _synthetic_one_hot_samples(target_shape, num_samples)
+
+    try:
+        log.info(f"Building calibration dataset from {test_fasta}")
+
+        # Load model metadata needed for preprocessing
+        from jaeger.preprocess.fasta import fragment_generator
+        from jaeger.preprocess.latest.convert import process_string_inference
+        from jaeger.nnlib.inference import InferModel
+
+        # Use InferModel only for its metadata-loading helper; avoid creating
+        # a full session since we only need the string_processor_config.
+        _tmp_info = {"graph": graph_dir, "classes": None, "project": None}
+        _tmp_infer = InferModel.__new__(InferModel)
+        _tmp_infer.class_map = {}
+        _tmp_infer.string_processor_config = _tmp_infer._load_string_processor_config(None)
+
+        # We need the project YAML to get the real config. Try to find it next
+        # to the SavedModel directory.
+        project_yaml = graph_dir.parent / f"{graph_dir.parent.name}_project.yaml"
+        if not project_yaml.exists():
+            candidates = list(graph_dir.parent.glob("*_project.yaml"))
+            if candidates:
+                project_yaml = candidates[0]
+        if project_yaml.exists():
+            import yaml
+
+            with project_yaml.open() as fh:
+                _tmp_infer.string_processor_config = yaml.safe_load(fh)
+
+        spc = _tmp_infer.string_processor_config
+
+        # Build a tf.data pipeline from the test FASTA
+        dataset = tf.data.Dataset.from_generator(
+            fragment_generator(
+                file_path=str(test_fasta),
+                no_progress=True,
+                fragsize=spc.get("fragsize", 200),
+                stride=spc.get("stride", spc.get("fragsize", 200) // 2),
+            ),
+            output_signature=tf.TensorSpec(shape=(), dtype=tf.string),
+        )
+
+        process_fn = process_string_inference(
+            codons=spc.get("codon"),
+            codon_num=spc.get("codon_id"),
+            codon_depth=spc.get("codon_depth", 1),
+            ngram_width=spc.get("ngram_width", 3),
+            seq_onehot=spc.get("seq_onehot"),
+            crop_size=spc.get("crop_size"),
+            input_type=spc.get("input_type", "translated"),
+            masking=spc.get("masking"),
+            mutate=spc.get("mutate"),
+            mutation_rate=spc.get("mutation_rate"),
+            shuffle=spc.get("shuffle"),
+        )
+
+        dataset = dataset.map(process_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        dataset = dataset.batch(1).prefetch(tf.data.AUTOTUNE)
+
+        # Run the original SavedModel to get calibrated inputs
+        loaded = tf.saved_model.load(str(graph_dir))
+        infer = loaded.signatures["serving_default"]
+        input_type = spc.get("input_type", "translated")
+
+        for inputs_dict in dataset.take(num_samples):
+            x = inputs_dict.get(input_type)
+            if isinstance(x, tf.Tensor):
+                x = x.numpy()
+            # Pad or crop to target seq_len
+            if x.shape[2] < seq_len:
+                pad = seq_len - x.shape[2]
+                x = np.pad(x, ((0, 0), (0, 0), (0, pad), (0, 0)), mode="constant")
+            elif x.shape[2] > seq_len:
+                x = x[:, :, :seq_len, :]
+            # Ensure depth matches
+            if x.shape[3] != depth:
+                if x.shape[3] < depth:
+                    pad_d = depth - x.shape[3]
+                    x = np.pad(x, ((0, 0), (0, 0), (0, 0), (0, pad_d)), mode="constant")
+                else:
+                    x = x[:, :, :, :depth]
+            inputs.append(x.astype(np.float32))
+
+        if not inputs:
+            raise RuntimeError("No calibration inputs generated from FASTA")
+
+        log.info(f"Generated {len(inputs)} real calibration samples")
+        return inputs
+
+    except Exception as e:
+        log.warning(
+            f"Failed to build real calibration dataset ({e}); "
+            "falling back to synthetic one-hot data. INT8 accuracy may be degraded."
+        )
+        return _synthetic_one_hot_samples(target_shape, num_samples)
+
+
+def _synthetic_one_hot_samples(
+    target_shape: tuple[int, int, int, int], num_samples: int
+) -> list[np.ndarray]:
+    """Generate random one-hot tensors matching codon-encoded DNA inputs.
+
+    Real Jaeger inputs are one-hot codon tensors (shape: B, 6, L, 64). Using
+    random one-hot samples for calibration is closer to the true distribution
+    than Gaussian noise and usually yields better INT8 accuracy.
+    """
+    batch, frames, seq_len, depth = target_shape
+    samples = []
+    for _ in range(num_samples):
+        indices = np.random.randint(0, depth, size=(batch, frames, seq_len))
+        one_hot = np.eye(depth)[indices].astype(np.float32)
+        samples.append(one_hot)
+    return samples
 
 
 def _convert_tensorrt(graph_dir: Path, output_dir: Path, model_name: str, log: logging.Logger):
@@ -285,13 +563,21 @@ def _convert_tensorrt(graph_dir: Path, output_dir: Path, model_name: str, log: l
     help="Conversion mode: xla (default), tflite, onnx, or tensorrt",
 )
 @click.option(
+    "--int8",
+    is_flag=True,
+    help=(
+        "Apply static INT8 quantization (ONNX mode only). "
+        "Produces a smaller model that can use TensorRT INT8 tensor cores."
+    ),
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
     help="Verbosity level",
     default=1,
 )
-def convert_graph_cmd(model: str, output: Path, mode: str, verbose: int):
+def convert_graph_cmd(model: str, output: Path, mode: str, int8: bool, verbose: int):
     """Convert a Jaeger SavedModel to an optimized inference graph.
 
     Supports four optimization backends:
@@ -310,7 +596,8 @@ def convert_graph_cmd(model: str, output: Path, mode: str, verbose: int):
     onnx:
         Converts to ONNX format for cross-platform deployment.
         Recommended for TensorRT acceleration with pip-installed TF.
-        Use with ONNX Runtime's TensorRT execution provider.
+        Use --int8 to additionally quantize to INT8 for smaller models
+        and INT8 tensor-core inference.
 
     \b
     tensorrt:
@@ -321,8 +608,9 @@ def convert_graph_cmd(model: str, output: Path, mode: str, verbose: int):
     Examples:
         jaeger utils convert-graph -m default -o ./optimized --mode xla
         jaeger utils convert-graph -m default -o ./optimized --mode onnx
+        jaeger utils convert-graph -m default -o ./optimized --mode onnx --int8
     """
-    convert_graph(model, output, mode, verbose)
+    convert_graph(model, output, mode, verbose, int8=int8)
 
 
 def _resolve_model(model_name: str) -> dict | None:
