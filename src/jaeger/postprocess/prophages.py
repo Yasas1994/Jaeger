@@ -69,19 +69,82 @@ def logits_to_df(config: Any, cmdline_kwargs: Dict, **kwargs) -> Dict:
             )
 
             for k, v in lab.items():
-                t[v] = np.convolve(value[:, k], np.ones(4), mode="same")
-            t["gc"] = gc
-            t["gc_skew"] = scale_range(
-                np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same"),
-                min=-1,
-                max=1,
-            )
+                conv = np.convolve(value[:, k], np.ones(4), mode="same")
+                # trim/pad to match the number of windows
+                if len(conv) > len(t):
+                    conv = conv[: len(t)]
+                elif len(conv) < len(t):
+                    conv = np.pad(conv, (0, len(t) - len(conv)), mode="edge")
+                t[v] = conv
+            t["gc"] = gc[: len(t)] if len(gc) > len(t) else gc
+            gc_skew_conv = np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same")
+            if len(gc_skew_conv) > len(t):
+                gc_skew_conv = gc_skew_conv[: len(t)]
+            elif len(gc_skew_conv) < len(t):
+                gc_skew_conv = np.pad(
+                    gc_skew_conv, (0, len(t) - len(gc_skew_conv)), mode="edge"
+                )
+            t["gc_skew"] = scale_range(gc_skew_conv, min=-1, max=1)
 
             tmp[f"{key}"] = [t, host, length]
         # except Exception as e:
         #     logger.error(e)
         #     logger.debug(traceback.format_exc())
 
+    return tmp
+
+
+def logits_to_df_v2(
+    class_map: dict,
+    cmdline_kwargs: dict,
+    headers: np.ndarray,
+    predictions: list[np.ndarray],
+    lengths: np.ndarray,
+    gc_skews: list[np.ndarray],
+    gcs: list[np.ndarray],
+) -> dict:
+    """Convert logits to a dict of dataframes for prophage region identification.
+
+    Compatible with the new SavedModel / TFLite / ONNX pipeline.
+    Uses ``class_map`` (with ``class`` and ``index`` keys) instead of the
+    legacy ``config["all_labels"]`` dict.
+
+    Returns:
+        Dict mapping contig_id -> [DataFrame, host_label, length]
+    """
+    indices = class_map.get("index", [])
+    classes = class_map.get("class", [])
+    lab = {int(i): c for i, c in zip(indices, classes)}
+
+    tmp = {}
+    for key, value, length, gc_skew, gc in zip(
+        headers, predictions, lengths, gc_skews, gcs
+    ):
+        if length >= cmdline_kwargs.get("lc", 500_000):
+            value = np.exp(value) / np.sum(np.exp(value), axis=1).reshape(-1, 1)
+            max_class = np.argmax(np.mean(value, axis=0))
+            host = lab.get(max_class, "unknown")
+            t = pd.DataFrame(value, columns=list(lab.values()))
+            t = t.assign(
+                length=[i * cmdline_kwargs.get("fsize", 2000) for i in range(len(t))]
+            )
+            for k, v in lab.items():
+                conv = np.convolve(value[:, k], np.ones(4), mode="same")
+                if len(conv) > len(t):
+                    conv = conv[: len(t)]
+                elif len(conv) < len(t):
+                    conv = np.pad(conv, (0, len(t) - len(conv)), mode="edge")
+                t[v] = conv
+            t["gc"] = gc[: len(t)] if len(gc) > len(t) else gc
+            gc_skew_conv = np.convolve(np.array(gc_skew), np.ones(10) / 10, mode="same")
+            if len(gc_skew_conv) > len(t):
+                gc_skew_conv = gc_skew_conv[: len(t)]
+            elif len(gc_skew_conv) < len(t):
+                gc_skew_conv = np.pad(
+                    gc_skew_conv, (0, len(t) - len(gc_skew_conv)), mode="edge"
+                )
+            t["gc_skew"] = scale_range(gc_skew_conv, min=-1, max=1)
+            tmp[f"{key}"] = [t, host, length]
     return tmp
 
 
@@ -135,7 +198,7 @@ def plot_scores(
         outer_track.xticks_by_interval(
             minor_ticks_interval, tick_length=1, show_label=False, label_size=11
         )
-        colors = ["gray", "green", "red", "teal", "brown"]
+        colors = ["gray", "green", "red", "teal", "brown", "purple", "cyan", "pink"]
         patches = []
 
         for j, v in enumerate(lab.values()):
@@ -163,16 +226,17 @@ def plot_scores(
                         lw=1,
                     )
             else:
+                color = colors[j % len(colors)]
                 aux_track = sector.add_track((78, 87), r_pad_ratio=0.1)
                 aux_track.fill_between(
                     tmp["length"],
                     tmp[v].to_numpy(),
                     vmin=0,
                     vmax=4,
-                    color=colors[j],
+                    color=color,
                     alpha=0.7,
                 )
-                patches.append(Patch(color=colors[j], label=v))
+                patches.append(Patch(color=color, label=v))
 
         # Plot G+C
         gc_content_track = sector.add_track((55, 70))

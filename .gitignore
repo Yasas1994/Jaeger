@@ -16,4 +16,4 @@ dist
 *fasta
 !src/jaeger/data/test/*.fasta
 test_log/*
-data/*
+data/*memory/
