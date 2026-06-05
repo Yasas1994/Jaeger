@@ -120,6 +120,12 @@ def health(**kwargs):
     help="Minimum contig length for prophage extraction",
 )
 @click.option(
+    "--plot-type",
+    type=click.Choice(["circular", "linear", "both", "none"]),
+    default="circular",
+    help="Prophage plot type: circular (default), linear, both, or none",
+)
+@click.option(
     "--rc",
     type=float,
     default=0.1,
