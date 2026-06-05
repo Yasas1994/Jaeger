@@ -315,6 +315,7 @@ def run_core(**kwargs):
             from jaeger.postprocess.prophages import (
                 logits_to_df_v2,
                 plot_scores,
+                plot_scores_linear,
                 prophage_report,
                 segment,
             )
@@ -342,20 +343,41 @@ def run_core(**kwargs):
                         sensitivity=kwargs.get("sensitivity"),
                         identifier="phage",
                     )
-                    plot_scores(
-                        logits_df,
-                        config={
-                            "all_labels": {
-                                i: c
-                                for i, c in enumerate(model.class_map.get("class", []))
-                            }
-                        },
-                        model=model_name,
-                        fsize=kwargs.get("fsize"),
-                        infile_base=file_base,
-                        outdir=plots_dir,
-                        phage_cordinates=phage_cord,
-                    )
+                    plot_type = kwargs.get("plot_type", "circular")
+                    if plot_type in ("circular", "both"):
+                        plot_scores(
+                            logits_df,
+                            config={
+                                "all_labels": {
+                                    i: c
+                                    for i, c in enumerate(
+                                        model.class_map.get("class", [])
+                                    )
+                                }
+                            },
+                            model=model_name,
+                            fsize=kwargs.get("fsize"),
+                            infile_base=file_base,
+                            outdir=plots_dir,
+                            phage_cordinates=phage_cord,
+                        )
+                    if plot_type in ("linear", "both"):
+                        plot_scores_linear(
+                            logits_df,
+                            config={
+                                "all_labels": {
+                                    i: c
+                                    for i, c in enumerate(
+                                        model.class_map.get("class", [])
+                                    )
+                                }
+                            },
+                            model=model_name,
+                            fsize=kwargs.get("fsize"),
+                            infile_base=file_base,
+                            outdir=plots_dir,
+                            phage_cordinates=phage_cord,
+                        )
                     prophage_report(
                         fsize=kwargs.get("fsize"),
                         filehandle=str(input_file_path),
