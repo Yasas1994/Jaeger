@@ -17,3 +17,5 @@ dist
 !src/jaeger/data/test/*.fasta
 test_log/*
 data/*memory/
+memory/
+memory_management.md
