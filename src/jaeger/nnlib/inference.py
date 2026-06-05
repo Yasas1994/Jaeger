@@ -596,6 +596,11 @@ class ONNXEngine:
                 "Run 'jaeger utils convert-graph --mode onnx' first."
             )
 
+        # Preload pip-installed NVIDIA libraries so ONNX Runtime providers
+        # (CUDA, TensorRT) can find them without requiring LD_LIBRARY_PATH
+        # to be set externally.
+        self._preload_cuda_libs()
+
         try:
             import onnxruntime as ort
         except ImportError:
@@ -623,6 +628,72 @@ class ONNXEngine:
 
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [o.name for o in self.session.get_outputs()]
+
+    @staticmethod
+    def _preload_cuda_libs():
+        """Preload pip-installed NVIDIA shared libraries via ctypes.
+
+        ONNX Runtime's CUDA/TensorRT providers are compiled against specific
+        cuDNN/TensorRT SONAMEs. When these are installed as pip packages
+        (e.g., nvidia-cudnn-cu12, tensorrt), they live under site-packages
+        and are not on the system's LD_LIBRARY_PATH. Preloading with
+        RTLD_GLOBAL makes their symbols available to the provider libraries
+        when onnxruntime loads them.
+        """
+        import ctypes
+        import site
+
+        # Libraries that ONNX Runtime CUDA/TensorRT providers depend on.
+        # Preload the major SONAMEs; actual filenames may include version suffixes.
+        lib_patterns = [
+            ("nvidia/cudnn/lib", "libcudnn.so"),
+            ("tensorrt_libs", "libnvinfer.so"),
+            ("tensorrt_libs", "libnvonnxparser.so"),
+        ]
+
+        preloaded = []
+        for site_dir in site.getsitepackages():
+            for subdir, lib_name in lib_patterns:
+                lib_dir = Path(site_dir) / subdir
+                if not lib_dir.exists():
+                    continue
+                # Find the newest matching .so file
+                candidates = sorted(
+                    lib_dir.glob(f"{lib_name}*"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for candidate in candidates:
+                    # Only load actual shared objects (not .a or .la)
+                    if not candidate.name.endswith(".so") and ".so." not in candidate.name:
+                        continue
+                    try:
+                        ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
+                        preloaded.append(candidate.name)
+                        break  # Only load one version per pattern
+                    except OSError:
+                        pass
+
+        # Also update LD_LIBRARY_PATH for any child processes
+        import os
+
+        nvidia_lib_dirs = []
+        for site_dir in site.getsitepackages():
+            nvidia_base = Path(site_dir) / "nvidia"
+            if nvidia_base.exists():
+                nvidia_lib_dirs.extend(
+                    sorted(str(d) for d in nvidia_base.rglob("lib") if d.is_dir())
+                )
+            trt_libs = Path(site_dir) / "tensorrt_libs"
+            if trt_libs.exists():
+                nvidia_lib_dirs.append(str(trt_libs))
+
+        if nvidia_lib_dirs:
+            current = os.environ.get("LD_LIBRARY_PATH", "")
+            current_parts = current.split(":") if current else []
+            new_parts = [p for p in nvidia_lib_dirs if p not in current_parts]
+            if new_parts:
+                os.environ["LD_LIBRARY_PATH"] = ":".join(new_parts + current_parts)
 
     def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
         """
