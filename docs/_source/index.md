@@ -34,6 +34,7 @@ Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequenc
 start
 installation
 usage
+optimizations
 train
 utils
 releasing

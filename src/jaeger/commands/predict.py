@@ -11,7 +11,7 @@ from importlib.metadata import version
 from pathlib import Path
 import tensorflow as tf
 
-from jaeger.nnlib.inference import InferModel
+from jaeger.nnlib.inference import InferModel, TFLiteInferModel, ONNXEngine
 from jaeger.preprocess.fasta import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
@@ -97,6 +97,18 @@ def run_core(**kwargs):
     elif gpus:
         mode = "GPU"
         tf.config.set_visible_devices([gpus[kwargs.get("physicalid")]], "GPU")
+
+        # Set mixed precision policy if requested
+        precision = kwargs.get("precision", "fp32")
+        if precision == "fp16":
+            tf.keras.mixed_precision.set_global_policy("mixed_float16")
+            logger.info("GPU precision: mixed_float16 (FP16 compute, FP32 variables)")
+        elif precision == "bf16":
+            tf.keras.mixed_precision.set_global_policy("mixed_bfloat16")
+            logger.info("GPU precision: mixed_bfloat16 (BF16 compute, FP32 variables)")
+        else:
+            logger.info("GPU precision: float32 (FP32)")
+
         try:
             tf.config.set_logical_device_configuration(
                 gpus[kwargs.get("physicalid")],
@@ -168,7 +180,66 @@ def run_core(**kwargs):
         fsize=kwargs.get("fsize"),
     )
 
-    model = InferModel(model_info)
+    # Select inference engine based on options
+    quantized_mode = kwargs.get("quantized")
+    use_xla = kwargs.get("xla", False)
+    use_onnx = kwargs.get("onnx", False)
+    use_onnx_int8 = kwargs.get("int8", False)
+
+    if quantized_mode:
+        # Look for quantized model in the same directory as the original model
+        graph_dir = Path(model_info["graph"])
+        quantized_dir = graph_dir.parent / f"{model_name}_{quantized_mode}"
+        tflite_path = quantized_dir / f"{model_name}_{quantized_mode}.tflite"
+
+        if not tflite_path.exists():
+            logger.error(
+                f"Quantized model not found at {tflite_path}. "
+                f"Run 'jaeger utils quantize -m {model_name} -o {graph_dir.parent} --mode {quantized_mode}' first."
+            )
+            sys.exit(1)
+
+        logger.info(f"Using quantized model: {tflite_path}")
+        model_info_tflite = model_info.copy()
+        model_info_tflite["tflite"] = tflite_path
+        model = TFLiteInferModel(model_info_tflite)
+    elif use_onnx:
+        # Look for ONNX model (FP32 or INT8)
+        graph_dir = Path(model_info["graph"])
+        if use_onnx_int8:
+            onnx_dir = graph_dir.parent / f"{model_name}_onnx_int8"
+            onnx_path = onnx_dir / f"{model_name}_int8.onnx"
+            if not onnx_path.exists():
+                logger.error(
+                    f"INT8 ONNX model not found at {onnx_path}. "
+                    f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx --int8' first."
+                )
+                sys.exit(1)
+            logger.info(f"Using INT8 ONNX model: {onnx_path}")
+        else:
+            onnx_dir = graph_dir.parent / f"{model_name}_onnx"
+            onnx_path = onnx_dir / f"{model_name}.onnx"
+
+            if not onnx_path.exists():
+                logger.error(
+                    f"ONNX model not found at {onnx_path}. "
+                    f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx' first."
+                )
+                sys.exit(1)
+
+            logger.info(f"Using ONNX model: {onnx_path}")
+
+        model_info_onnx = model_info.copy()
+        model_info_onnx["onnx"] = onnx_path
+
+        model = ONNXEngine(model_info_onnx)
+    else:
+        if use_xla:
+            logger.info(
+                "Using XLA-compiled inference (first batch may be slow due to compilation)"
+            )
+        model = InferModel(model_info, use_xla=use_xla)
+
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
         fragment_generator(

@@ -18,6 +18,8 @@ from importlib.metadata import version
 from importlib.resources import files
 from jaeger.utils.misc import json_to_dict, add_data_to_json, AvailableModels
 import warnings
+from jaeger.commands.quantize import quantize_model
+from jaeger.commands.convert_graph import convert_graph
 
 warnings.filterwarnings("ignore")
 
@@ -174,6 +176,32 @@ def health(**kwargs):
     default=1,
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing files")
+@click.option(
+    "--quantized",
+    type=click.Choice(["dynamic", "float16", "full_int8"]),
+    help="Use quantized TFLite model for inference (dynamic|float16|full_int8)",
+)
+@click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"]),
+    default="fp32",
+    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
+)
+@click.option(
+    "--xla",
+    is_flag=True,
+    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
+)
+@click.option(
+    "--onnx",
+    is_flag=True,
+    help="Use ONNX Runtime for inference. Requires converting the model first with 'jaeger utils convert-graph --mode onnx'.",
+)
+@click.option(
+    "--int8",
+    is_flag=True,
+    help="Use INT8 quantized ONNX model (use with --onnx). Requires 'jaeger utils convert-graph --mode onnx --int8'.",
+)
 def predict(**kwargs):
     """
     Runs Jaeger on a dataset
@@ -892,6 +920,102 @@ def stats(**kwargs):
 
     stats_core(**kwargs)
     pass
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+            Quantize a Jaeger model for faster inference
+
+            usage
+            -----
+
+            jaeger utils quantize -m default -o ./quantized_models
+            jaeger utils quantize -m jaeger_57341_1.5M_fragment -o ./quantized --mode float16
+        """,
+)
+@click.option(
+    "-m",
+    "--model",
+    type=str,
+    required=True,
+    help="Model name to quantize",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Output directory for the quantized model",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["dynamic", "float16", "full_int8"]),
+    default="dynamic",
+    help="Quantization mode",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level",
+    default=1,
+)
+def quantize_cmd(**kwargs):
+    """Quantize a Jaeger model"""
+    quantize_model(**kwargs)
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+            Convert a Jaeger SavedModel to an optimized inference graph.
+
+            Supports XLA, TFLite, ONNX, and TensorRT backends.
+
+            usage
+            -----
+
+            jaeger utils convert-graph -m default -o ./optimized --mode xla
+            jaeger utils convert-graph -m default -o ./optimized --mode onnx
+            jaeger utils convert-graph -m default -o ./optimized --mode onnx --int8
+        """,
+)
+@click.option(
+    "-m",
+    "--model",
+    type=str,
+    required=True,
+    help="Model name to convert",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Output directory for the converted model",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["xla", "tflite", "onnx", "tensorrt"]),
+    default="xla",
+    help="Conversion mode",
+)
+@click.option(
+    "--int8",
+    is_flag=True,
+    help="Apply static INT8 quantization (ONNX mode only)",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level",
+    default=1,
+)
+def convert_graph_cmd(model, output, mode, int8, verbose):
+    """Convert a Jaeger SavedModel to an optimized inference graph."""
+    convert_graph(model, output, mode, verbose, int8=int8)
 
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))

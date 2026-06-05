@@ -2,6 +2,8 @@
 
 This guide covers the main prediction workflow, output interpretation, prophage extraction, and available utility commands.
 
+For inference speedups and model quantization, see the [Performance optimizations](optimizations.md) page.
+
 ---
 
 ## Table of contents

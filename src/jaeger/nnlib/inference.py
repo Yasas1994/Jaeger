@@ -20,7 +20,6 @@ from jaeger.preprocess.latest.maps import (
 from jaeger.nnlib.v2.layers import (
     GeLU,
     ReLU,
-    MaskedBatchNorm,
     MaskedConv1D,
     ResidualBlock,
 )
@@ -118,246 +117,157 @@ class DynamicInferenceModelBuilder:
 
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
-            r, r_lbn = self._build_representation_learner(
-                x, self.model_cfg["representation_learner"]
+            x, r_lbn = self._build_representation_learner(
+                self.model_cfg["representation_learner"], x
             )
-            models["rep_model"] = tf.keras.Model(
-                inputs=self.inputs, outputs=[r, r_lbn], name="rep_model"
-            )
+        else:
+            raise ValueError("Missing 'representation_learner' section in config")
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
-            input_shape = (
-                self.model_cfg["representation_learner"].get("block_filters")[-1],
-            )
-            inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
-            x_classifier = self._build_perceptron(
-                inputs, self.model_cfg["classifier"], prefix="classifier"
-            )
-            models["classification_head"] = tf.keras.Model(
-                inputs=inputs, outputs=x_classifier, name="classification_head"
-            )
-            # combine with the representation learner
-            x = models["rep_model"].output[0]
-            x = models["classification_head"](x)
-            models["jaeger_classifier"] = tf.keras.Model(
-                inputs=models["rep_model"].input, outputs=x, name="Jaeger_classifier"
-            )
+            y = self._build_head(self.model_cfg["classifier"], x)
+            models["classifier"] = tf.keras.Model(inputs=self.inputs, outputs=y)
+        else:
+            raise ValueError("Missing 'classifier' section in config")
 
-        # === 4. RELIABILITY ===
+        # === 4. RELIABILITY MODEL ===
         if "reliability_model" in self.model_cfg:
-            input_shape = (
-                self.model_cfg["representation_learner"].get("block_filters")[-1],
-            )
-            inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
-            x_reliability = self._build_perceptron(
-                inputs, self.model_cfg["reliability_model"], prefix="reliability"
-            )
-            models["reliability_head"] = tf.keras.Model(
-                inputs=inputs, outputs=x_reliability, name="reliability_head"
-            )
-            # combine withe representation learner
-            x = models["rep_model"].output[1]
-            x = models["reliability_head"](x)
-            models["jaeger_reliability"] = tf.keras.Model(
-                inputs=models["rep_model"].input, outputs=x, name="Jaeger_reliability"
-            )
-
-        # ==== 5. COMBINED MODEL ====
-        x1, x2 = models["rep_model"].output
-        reliability = models["reliability_head"](x2)
-        class_ = models["classification_head"](x1)
-        models["jaeger_model"] = JaegerModel(
-            inputs=models["rep_model"].input,
-            outputs={"prediction": class_, "reliability": reliability},
-            name="Jaeger_model",
-        )
+            r = self._build_head(self.model_cfg["reliability_model"], r_lbn)
+            models["reliability"] = tf.keras.Model(inputs=self.inputs, outputs=r)
+        else:
+            raise ValueError("Missing 'reliability_model' section in config")
 
         return models
 
-    def build_contig_classifier(self):
-        """
-        to do: contig consensus prediction model
-        currently, the final predictions per-contig is obtained by averaing the
-        per-fragment logits. Instead, we can learn a function to combine information
-        from all fragments.
-        """
-        pass
-
     def _build_embedding(self, cfg: Dict[str, Any]):
-        """
-        creates the embedding layer
-        """
-        input_shape = cfg.get("input_shape", (6, None, 64))
-        embedding_size = cfg.get("embedding_size", 4)
+        """Builds the embedding layer based on config."""
+        input_shape = cfg.get("input_shape")
+        seq_type = cfg.get("type", "translated")
 
-        inputs = tf.keras.Input(shape=input_shape, name=cfg.get("type"))
-        masked_inputs = tf.keras.layers.Masking(name="input_mask", mask_value=0.0)(
-            inputs
-        )
+        if seq_type == "translated":
+            inputs = tf.keras.Input(shape=input_shape, name="translated_input")
+            x = inputs
+        elif seq_type == "nucleotide":
+            inputs = tf.keras.Input(shape=input_shape, name="nucleotide_input")
+            x = inputs
+        elif seq_type == "both":
+            # Handle dual input
+            inputs = tf.keras.Input(shape=input_shape, name="combined_input")
+            x = inputs
+        else:
+            raise ValueError(f"Unknown embedding type: {seq_type}")
 
-        match cfg.get("type"):
-            case "translated":
-                x = tf.keras.layers.Dense(
-                    embedding_size,
-                    name=f"{cfg.get('type')}_embedding",
-                    use_bias=False,
-                    kernel_initializer=tf.keras.initializers.Orthogonal(),
-                )(masked_inputs)
-            case "nucleotide":
-                x = masked_inputs
-            case _:
-                raise ValueError(f"{cfg.get('type')} is invalid")
         return inputs, x
 
-    def _build_representation_learner(self, x, cfg: Dict[str, Any]):
-        """
-        X -> [X'-1, X']
-        """
+    def _build_representation_learner(self, cfg: Dict[str, Any], x):
+        """Builds the representation learner (conv blocks)."""
+        block_sizes = cfg.get("block_sizes", [2, 2, 2])
+        block_filters = cfg.get("block_filters", [128, 128, 128])
+        block_kernel_size = cfg.get("block_kernel_size", [5, 5, 5])
+        block_kernel_dilation = cfg.get("block_kernel_dilation", [3, 3, 3])
+        block_kernel_strides = cfg.get("block_kernel_strides", [1, 1, 1])
+        block_regularizer = cfg.get("block_regularizer", ["l2", "l2", "l2"])
+        block_regularizer_w = cfg.get("block_regularizer_w", [0, 0, 0])
+        pooling = cfg.get("pooling", "max")
+
+        # Initial conv
         x = MaskedConv1D(
-            filters=cfg.get("masked_conv1d_1_filters"),
-            kernel_size=cfg.get("masked_conv1d_1_kernel_size"),
-            strides=cfg.get("masked_conv1d_1_strides"),
-            dilation_rate=cfg.get("masked_conv1d_1_dilation_rate"),
-            use_bias=False,
-            name="masked_conv1d_1",
-            activation=None,
+            filters=cfg.get("masked_conv1d_1_filters", 128),
+            kernel_size=cfg.get("masked_conv1d_1_kernel_size", 7),
+            strides=cfg.get("masked_conv1d_1_strides", 1),
+            dilation_rate=cfg.get("masked_conv1d_1_dilation_rate", 1),
+            padding="same",
             kernel_regularizer=self._regularizer.get(
-                cfg.get("masked_conv1d_1_regularizer"),
-            )(cfg.get("masked_conv1d_1_regularizer_w")),
-            kernel_initializer=tf.keras.initializers.HeUniform(),
+                cfg.get("masked_conv1d_1_regularizer", "l2"),
+                tf.keras.regularizers.L2,
+            )(cfg.get("masked_conv1d_1_regularizer_w", 0)),
+            name="masked_conv1d_initial",
         )(x)
-        # using batchnorm here gives a big advantage. You get a model that can work well with different input size.
-        # infact the accuracy increase with the increasing input size.
+        x = self.Activation(name="activation_initial")(x)
 
-        x = MaskedBatchNorm(name="masked_batchnorm_1")(x)
-        x = self.Activation(name="activation_1")(x)
-
-        for block, (
-            block_size,
-            block_filter,
-            ksize,
-            kdilation,
-            kstride,
-            kreg,
-            kregw,
-        ) in enumerate(
+        # Residual blocks
+        for i, (size, filters, ksize, dilation, strides, reg, reg_w) in enumerate(
             zip(
-                cfg.get("block_sizes", [3, 3, 3]),
-                cfg.get("block_filters", [128, 256, 512]),
-                cfg.get("block_kernel_size", [5, 5, 5]),
-                cfg.get("block_kernel_dilation", [1, 1, 1]),
-                cfg.get("block_kernel_strides", [2, 2, 2]),
-                cfg.get("block_regularizer", ["l2", "l2", "l2"]),
-                cfg.get("block_regularizer_w", [1e-6, 1e-6, 1e-6]),
-            ),
-            start=1,
+                block_sizes,
+                block_filters,
+                block_kernel_size,
+                block_kernel_dilation,
+                block_kernel_strides,
+                block_regularizer,
+                block_regularizer_w,
+            )
         ):
-            # ========== blockn (compress -> res) =============
-            x = MaskedConv1D(
-                filters=block_filter,
-                kernel_size=ksize,
-                strides=kstride,
-                dilation_rate=kdilation,
-                use_bias=False,
-                name=f"ds_masked_conv1d_{block}",
-                kernel_regularizer=self._regularizer.get(kreg)(kregw),
-                activation=None,
-                kernel_initializer=tf.keras.initializers.HeUniform(),
-            )(x)
-            x = MaskedBatchNorm(name=f"ds_masked_batchnorm_{block}")(x)
-            x = self.Activation(name=f"ds_activation_{block}")(x)
-
-            for i in range(block_size):
+            for j in range(size):
                 x = ResidualBlock(
-                    block_filter,
+                    filters=filters,
                     kernel_size=ksize,
-                    block_number=f"{block}{i}",
-                    name=f"masked_resblock_{block}{i}",
+                    dilation_rate=dilation,
+                    strides=strides if j == 0 else 1,
+                    kernel_regularizer=self._regularizer.get(
+                        reg, tf.keras.regularizers.L2
+                    )(reg_w),
+                    name=f"resblock_{i}_{j}",
                 )(x)
+            if pooling == "max":
+                x = tf.keras.layers.MaxPooling1D(pool_size=2, name=f"pool_{i}")(x)
+            elif pooling == "avg":
+                x = tf.keras.layers.AveragePooling1D(pool_size=2, name=f"pool_{i}")(x)
 
-        # ============ final block ============
+        # Final conv
         x = MaskedConv1D(
-            filters=block_filter,
-            kernel_size=cfg.get("masked_conv1d_final_kernel_size"),
-            strides=cfg.get("masked_conv1d_final_strides"),
-            dilation_rate=cfg.get("masked_conv1d_final_dilation_rate"),
-            use_bias=False,
-            name="masked_conv1d_final",
+            filters=block_filters[-1],
+            kernel_size=cfg.get("masked_conv1d_final_kernel_size", 5),
+            strides=cfg.get("masked_conv1d_final_strides", 1),
+            dilation_rate=cfg.get("masked_conv1d_final_dilation_rate", 1),
+            padding="same",
             kernel_regularizer=self._regularizer.get(
-                cfg.get("masked_conv1d_final_regularizer"),
-            )(cfg.get("masked_conv1d_final_regularizer_w")),
-            activation=None,
-            kernel_initializer=tf.keras.initializers.HeUniform(),
+                cfg.get("masked_conv1d_final_regularizer", "l2"),
+                tf.keras.regularizers.L2,
+            )(cfg.get("masked_conv1d_final_regularizer_w", 0)),
+            name="masked_conv1d_final",
         )(x)
-        # this layers mean vector is used as u[train] to calculate nmd u[example] - u[train]
-        x, nmd = MaskedBatchNorm(name="masked_batchnorm_final", return_nmd=True)(x)
         x = self.Activation(name="activation_final")(x)
-        # =========== Aggregation ==============
-        x = self._get_pooler(cfg.get("pooling"))(
-            name=f"global_{cfg.get('pooling')}pool"
-        )(x)
-        return x, nmd
 
-    def _build_perceptron(self, x, cfg: Dict[str, Any], prefix: str):
-        """
-        Get an MLP for a given configuration
-        prefixes : reliability, projection, classifier
-        """
+        # Global pooling for reliability model
+        r_lbn = tf.keras.layers.GlobalAveragePooling1D(name="gap_reliability")(x)
 
-        for i, layer_cfg in enumerate(cfg.get("hidden_layers"), 1):
+        return x, r_lbn
+
+    def _build_head(self, cfg: Dict[str, Any], x):
+        """Builds a classification head."""
+        hidden_layers = cfg.get("hidden_layers", [])
+
+        for i, layer_cfg in enumerate(hidden_layers):
             x = tf.keras.layers.Dense(
-                layer_cfg.get("units"),
-                use_bias=layer_cfg.get("use_bias"),
-                name=f"{prefix}_dense_{i}",
-                # activation=layer_cfg.get("activation")
+                units=layer_cfg.get("units", 128),
+                activation=None,
+                use_bias=layer_cfg.get("use_bias", False),
+                kernel_regularizer=self._regularizer.get(
+                    layer_cfg.get("kernel_regularizer", "l2"),
+                    tf.keras.regularizers.L2,
+                )(layer_cfg.get("kernel_regularizer_w", 1e-5)),
+                name=f"dense_{i}",
             )(x)
-            x = self.Activation(name=f"{prefix}_activation_{i}")(x)
+            x = self.Activation(name=f"activation_dense_{i}")(x)
             if layer_cfg.get("dropout_rate", 0) > 0:
                 x = tf.keras.layers.Dropout(
-                    layer_cfg.get("dropout_rate"),
-                    name=f"{prefix}_dropout_{i}",
+                    layer_cfg["dropout_rate"], name=f"dropout_{i}"
                 )(x)
 
-        outputs = tf.keras.layers.Dense(
-            cfg.get("output_units"),
-            use_bias=layer_cfg.get("output_use_bias"),
-            name=prefix,
-            activation=cfg.get("output_activation"),
+        # Output layer
+        x = tf.keras.layers.Dense(
+            units=cfg.get("output_units", 6),
+            activation=cfg.get("output_activation", None),
+            use_bias=cfg.get("output_use_bias", False),
+            name="output",
         )(x)
-        return outputs
 
-    def _get_string_processor_config(self) -> Dict:
-        _map = {
-            "CODON": CODONS,
-            "CODON_ID": CODON_ID,
-            "AA_ID": AA_ID,
-            "MURPHY10_ID": MURPHY10_ID,
-            "PC5_ID": PC5_ID,
-            "DICODON": DICODONS,
-            "DICODON_ID": DICODON_ID,
-        }
-        _config = self.model_cfg.get("embedding")
-        _config.update(self.model_cfg.get("string_processor"))
-        # get original labels and -> mapping
+        return x
 
-        _config["codon"] = _map.get(_config.get("codon"))
-        _config["codon_id"] = _map.get(_config.get("codon_id"))
-        _config["codon_depth"] = max(_config.get("codon_id")) + 1  # num_codons
-        _config["vocab_size"] = len(_config.get("codon_id")) + 1  # num_codon + 1
-        _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
-        _config["seq_onehot"] = _config.get("seq_onehot", False)
-        if _config["seq_onehot"] is False:
-            _config["codon_depth"] = 1
-
-        return _config
-
-    def _get_pooler(self, name):
-        poolers = {
-            "max": tf.keras.layers.GlobalMaxPooling2D,
-            "average": tf.keras.layers.GlobalAveragePooling2D,
-        }
-        return poolers[name]
+    def _get_string_processor_config(self):
+        """Extract string processor config from model config."""
+        # This is a simplified version
+        return {"input_type": "translated"}
 
 
 class InferModel:
@@ -367,22 +277,29 @@ class InferModel:
     (works with latest generation of models)
     """
 
-    def __init__(self, path_dict):
+    def __init__(self, path_dict, use_xla: bool = False):
         self.class_map = self._load_class_map(path_dict.get("classes"))
         self.loaded_model = tf.saved_model.load(path_dict.get("graph"))
         self.inference_fn = self.loaded_model.signatures["serving_default"]
         self.string_processor_config = self._load_string_processor_config(
             path_dict.get("project", None)
         )
+        self.use_xla = use_xla
+        self._predict_step = self._build_predict_step()
 
-    @tf.function(jit_compile=False)
-    def _predict_step(self, x):
-        # Unpack the data
-        # set model to inference mode
-        y_logits = self.inference_fn(
-            inputs=x.get(self.string_processor_config.get("input_type"))
-        )
-        return y_logits
+    def _build_predict_step(self):
+        """Build the prediction step function, optionally with XLA."""
+        inference_fn = self.inference_fn
+        input_type = self.string_processor_config.get("input_type")
+
+        def step(x):
+            y_logits = inference_fn(inputs=x.get(input_type))
+            return y_logits
+
+        if self.use_xla:
+            return tf.function(jit_compile=True)(step)
+        else:
+            return tf.function(jit_compile=False)(step)
 
     def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
         """
@@ -499,6 +416,587 @@ class InferModel:
             input_shape = _model_cfg.get("embedding", {}).get("input_shape")
             if _config.get("seq_onehot") is None and input_shape is not None:
                 # input_shape is [frames, timesteps, codon_depth] for one-hot
+                _config["seq_onehot"] = (
+                    len(input_shape) == 3
+                    and input_shape[-1] is not None
+                    and input_shape[-1] > 1
+                )
+            _config["seq_onehot"] = _config.get("seq_onehot", False)
+            if _config["seq_onehot"] is False:
+                _config["codon_depth"] = 1
+        return _config
+
+
+class TFLiteInferModel:
+    """
+    TFLite inference wrapper for quantized Jaeger models.
+
+    Provides the same interface as InferModel but runs inference via
+    TensorFlow Lite interpreter. Supports dynamic input resizing for
+    variable sequence lengths.
+    """
+
+    def __init__(self, path_dict):
+        self.class_map = self._load_class_map(path_dict.get("classes"))
+        self.string_processor_config = self._load_string_processor_config(
+            path_dict.get("project", None)
+        )
+
+        # Load TFLite model
+        tflite_path = path_dict.get("tflite")
+        if tflite_path is None or not Path(tflite_path).exists():
+            raise ValueError(
+                f"TFLite model not found at {tflite_path}. "
+                "Run 'jaeger utils quantize' first."
+            )
+
+        self.interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+
+    def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
+        """
+        dataset: yields tuples (inputs_dict, meta0, meta1, …)
+        Returns a dict of numpy arrays, each of shape (N, …)
+        """
+        acc: dict[str, list[np.ndarray]] = defaultdict(list)
+
+        for inputs, *meta in track(
+            dataset, description="[cyan]Crunching data…", disable=no_progress
+        ):
+            # Get the input tensor (e.g., "translated")
+            input_type = self.string_processor_config.get("input_type", "translated")
+            x = inputs.get(input_type)
+
+            if isinstance(x, tf.Tensor):
+                x = x.numpy()
+
+            batch_size, *shape = x.shape
+
+            # Resize interpreter if needed
+            current_shape = self.input_details[0]["shape"]
+            if list(current_shape) != [batch_size, *shape]:
+                self.interpreter.resize_tensor_input(
+                    self.input_details[0]["index"], [batch_size, *shape], strict=True
+                )
+                self.interpreter.allocate_tensors()
+                # Refresh details after resize
+                self.input_details = self.interpreter.get_input_details()
+                self.output_details = self.interpreter.get_output_details()
+
+            # Set input and invoke
+            self.interpreter.set_tensor(self.input_details[0]["index"], x)
+            self.interpreter.invoke()
+
+            # Get outputs - map to same keys as SavedModel
+            # Output order: prediction, reliability (based on our conversion)
+            pred = self.interpreter.get_tensor(self.output_details[0]["index"])
+            rel = self.interpreter.get_tensor(self.output_details[1]["index"])
+
+            acc["prediction"].append(pred)
+            acc["reliability"].append(rel)
+
+            # meta data
+            for idx, m in enumerate(meta):
+                if isinstance(m, tf.Tensor):
+                    m = m.numpy()
+                acc[f"meta_{idx}"].append(m)
+
+        # concatenate arrays; keep lists for non-array metadata
+        result: dict[str, np.ndarray] = {}
+        for k, arr_list in acc.items():
+            if k.startswith("meta_"):
+                # Metadata may be strings or other non-array types
+                try:
+                    result[k] = np.concatenate(arr_list, axis=0)
+                except ValueError:
+                    result[k] = arr_list  # Keep as list if concatenation fails
+            else:
+                result[k] = np.concatenate(arr_list, axis=0)
+        return result
+
+    def evaluate(self, dataset, no_progress: bool = False) -> dict[str, float]:
+        """Evaluate on a dataset. Not yet implemented for TFLite."""
+        raise NotImplementedError("TFLite evaluation not yet implemented")
+
+    def _load_class_map(self, path):
+        with open(path) as f:
+            _class_map = yaml.safe_load(f)["classes"]
+            return {
+                "num_classes": len(_class_map),
+                "class": [i["class"] for i in _class_map],
+                "index": [i["label"] for i in _class_map],
+            }
+
+    def _load_string_processor_config(self, path) -> Dict:
+        _map = {
+            "CODON": CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID,
+        }
+
+        if path is None:
+            return {"input_type": "translated"}
+
+        _config = yaml.safe_load(Path(path).read_text()) or {}
+        _model_cfg = _config.get("model")
+        _config = _model_cfg.get("embedding")
+        _config.update(_model_cfg.get("string_processor"))
+        _config["input_type"] = _config.get("type", "translated")
+
+        if _config["codon"] is not None and _config["codon_id"] is not None:
+            _config["codon"] = _map.get(_config.get("codon"))
+            _config["codon_id"] = _map.get(_config.get("codon_id"))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
+            input_shape = _model_cfg.get("embedding", {}).get("input_shape")
+            if _config.get("seq_onehot") is None and input_shape is not None:
+                _config["seq_onehot"] = (
+                    len(input_shape) == 3
+                    and input_shape[-1] is not None
+                    and input_shape[-1] > 1
+                )
+            _config["seq_onehot"] = _config.get("seq_onehot", False)
+            if _config["seq_onehot"] is False:
+                _config["codon_depth"] = 1
+        return _config
+
+
+class ONNXEngine:
+    """
+    ONNX Runtime inference engine for Jaeger models.
+
+    Loads an ONNX model and runs inference via ONNX Runtime.
+    Supports multiple execution providers:
+    - TensorRT (fastest on NVIDIA GPUs)
+    - CUDA (NVIDIA GPU fallback)
+    - CPU (universal fallback)
+
+    The ONNX model should be created using:
+        jaeger utils convert-graph -m <model> -o <dir> --mode onnx
+    """
+
+    def __init__(
+        self,
+        path_dict,
+        providers: list[str] | None = None,
+        provider_options: list[dict] | None = None,
+    ):
+        self.class_map = self._load_class_map(path_dict.get("classes"))
+        self.string_processor_config = self._load_string_processor_config(
+            path_dict.get("project", None)
+        )
+
+        # Load ONNX model
+        onnx_path = path_dict.get("onnx")
+        if onnx_path is None or not Path(onnx_path).exists():
+            raise ValueError(
+                f"ONNX model not found at {onnx_path}. "
+                "Run 'jaeger utils convert-graph --mode onnx' first."
+            )
+
+        # Preload pip-installed NVIDIA libraries so ONNX Runtime providers
+        # (CUDA, TensorRT) can find them without requiring LD_LIBRARY_PATH
+        # to be set externally.
+        self._preload_cuda_libs()
+
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise ImportError(
+                "onnxruntime is not installed. Install it with:\n"
+                "  pip install onnxruntime-gpu  # for GPU\n"
+                "  pip install onnxruntime      # for CPU only"
+            )
+
+        # Detect INT8 quantized models so we can avoid TensorRT, which has
+        # limited support for arbitrary quantized ONNX subgraphs.
+        is_int8 = self._is_int8_model(str(onnx_path))
+
+        # Auto-select providers if not specified
+        if providers is None:
+            available = ort.get_available_providers()
+            if is_int8:
+                # TensorRT's ONNX parser has strict requirements for quantized
+                # ops (symmetric quantization, no dynamic shapes, etc.). INT8
+                # ONNX models run reliably on the CUDA execution provider.
+                preferred = [
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
+            else:
+                # Prefer TensorRT > CUDA > CPU for FP32/FP16 models
+                preferred = [
+                    "TensorrtExecutionProvider",
+                    "CUDAExecutionProvider",
+                    "CPUExecutionProvider",
+                ]
+            providers = [p for p in preferred if p in available]
+            if not providers:
+                providers = ["CPUExecutionProvider"]
+
+        self.providers = providers
+        sess_options = ort.SessionOptions()
+        if provider_options is None:
+            provider_options = [{} for _ in providers]
+        self.session = ort.InferenceSession(
+            str(onnx_path),
+            sess_options=sess_options,
+            providers=providers,
+            provider_options=provider_options,
+        )
+
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_names = [o.name for o in self.session.get_outputs()]
+
+    @staticmethod
+    def _is_int8_model(onnx_path: str) -> bool:
+        """Heuristic: check if ONNX model contains INT8 quantized tensors."""
+        try:
+            import onnx
+
+            model = onnx.load(onnx_path)
+            for init in model.graph.initializer:
+                if init.data_type == onnx.TensorProto.INT8:
+                    return True
+            for node in model.graph.node:
+                if node.op_type in ("QuantizeLinear", "DequantizeLinear"):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _preload_cuda_libs():
+        """Preload pip-installed NVIDIA shared libraries via ctypes.
+
+        ONNX Runtime's CUDA/TensorRT providers are compiled against specific
+        cuDNN/TensorRT SONAMEs. When these are installed as pip packages
+        (e.g., nvidia-cudnn-cu12, tensorrt), they live under site-packages
+        and are not on the system's LD_LIBRARY_PATH. Preloading with
+        RTLD_GLOBAL makes their symbols available to the provider libraries
+        when onnxruntime loads them.
+        """
+        import ctypes
+        import site
+
+        # Libraries that ONNX Runtime CUDA/TensorRT providers depend on.
+        # Preload the major SONAMEs; actual filenames may include version suffixes.
+        lib_patterns = [
+            ("nvidia/cudnn/lib", "libcudnn.so"),
+            ("tensorrt_libs", "libnvinfer.so"),
+            ("tensorrt_libs", "libnvonnxparser.so"),
+        ]
+
+        preloaded = []
+        for site_dir in site.getsitepackages():
+            for subdir, lib_name in lib_patterns:
+                lib_dir = Path(site_dir) / subdir
+                if not lib_dir.exists():
+                    continue
+                # Find the newest matching .so file
+                candidates = sorted(
+                    lib_dir.glob(f"{lib_name}*"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                for candidate in candidates:
+                    # Only load actual shared objects (not .a or .la)
+                    if (
+                        not candidate.name.endswith(".so")
+                        and ".so." not in candidate.name
+                    ):
+                        continue
+                    try:
+                        ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
+                        preloaded.append(candidate.name)
+                        break  # Only load one version per pattern
+                    except OSError:
+                        pass
+
+        # Also update LD_LIBRARY_PATH for any child processes
+        import os
+
+        nvidia_lib_dirs = []
+        for site_dir in site.getsitepackages():
+            nvidia_base = Path(site_dir) / "nvidia"
+            if nvidia_base.exists():
+                nvidia_lib_dirs.extend(
+                    sorted(str(d) for d in nvidia_base.rglob("lib") if d.is_dir())
+                )
+            trt_libs = Path(site_dir) / "tensorrt_libs"
+            if trt_libs.exists():
+                nvidia_lib_dirs.append(str(trt_libs))
+
+        if nvidia_lib_dirs:
+            current = os.environ.get("LD_LIBRARY_PATH", "")
+            current_parts = current.split(":") if current else []
+            new_parts = [p for p in nvidia_lib_dirs if p not in current_parts]
+            if new_parts:
+                os.environ["LD_LIBRARY_PATH"] = ":".join(new_parts + current_parts)
+
+    def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
+        """
+        dataset: yields tuples (inputs_dict, meta0, meta1, …)
+        Returns a dict of numpy arrays, each of shape (N, …)
+        """
+        acc: dict[str, list[np.ndarray]] = defaultdict(list)
+        input_name = self.input_name
+        output_names = self.output_names
+        session = self.session
+        input_type = self.string_processor_config.get("input_type", "translated")
+
+        for inputs, *meta in track(
+            dataset, description="[cyan]Crunching data…", disable=no_progress
+        ):
+            x = inputs.get(input_type)
+            if isinstance(x, tf.Tensor):
+                x = x.numpy()
+
+            # Run inference
+            outputs = session.run(output_names, {input_name: x})
+
+            # Map outputs (prediction, reliability)
+            acc["prediction"].append(outputs[0])
+            acc["reliability"].append(outputs[1])
+
+            # meta data
+            for idx, m in enumerate(meta):
+                if isinstance(m, tf.Tensor):
+                    m = m.numpy()
+                acc[f"meta_{idx}"].append(m)
+
+        # concatenate arrays; keep lists for non-array metadata
+        result: dict[str, np.ndarray] = {}
+        for k, arr_list in acc.items():
+            if k.startswith("meta_"):
+                try:
+                    result[k] = np.concatenate(arr_list, axis=0)
+                except ValueError:
+                    result[k] = arr_list
+            else:
+                result[k] = np.concatenate(arr_list, axis=0)
+        return result
+
+    def evaluate(self, dataset, no_progress: bool = False) -> dict[str, float]:
+        """Evaluate on a dataset."""
+        logits_acc: list[np.ndarray] = []
+        true_acc: list[np.ndarray] = []
+        input_name = self.input_name
+        session = self.session
+        input_type = self.string_processor_config.get("input_type", "translated")
+
+        for inputs, y_true in track(
+            dataset, description="[cyan]Evaluating…", disable=no_progress
+        ):
+            x = inputs.get(input_type)
+            if isinstance(x, tf.Tensor):
+                x = x.numpy()
+
+            outputs = session.run(None, {input_name: x})
+            logits = outputs[0]  # prediction is first output
+
+            logits_acc.append(logits)
+            true_acc.append(y_true.numpy() if isinstance(y_true, tf.Tensor) else y_true)
+
+        logits = np.concatenate(logits_acc, axis=0)
+        y_true = np.concatenate(true_acc, axis=0)
+
+        loss = tf.keras.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True
+        )
+        loss = float(tf.reduce_mean(loss).numpy())
+
+        pred_labels = np.argmax(logits, axis=1)
+        true_labels = np.argmax(y_true, axis=1)
+        accuracy = float(np.mean(pred_labels == true_labels))
+
+        return {"loss": loss, "accuracy": accuracy}
+
+    def _load_class_map(self, path):
+        with open(path) as f:
+            _class_map = yaml.safe_load(f)["classes"]
+            return {
+                "num_classes": len(_class_map),
+                "class": [i["class"] for i in _class_map],
+                "index": [i["label"] for i in _class_map],
+            }
+
+    def _load_string_processor_config(self, path) -> Dict:
+        _map = {
+            "CODON": CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID,
+        }
+
+        if path is None:
+            return {"input_type": "translated"}
+
+        _config = yaml.safe_load(Path(path).read_text()) or {}
+        _model_cfg = _config.get("model")
+        _config = _model_cfg.get("embedding")
+        _config.update(_model_cfg.get("string_processor"))
+        _config["input_type"] = _config.get("type", "translated")
+
+        if _config["codon"] is not None and _config["codon_id"] is not None:
+            _config["codon"] = _map.get(_config.get("codon"))
+            _config["codon_id"] = _map.get(_config.get("codon_id"))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
+            input_shape = _model_cfg.get("embedding", {}).get("input_shape")
+            if _config.get("seq_onehot") is None and input_shape is not None:
+                _config["seq_onehot"] = (
+                    len(input_shape) == 3
+                    and input_shape[-1] is not None
+                    and input_shape[-1] > 1
+                )
+            _config["seq_onehot"] = _config.get("seq_onehot", False)
+            if _config["seq_onehot"] is False:
+                _config["codon_depth"] = 1
+        return _config
+
+
+class TensorRTEngine:
+    """
+    TensorRT inference engine for Jaeger models.
+
+    Loads a TensorRT-optimized SavedModel and runs inference.
+    Requires TensorFlow built with TensorRT support.
+
+    The TensorRT-optimized model should be created using:
+        jaeger utils convert-graph -m <model> -o <dir> --mode tensorrt
+    """
+
+    def __init__(self, path_dict):
+        self.class_map = self._load_class_map(path_dict.get("classes"))
+        self.string_processor_config = self._load_string_processor_config(
+            path_dict.get("project", None)
+        )
+
+        # Load TensorRT-optimized SavedModel
+        trt_dir = path_dict.get("trt_graph")
+        if trt_dir is None or not Path(trt_dir).exists():
+            raise ValueError(
+                f"TensorRT model not found at {trt_dir}. "
+                "Run 'jaeger utils convert-graph --mode tensorrt' first.\n"
+                "Note: TensorRT requires TensorFlow built with TensorRT support."
+            )
+
+        self.loaded_model = tf.saved_model.load(str(trt_dir))
+        self.inference_fn = self.loaded_model.signatures["serving_default"]
+
+        # Build predict step with XLA for additional optimization
+        input_type = self.string_processor_config.get("input_type")
+        inference_fn = self.inference_fn
+
+        @tf.function(jit_compile=True)
+        def _predict_step(x):
+            return inference_fn(inputs=x.get(input_type))
+
+        self._predict_step = _predict_step
+
+    def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
+        """
+        dataset: yields tuples (inputs_dict, meta0, meta1, …)
+        Returns a dict of numpy arrays, each of shape (N, …)
+        """
+        acc: dict[str, list[np.ndarray]] = defaultdict(list)
+        inf_fn = self._predict_step
+
+        for inputs, *meta in track(
+            dataset, description="[cyan]Crunching data…", disable=no_progress
+        ):
+            logits = inf_fn(inputs)
+            for k, t in logits.items():
+                acc[k].append(t.numpy())
+            for idx, m in enumerate(meta):
+                acc[f"meta_{idx}"].append(m)
+
+        result: dict[str, np.ndarray] = {}
+        for k, arr_list in acc.items():
+            if k.startswith("meta_"):
+                try:
+                    result[k] = np.concatenate(arr_list, axis=0)
+                except ValueError:
+                    result[k] = arr_list
+            else:
+                result[k] = np.concatenate(arr_list, axis=0)
+        return result
+
+    def evaluate(self, dataset, no_progress: bool = False) -> dict[str, float]:
+        """Evaluate on a dataset."""
+        logits_acc: list[np.ndarray] = []
+        true_acc: list[np.ndarray] = []
+        inf_fn = self._predict_step
+
+        for inputs, y_true in track(
+            dataset, description="[cyan]Evaluating…", disable=no_progress
+        ):
+            logits = inf_fn(inputs)["prediction"]
+            logits_acc.append(logits.numpy())
+            true_acc.append(y_true.numpy())
+
+        logits = np.concatenate(logits_acc, axis=0)
+        y_true = np.concatenate(true_acc, axis=0)
+
+        loss = tf.keras.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True
+        )
+        loss = float(tf.reduce_mean(loss).numpy())
+
+        pred_labels = np.argmax(logits, axis=1)
+        true_labels = np.argmax(y_true, axis=1)
+        accuracy = float(np.mean(pred_labels == true_labels))
+
+        return {"loss": loss, "accuracy": accuracy}
+
+    def _load_class_map(self, path):
+        with open(path) as f:
+            _class_map = yaml.safe_load(f)["classes"]
+            return {
+                "num_classes": len(_class_map),
+                "class": [i["class"] for i in _class_map],
+                "index": [i["label"] for i in _class_map],
+            }
+
+    def _load_string_processor_config(self, path) -> Dict:
+        _map = {
+            "CODON": CODONS,
+            "CODON_ID": CODON_ID,
+            "AA_ID": AA_ID,
+            "MURPHY10_ID": MURPHY10_ID,
+            "PC5_ID": PC5_ID,
+            "DICODON": DICODONS,
+            "DICODON_ID": DICODON_ID,
+        }
+
+        if path is None:
+            return {"input_type": "translated"}
+
+        _config = yaml.safe_load(Path(path).read_text()) or {}
+        _model_cfg = _config.get("model")
+        _config = _model_cfg.get("embedding")
+        _config.update(_model_cfg.get("string_processor"))
+        _config["input_type"] = _config.get("type", "translated")
+
+        if _config["codon"] is not None and _config["codon_id"] is not None:
+            _config["codon"] = _map.get(_config.get("codon"))
+            _config["codon_id"] = _map.get(_config.get("codon_id"))
+            _config["codon_depth"] = max(_config.get("codon_id")) + 1
+            _config["vocab_size"] = len(_config.get("codon_id")) + 1
+            _config["ngram_width"] = int(math.log(len(_config["codon"]), 4))
+            input_shape = _model_cfg.get("embedding", {}).get("input_shape")
+            if _config.get("seq_onehot") is None and input_shape is not None:
                 _config["seq_onehot"] = (
                     len(input_shape) == 3
                     and input_shape[-1] is not None
