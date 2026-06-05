@@ -96,34 +96,21 @@ model:
         kernel_regularizer: "l2"
         kernel_regularizer_w: 0.01
 
-  reliability_model:
-    input_shape: 32
-    hidden_layers:
-    - name: dropout
-      config:
-        rate: 0.3
-    - name: dense
-      config:
-        units: 1
-        activation: null
-        dtype: float32
-        use_bias: true
-        kernel_regularizer: "l2"
-        kernel_regularizer_w: 0.05
+  # reliability_model disabled for strand test (requires return_nmd)
 
 training:
   data_dir: "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format"
   experiment_root: "experiments/experiment_{{ model.experiment }}_{{ model.seed }}"
   classifier_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier"
   reliability_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability"
-  classifier_epochs: 10
+  classifier_epochs: 3
   reliability_epochs: 0
   projection_epochs: 0
-  classifier_train_steps: 10000
-  reliability_train_steps: -1
-  classifier_validation_steps: 2000
-  reliability_validation_steps: -1
-  batch_size: 128
+  classifier_train_steps: 500
+  reliability_train_steps: 0
+  classifier_validation_steps: 100
+  reliability_validation_steps: 0
+  batch_size: 32
   optimizer: adam
   optimizer_params:
     learning_rate: 0.001
@@ -188,14 +175,4 @@ training:
       - "{{ training.data_dir }}/val.csv"
       label: [0, 1, 2, 3]
 
-  fragment_reliability_data:
-    train:
-    - class: [indist, ood]
-      path:
-      - "{{ training.data_dir }}/train.csv"
-      label: [1, 0]
-    validation:
-    - class: [indist, ood]
-      path:
-      - "{{ training.data_dir }}/val.csv"
-      label: [1, 0]
+  # fragment_reliability_data disabled for strand test

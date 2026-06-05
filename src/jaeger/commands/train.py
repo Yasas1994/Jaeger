@@ -324,7 +324,11 @@ class DynamicModelBuilder:
                 inputs=inputs, outputs=x_classifier, name="classification_head"
             )
             # combine with the representation learner
-            x_rep = models["rep_model"].output[0]
+            rep_out = models["rep_model"].output
+            if isinstance(rep_out, tuple):
+                x_rep = rep_out[0]
+            else:
+                x_rep = rep_out
             x = models["classification_head"](x_rep)
             models["jaeger_classifier"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_classifier"
@@ -381,36 +385,50 @@ class DynamicModelBuilder:
 
         # ==== 5. COMBINED MODEL ====
         rep_out = models["rep_model"].output
+        has_reliability = "reliability_head" in models
         if isinstance(rep_out, tuple):
             if len(rep_out) == 2:
                 x1, x2 = rep_out
-                reliability = models["reliability_head"](x2)  # NMD
                 class_ = models["classification_head"](x1)
+                outputs = {
+                    "prediction": class_,
+                    "embedding": x1,
+                    "nmd": x2,
+                }
+                if has_reliability:
+                    outputs["reliability"] = models["reliability_head"](x2)
                 models["jaeger_model"] = tf.keras.Model(
                     inputs=models["rep_model"].input,
-                    outputs={
-                        "prediction": class_,
-                        "reliability": reliability,
-                        "embedding": x1,
-                        "nmd": x2,
-                    },
+                    outputs=outputs,
                     name="Jaeger_model",
                 )
             elif len(rep_out) == 3:
                 x1, x2, g = rep_out
-                reliability = models["reliability_head"](x2)  # NMD
                 class_ = models["classification_head"](x1)
+                outputs = {
+                    "prediction": class_,
+                    "embedding": x1,
+                    "nmd": x2,
+                    "gate": g,
+                }
+                if has_reliability:
+                    outputs["reliability"] = models["reliability_head"](x2)
                 models["jaeger_model"] = tf.keras.Model(
                     inputs=models["rep_model"].input,
-                    outputs={
-                        "prediction": class_,
-                        "reliability": reliability,
-                        "embedding": x1,
-                        "nmd": x2,
-                        "gate": g,
-                    },
+                    outputs=outputs,
                     name="Jaeger_model",
                 )
+        else:
+            # No NMD output — single tensor from rep_model
+            class_ = models["classification_head"](rep_out)
+            models["jaeger_model"] = tf.keras.Model(
+                inputs=models["rep_model"].input,
+                outputs={
+                    "prediction": class_,
+                    "embedding": rep_out,
+                },
+                name="Jaeger_model",
+            )
         # ic(models)
 
         return models
@@ -630,10 +648,10 @@ class DynamicModelBuilder:
                 nmd = nmd[0]
             if "gated" not in pooling:
                 x = pooler(name=f"global_{pooling}pool")(x)
-                return (x, nmd) if nmd is not None else x
+                return (x, nmd) if len(nmd) > 0 else x
             else:
                 x, g = pooler(return_gate=True, name=f"global_{pooling}pool")(x)
-                return (x, nmd, g) if nmd is not None else (x, g)
+                return (x, nmd, g) if len(nmd) > 0 else (x, g)
         return x
 
     def _get_metrics(self, config):
@@ -742,6 +760,9 @@ class DynamicModelBuilder:
 
         elif train_branch == "reliability":
             # Freeze classifier and representation learner
+            if model.get("jaeger_reliability") is None:
+                logger.warning("jaeger_reliability not built — skipping reliability compilation")
+                return
             model.get("rep_model").trainable = False
             model.get("jaeger_reliability").compile(
                 optimizer=self.optimizer,
@@ -1201,7 +1222,11 @@ def train_fragment_core(**kwargs):
         )
         if kwargs.get("only_save", False) is False:
             # ic(kwargs.get("only_save", False))
-            if not rel_converged and not kwargs.get("only_classification_head", False):
+            if (
+                not rel_converged
+                and not kwargs.get("only_classification_head", False)
+                and models.get("jaeger_reliability") is not None
+            ):
                 train_args = {
                     "validation_data": rel_train_data.get("validation").take(
                         builder.train_cfg.get("reliability_validation_steps")
