@@ -1039,6 +1039,9 @@ def train_fragment_core(**kwargs):
                         ).lower()
                         else True,
                         shuffle=string_processor_config.get("shuffle"),
+                        shuffle_frames=string_processor_config.get(
+                            "shuffle_frames", False
+                        ),
                     ),
                     num_parallel_calls=tf.data.AUTOTUNE,
                 )
@@ -1168,6 +1171,9 @@ def train_fragment_core(**kwargs):
                         masking=string_processor_config.get("masking"),
                         num_classes=builder.reliability_out_dim,
                         class_label_onehot=False,
+                        shuffle_frames=string_processor_config.get(
+                            "shuffle_frames", False
+                        ),
                     ),
                     num_parallel_calls=tf.data.AUTOTUNE,
                 )

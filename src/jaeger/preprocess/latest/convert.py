@@ -71,6 +71,7 @@ def process_string_train(
     ngram_width=None,
     input_type="translated",  # "translated", "nucleotide", "both"
     shuffle=False,
+    shuffle_frames=False,
 ):
     """
     TensorFlow string processing function for sequence input.
@@ -174,6 +175,12 @@ def process_string_train(
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=1)
             else:
                 seq = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
+
+            # Frame shuffle test: randomly permute reading frame order
+            if shuffle_frames:
+                perm = tf.random.shuffle(tf.constant([0, 1, 2, 3, 4, 5]))
+                seq = tf.gather(seq, perm, axis=0)
+
             if seq_onehot:
                 outputs["translated"] = tf.one_hot(
                     seq, depth=codon_depth, dtype=tf.float32, on_value=1, off_value=0
