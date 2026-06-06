@@ -517,11 +517,18 @@ def _load_numpy_raw_variable_dataset(
 
 def _load_numpy_full_dataset(
     path: str,
+    input_type: str = "translated",
+    use_embedding_layer: bool = True,
+    codon_depth: int = 21,
+    crop_size: int = 500,
 ):
     """Loads a fully-preprocessed NumPy .npz file and returns a tf.data.Dataset.
 
+    Supports both structured arrays (N, 6, seq_len) and flattened arrays
+    (N, flat) for backward compatibility. Also supports nucleotide input.
+
     The .npz file must contain:
-        - 'translated': int32 array of shape (N, 6, seq_len) — preprocessed 6 frames
+        - 'translated' or 'nucleotide': preprocessed sequences
         - 'label': float32 array of shape (N, num_classes)
 
     No further preprocessing is applied — the data is ready for direct training.
@@ -529,10 +536,28 @@ def _load_numpy_full_dataset(
     augmentations (shuffle, mutate, frame_shuffle).
     """
     data = np.load(path, allow_pickle=False)
-    sequences = data["translated"]
+
+    if input_type == "translated":
+        if use_embedding_layer:
+            seq_shape = [6, crop_size // 3 - 1]
+        else:
+            seq_shape = [6, crop_size // 3 - 1, codon_depth]
+        seq_key = "translated"
+    elif input_type == "nucleotide":
+        seq_shape = [2, crop_size, 4]
+        seq_key = "nucleotide"
+    else:
+        raise ValueError(f"Unsupported input_type: {input_type}")
+
+    seqs = data[seq_key]
     labels = data["label"]
 
-    dataset = tf.data.Dataset.from_tensor_slices(({"translated": sequences}, labels))
+    # Ensure correct shapes if needed (flattened -> structured)
+    expected_flat = np.prod(seq_shape)
+    if seqs.ndim == 2 and seqs.shape[1] == expected_flat:
+        seqs = seqs.reshape([-1] + list(seq_shape))
+
+    dataset = tf.data.Dataset.from_tensor_slices(({seq_key: seqs}, labels))
     return dataset
 
 
@@ -1100,16 +1125,17 @@ class DynamicModelBuilder:
         if "pooling" in cfg:
             pooling = cfg.get("pooling", "average").lower()
             pooler = self._get_pooler(pooling)
+            has_nmd = len(nmd) > 0
             if len(nmd) > 1:
                 nmd = nmd_con(nmd)
             elif len(nmd) == 1:
                 nmd = nmd[0]
             if "gated" not in pooling:
                 x = pooler(name=f"global_{pooling}pool")(x)
-                return (x, nmd) if len(nmd) > 0 else x
+                return (x, nmd) if has_nmd else x
             else:
                 x, g = pooler(return_gate=True, name=f"global_{pooling}pool")(x)
-                return (x, nmd, g) if len(nmd) > 0 else (x, g)
+                return (x, nmd, g) if has_nmd else (x, g)
         return x
 
     def _get_metrics(self, config):
@@ -1576,7 +1602,7 @@ def train_fragment_core(**kwargs):
                         "NumPy format only supports a single .npz file per split; using first: %s",
                         paths[0],
                     )
-                _data = _load_numpy_dataset(
+                _data = _load_numpy_full_dataset(
                     paths[0],
                     input_type=string_processor_config.get("input_type"),
                     use_embedding_layer=string_processor_config.get(
@@ -1852,7 +1878,7 @@ def train_fragment_core(**kwargs):
                         "NumPy format only supports a single .npz file per split; using first: %s",
                         paths[0],
                     )
-                _data = _load_numpy_dataset(
+                _data = _load_numpy_full_dataset(
                     paths[0],
                     input_type=string_processor_config.get("input_type"),
                     use_embedding_layer=string_processor_config.get(

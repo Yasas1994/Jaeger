@@ -863,6 +863,98 @@ def convert(**kwargs):
 
 @utils.command(
     context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+            Convert training data to optimized formats for faster loading.
+            Preprocesses CSV data once so training can skip live preprocessing.
+
+            usage
+            -----
+
+            jaeger utils optimize-data -i train.csv -o train.npz --format numpy_full
+
+            Supported formats:
+              tfrecord            - TFRecord with preprocessed tensors
+              numpy               - NumPy .npz with preprocessed tensors (legacy)
+              numpy_raw           - int8 sequences + TF preprocessing at train time
+              numpy_full          - fully preprocessed, fastest loading
+              numpy_raw_variable  - variable-length int8 sequences
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input CSV file",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=str,
+    required=True,
+    help="Path to output file",
+)
+@click.option(
+    "--format",
+    type=click.Choice(
+        ["tfrecord", "numpy", "numpy_raw", "numpy_full", "numpy_raw_variable"],
+        case_sensitive=False,
+    ),
+    required=True,
+    help="Output format",
+)
+@click.option(
+    "--crop-size",
+    type=int,
+    default=500,
+    show_default=True,
+    help="Sequence crop size",
+)
+@click.option(
+    "--num-classes",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Number of classes",
+)
+@click.option(
+    "--num-workers",
+    type=int,
+    default=None,
+    help="Number of parallel workers (default: all CPUs)",
+)
+@click.option(
+    "--use-embedding-layer/--no-embedding-layer",
+    default=True,
+    show_default=True,
+    help="Use embedding layer (int indices) vs one-hot (tfrecord/numpy only)",
+)
+@click.option(
+    "--max-length",
+    type=int,
+    default=5000,
+    show_default=True,
+    help="Maximum sequence length (numpy_raw_variable only)",
+)
+def optimize_data(**kwargs):
+    """Convert CSV training data to optimized formats"""
+    from jaeger.commands.utils import optimize_data_core
+
+    optimize_data_core(
+        input_path=kwargs.get("input"),
+        output_path=kwargs.get("output"),
+        format=kwargs.get("format"),
+        crop_size=kwargs.get("crop_size"),
+        num_classes=kwargs.get("num_classes"),
+        num_workers=kwargs.get("num_workers"),
+        use_embedding_layer=kwargs.get("use_embedding_layer"),
+        max_length=kwargs.get("max_length"),
+    )
+    pass
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""Combine multiple model graphs into an ensemble model. Outputs can be summarized with majority voting,
             sum or mean of logits of each model
 

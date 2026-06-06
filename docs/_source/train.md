@@ -160,49 +160,65 @@ For example, a 3.1M sample dataset (~15 GB preprocessed) easily fits in most tra
 
 ### Converting CSV to optimized formats
 
-Use the provided conversion script:
+Use the `jaeger utils optimize-data` command:
 
 ```bash
 # NumPy full format (fastest — fully preprocessed, no runtime overhead)
-python scripts/convert_to_numpy_full.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled_full.npz \
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_full.npz \
+  --format numpy_full \
   --crop-size 500 \
   --num-classes 3
 
 # NumPy raw format (fast int8 + runtime augmentations)
-python scripts/convert_to_numpy_fast.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled_raw.npz \
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_raw.npz \
+  --format numpy_raw \
   --crop-size 500 \
   --num-classes 3
 
 # NumPy raw variable format (variable-length sequences)
-python scripts/convert_to_numpy_variable.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled_variable.npz \
-  --max-length 5000 \
-  --num-classes 3
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_variable.npz \
+  --format numpy_raw_variable \
+  --crop-size 500 \
+  --num-classes 3 \
+  --max-length 5000
 
 # TFRecord format (good for very large datasets)
-python scripts/convert_preprocessed_data.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled.tfrecord \
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled.tfrecord \
   --format tfrecord \
-  --crop-size 500
+  --crop-size 500 \
+  --num-classes 3
+
+# Legacy NumPy format (preprocessed tensors)
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled.npz \
+  --format numpy \
+  --crop-size 500 \
+  --num-classes 3
 ```
 
 Convert both training and validation sets:
 
 ```bash
 for split in train val; do
-  python scripts/convert_to_numpy_full.py \
-    --csv ${split}_shuffled.csv \
-    --output ${split}_shuffled_full.npz \
+  jaeger utils optimize-data \
+    -i ${split}_shuffled.csv \
+    -o ${split}_shuffled_full.npz \
+    --format numpy_full \
     --crop-size 500 \
     --num-classes 3
 done
 ```
+
+
 
 ### Configuring training to use optimized formats
 
