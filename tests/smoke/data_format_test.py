@@ -7,7 +7,6 @@ import tensorflow as tf
 
 from jaeger.commands.train import (
     _make_parse_tfrecord_fn,
-    _load_numpy_dataset,
     _load_numpy_full_dataset,
     _get_tfrecord_feature_description,
 )
@@ -126,8 +125,8 @@ def test_parse_tfrecord_embedding():
         print(f"✓ TFRecord embedding parse: {count} samples, shapes correct")
 
 
-def test_load_numpy_dataset():
-    """Test loading NumPy .npz files."""
+def test_load_numpy_full_dataset_with_legacy_params():
+    """Test loading NumPy .npz files with legacy params (backward compatibility)."""
     with tempfile.TemporaryDirectory() as tmpdir:
         csv_path = os.path.join(tmpdir, "test.csv")
         npz_path = os.path.join(tmpdir, "test.npz")
@@ -157,8 +156,8 @@ def test_load_numpy_dataset():
 
         np.savez_compressed(npz_path, translated=sequences, label=labels)
 
-        # Load back
-        dataset = _load_numpy_dataset(
+        # Load back with legacy params
+        dataset = _load_numpy_full_dataset(
             npz_path,
             input_type="translated",
             use_embedding_layer=True,
@@ -176,7 +175,7 @@ def test_load_numpy_dataset():
             count += 1
 
         assert count == NUM_SAMPLES
-        print(f"✓ NumPy load: {count} samples, shapes correct")
+        print(f"✓ NumPy full load (legacy params): {count} samples, shapes correct")
 
 
 def test_numpy_flattened_format():
@@ -193,7 +192,7 @@ def test_numpy_flattened_format():
         np.savez_compressed(npz_path, translated=sequences, label=labels)
 
         # Load back
-        dataset = _load_numpy_dataset(
+        dataset = _load_numpy_full_dataset(
             npz_path,
             input_type="translated",
             use_embedding_layer=True,
@@ -207,7 +206,7 @@ def test_numpy_flattened_format():
             count += 1
 
         assert count == NUM_SAMPLES
-        print(f"✓ NumPy flattened load: {count} samples, reshaped correctly")
+        print(f"✓ NumPy full flattened load: {count} samples, reshaped correctly")
 
 
 def test_dataset_pipeline_with_batching():
@@ -222,7 +221,7 @@ def test_dataset_pipeline_with_batching():
         np.savez_compressed(npz_path, translated=sequences, label=labels)
 
         dataset = (
-            _load_numpy_dataset(
+            _load_numpy_full_dataset(
                 npz_path,
                 input_type="translated",
                 use_embedding_layer=True,
@@ -294,7 +293,7 @@ if __name__ == "__main__":
 
     test_tfrecord_feature_description()
     test_parse_tfrecord_embedding()
-    test_load_numpy_dataset()
+    test_load_numpy_full_dataset_with_legacy_params()
     test_numpy_flattened_format()
     test_dataset_pipeline_with_batching()
     test_load_numpy_full_dataset()

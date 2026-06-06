@@ -395,7 +395,7 @@ python scripts/convert_preprocessed_data.py \
 ```yaml
 model:
   string_processor:
-    data_format: numpy_full   # csv | tfrecord | numpy | numpy_raw | numpy_raw_variable | numpy_full
+    data_format: numpy_full   # csv | tfrecord | numpy_raw | numpy_raw_variable | numpy_full
     # ... other settings
 
 fragment_classifier_data:
@@ -409,14 +409,13 @@ fragment_classifier_data:
 
 ### 7.3 Expected speedup
 
-| Format | Batches/sec | Speedup vs CSV | Notes |
-|--------|-------------|----------------|-------|
-| CSV (live preprocess) | ~130 | 1× | Baseline |
-| TFRecord + cache | ~3,800 | ~24× | Cached on disk |
-| NumPy + cache | ~5,300 | ~33× | Preprocessed in RAM |
-| NumPy raw + cache | ~5,500 | ~35× | int8 + TF preprocessing |
-| NumPy raw variable + cache | ~5,000 | ~32× | Variable-length |
-| NumPy full + cache | ~6,000 | ~40× | Fully preprocessed, no runtime overhead |
+| Format | Batches/sec | Speedup vs numpy_raw | Notes |
+|--------|-------------|----------------------|-------|
+| CSV (live preprocess) | ~130 | 0.1× | Baseline — very slow |
+| TFRecord + cache | ~3,800 | ~3× | Cached on disk |
+| NumPy raw + cache | ~1,150 | 1.0× | int8 + TF preprocessing, augmentations supported |
+| NumPy raw variable + cache | ~830 | ~0.7× | Variable-length sequences |
+| NumPy full + cache | ~10,000 | ~8.7× | Fully preprocessed, no runtime overhead |
 
 A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily fits in most server RAM.
 
@@ -440,7 +439,7 @@ A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily f
 
 - **`numpy_full`**: No runtime augmentations (shuffle, mutate, frame_shuffle) are applied. All preprocessing is baked into the converted file. Use `numpy_raw` if you need runtime augmentations.
 - **`numpy_raw` / `numpy_raw_variable`**: Runtime augmentations (shuffle, mutate, frame_shuffle) are applied in TensorFlow during training. Slightly slower than `numpy_full` but more flexible.
-- Data augmentation (mutation, masking) must be applied **before** conversion for `numpy` and `numpy_full` formats.
+- Data augmentation (mutation, masking) must be applied **before** conversion for `numpy_full` format.
 - The conversion scripts do not shuffle — shuffle your CSV first if needed.
 - NumPy formats load the entire dataset into RAM; use TFRecord if memory is limited.
 

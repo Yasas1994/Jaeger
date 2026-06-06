@@ -157,39 +157,6 @@ def _make_parse_tfrecord_fn(
     return _parse_tfrecord
 
 
-def _load_numpy_dataset(
-    path: str,
-    input_type: str,
-    use_embedding_layer: bool,
-    codon_depth: int,
-    crop_size: int,
-):
-    """Loads a preprocessed NumPy .npz file and returns a tf.data.Dataset."""
-    data = np.load(path, allow_pickle=False)
-    if input_type == "translated":
-        if use_embedding_layer:
-            seq_shape = [6, crop_size // 3 - 1]
-        else:
-            seq_shape = [6, crop_size // 3 - 1, codon_depth]
-        seq_key = "translated"
-    elif input_type == "nucleotide":
-        seq_shape = [2, crop_size, 4]
-        seq_key = "nucleotide"
-    else:
-        raise ValueError(f"Unsupported input_type: {input_type}")
-
-    seqs = data[seq_key]
-    labels = data["label"]
-
-    # Ensure correct shapes if needed (flattened -> structured)
-    expected_flat = np.prod(seq_shape)
-    if seqs.ndim == 2 and seqs.shape[1] == expected_flat:
-        seqs = seqs.reshape([-1] + list(seq_shape))
-
-    dataset = tf.data.Dataset.from_tensor_slices(({seq_key: seqs}, labels))
-    return dataset
-
-
 def _build_codon_lookup_table() -> tf.Tensor:
     """Build a 5x5x5 lookup table for mapping int8 DNA triplets to codon IDs."""
     CODONS = [
@@ -1595,33 +1562,6 @@ def train_fragment_core(**kwargs):
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
-            elif data_format == "numpy":
-                logger.info(f"Loading {k} data from NumPy: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_full_dataset(
-                    paths[0],
-                    input_type=string_processor_config.get("input_type"),
-                    use_embedding_layer=string_processor_config.get(
-                        "use_embedding_layer", False
-                    ),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    crop_size=string_processor_config.get("crop_size"),
-                )
-                train_data[k] = (
-                    _data.cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
             elif data_format == "numpy_raw":
                 logger.info(f"Loading {k} data from NumPy raw: {paths}")
                 if len(paths) > 1:
@@ -1710,7 +1650,7 @@ def train_fragment_core(**kwargs):
                 )
             else:
                 raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy', 'numpy_raw', or 'numpy_raw_variable'."
+                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy_raw', 'numpy_raw_variable', or 'numpy_full'."
                 )
         # for i in train_data["train"].take(1):
         #     ic(i)
@@ -1871,33 +1811,6 @@ def train_fragment_core(**kwargs):
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
-            elif data_format == "numpy":
-                logger.info(f"Loading reliability {k} data from NumPy: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_full_dataset(
-                    paths[0],
-                    input_type=string_processor_config.get("input_type"),
-                    use_embedding_layer=string_processor_config.get(
-                        "use_embedding_layer", False
-                    ),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    crop_size=string_processor_config.get("crop_size"),
-                )
-                rel_train_data[k] = (
-                    _data.cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
             elif data_format == "numpy_raw":
                 logger.info(f"Loading reliability {k} data from NumPy raw: {paths}")
                 if len(paths) > 1:
@@ -1988,7 +1901,7 @@ def train_fragment_core(**kwargs):
                 )
             else:
                 raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy', 'numpy_raw', 'numpy_raw_variable', or 'numpy_full'."
+                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy_raw', 'numpy_raw_variable', or 'numpy_full'."
                 )
         # ============== check if the model has converged ========
 

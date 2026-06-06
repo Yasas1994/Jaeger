@@ -1164,9 +1164,8 @@ def optimize_data_core(
 ):
     """Convert Jaeger CSV training data to an optimized format.
 
-    Supports five output formats:
+    Supports four output formats:
         - tfrecord: Preprocessed tensors in TFRecord format
-        - numpy: Preprocessed tensors in NumPy .npz format (legacy)
         - numpy_raw: int8 sequences + TF preprocessing at train time
         - numpy_full: Fully preprocessed, fastest loading
         - numpy_raw_variable: Variable-length int8 sequences
@@ -1178,7 +1177,7 @@ def optimize_data_core(
     output_path : str
         Path to output file.
     format : str
-        One of: tfrecord, numpy, numpy_raw, numpy_full, numpy_raw_variable.
+        One of: tfrecord, numpy_raw, numpy_full, numpy_raw_variable.
     crop_size : int
         Sequence crop size (default: 500).
     num_classes : int
@@ -1187,14 +1186,13 @@ def optimize_data_core(
         Number of parallel workers for CPU-bound formats.
         Defaults to all CPUs.
     use_embedding_layer : bool
-        For tfrecord/numpy: use embedding layer (int indices) vs one-hot.
+        For tfrecord: use embedding layer (int indices) vs one-hot.
     max_length : int
         For numpy_raw_variable: maximum sequence length.
     """
     format = format.lower()
     valid_formats = [
         "tfrecord",
-        "numpy",
         "numpy_raw",
         "numpy_full",
         "numpy_raw_variable",
@@ -1207,7 +1205,7 @@ def optimize_data_core(
     print(f"Converting {input_path} -> {output_path}")
     print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
 
-    if format in ("tfrecord", "numpy"):
+    if format == "tfrecord":
         _convert_with_tf(
             input_path, output_path, format, crop_size, num_classes, use_embedding_layer
         )
@@ -1233,7 +1231,7 @@ def _convert_with_tf(
     num_classes: int,
     use_embedding_layer: bool,
 ):
-    """Convert CSV using TensorFlow preprocessing (tfrecord or numpy)."""
+    """Convert CSV using TensorFlow preprocessing (tfrecord only)."""
     from jaeger.preprocess.latest.convert import process_string_train
     from jaeger.preprocess.latest.maps import CODONS, CODON_ID
 
@@ -1252,16 +1250,9 @@ def _convert_with_tf(
         codon_num=CODON_ID,
     )
 
-    seq_len = crop_size // 3 - 1
-
-    if format == "tfrecord":
-        _convert_to_tfrecord(
-            csv_path, output_path, total, preprocess_fn, use_embedding_layer
-        )
-    else:
-        _convert_to_numpy_legacy(
-            csv_path, output_path, total, preprocess_fn, seq_len, use_embedding_layer
-        )
+    _convert_to_tfrecord(
+        csv_path, output_path, total, preprocess_fn, use_embedding_layer
+    )
 
 
 def _int64_feature(value):
@@ -1338,48 +1329,6 @@ def _convert_to_tfrecord(
         print(
             f"Done! {total} samples in {elapsed:.1f}s ({total / elapsed:.1f} samples/sec)"
         )
-
-
-def _convert_to_numpy_legacy(
-    csv_path, output_path, total, preprocess_fn, seq_len, use_embedding_layer
-):
-    """Convert CSV to NumPy .npz with preprocessed tensors."""
-    if use_embedding_layer:
-        sequences = np.zeros((total, 6, seq_len), dtype=np.int32)
-    else:
-        with open(csv_path) as f:
-            first_line = next(f)
-        outputs, _ = preprocess_fn(first_line.strip().encode())
-        codon_depth = outputs["translated"].shape[-1]
-        sequences = np.zeros((total, 6, seq_len, codon_depth), dtype=np.float32)
-        print(f"Codon depth: {codon_depth}")
-
-    labels = np.zeros((total, 3), dtype=np.float32)
-
-    start = time.time()
-    with open(csv_path) as f:
-        for i, line in enumerate(f):
-            outputs, label = preprocess_fn(line.strip().encode())
-            seq = outputs["translated"].numpy()
-            sequences[i] = seq
-            labels[i] = label.numpy()
-            if (i + 1) % 5000 == 0:
-                elapsed = time.time() - start
-                rate = (i + 1) / elapsed
-                print(
-                    f"  {i + 1}/{total} ({100 * (i + 1) / total:.1f}%) - {rate:.1f} samples/sec"
-                )
-
-    elapsed = time.time() - start
-    print(
-        f"Done! {total} samples in {elapsed:.1f}s ({total / elapsed:.1f} samples/sec)"
-    )
-    print(
-        f"Memory: sequences={sequences.nbytes / (1024**3):.2f}GB, labels={labels.nbytes / (1024**3):.3f}GB"
-    )
-    print(f"Saving to {output_path}...")
-    np.savez_compressed(output_path, translated=sequences, label=labels)
-    print("Saved!")
 
 
 # -- numpy_raw (int8 sequences) ------------------------------------------------

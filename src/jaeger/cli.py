@@ -874,7 +874,6 @@ def convert(**kwargs):
 
             Supported formats:
               tfrecord            - TFRecord with preprocessed tensors
-              numpy               - NumPy .npz with preprocessed tensors (legacy)
               numpy_raw           - int8 sequences + TF preprocessing at train time
               numpy_full          - fully preprocessed, fastest loading
               numpy_raw_variable  - variable-length int8 sequences
@@ -897,7 +896,7 @@ def convert(**kwargs):
 @click.option(
     "--format",
     type=click.Choice(
-        ["tfrecord", "numpy", "numpy_raw", "numpy_full", "numpy_raw_variable"],
+        ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"],
         case_sensitive=False,
     ),
     required=True,
@@ -927,7 +926,7 @@ def convert(**kwargs):
     "--use-embedding-layer/--no-embedding-layer",
     default=True,
     show_default=True,
-    help="Use embedding layer (int indices) vs one-hot (tfrecord/numpy only)",
+    help="Use embedding layer (int indices) vs one-hot (tfrecord only)",
 )
 @click.option(
     "--max-length",

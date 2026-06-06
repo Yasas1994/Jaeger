@@ -138,16 +138,15 @@ jaeger utils ood-data \
 
 By default, Jaeger loads training data from CSV files and preprocesses sequences on-the-fly (live codon translation, n-gram extraction, etc.). This CPU-bound preprocessing can become a bottleneck, leaving the GPU underutilized.
 
-Jaeger supports six data formats via the `data_format` config option:
+Jaeger supports five data formats via the `data_format` config option:
 
 | Format | Speedup | Best for | Notes |
 |--------|---------|----------|-------|
 | `csv` | 1× (baseline) | Small datasets, quick experiments | Live preprocessing every epoch |
-| `tfrecord` | ~20–25× | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
-| `numpy` | ~30× | Datasets that fit in memory | Preprocessed once, loads into RAM |
-| `numpy_raw` | ~35× | Large datasets, with augmentations | int8 sequences + TF preprocessing |
-| `numpy_raw_variable` | ~32× | Variable-length sequences | int8 sequences, variable length |
-| `numpy_full` | ~40× | Maximum throughput, no augmentations | Fully preprocessed, direct loading |
+| `tfrecord` | ~3× vs numpy_raw | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
+| `numpy_raw` | 1× (baseline) | Large datasets, with augmentations | int8 sequences + TF preprocessing |
+| `numpy_raw_variable` | ~0.7× | Variable-length sequences | int8 sequences, variable length |
+| `numpy_full` | ~8.7× | Maximum throughput, no augmentations | Fully preprocessed, direct loading |
 
 ### When to optimize
 
@@ -196,13 +195,6 @@ jaeger utils optimize-data \
   --crop-size 500 \
   --num-classes 3
 
-# Legacy NumPy format (preprocessed tensors)
-jaeger utils optimize-data \
-  -i train_shuffled.csv \
-  -o train_shuffled.npz \
-  --format numpy \
-  --crop-size 500 \
-  --num-classes 3
 ```
 
 Convert both training and validation sets:
@@ -227,7 +219,7 @@ Add `data_format` to the `string_processor` section of your config:
 ```yaml
 model:
   string_processor:
-    data_format: numpy_full   # csv | tfrecord | numpy | numpy_raw | numpy_raw_variable | numpy_full
+    data_format: numpy_full   # csv | tfrecord | numpy_raw | numpy_raw_variable | numpy_full
     seq_onehot: false
     codon: CODON
     codon_id: CODON_ID
@@ -253,7 +245,7 @@ fragment_classifier_data:
       label: [0, 1, 2]
 ```
 
-**Important:** When using `tfrecord` or `numpy`, the `shuffle`, `mutate`, and `masking` settings in `string_processor` are ignored because preprocessing (including shuffling) is already baked into the converted files. Use the conversion script's `--shuffle` option if you need shuffled data.
+**Important:** When using `tfrecord` or `numpy_full`, the `shuffle`, `mutate`, and `masking` settings in `string_processor` are ignored because preprocessing (including shuffling) is already baked into the converted files. Use the conversion script's `--shuffle` option if you need shuffled data.
 
 ---
 
@@ -331,7 +323,7 @@ fragment_reliability_data:
 | Section | Purpose |
 |---------|---------|
 | `model` | Architecture, embedding, class labels |
-| `model.string_processor` | Preprocessing settings, **data format** (`csv`/`tfrecord`/`numpy`/`numpy_raw`/`numpy_raw_variable`/`numpy_full`) |
+| `model.string_processor` | Preprocessing settings, **data format** (`csv`/`tfrecord`/`numpy_raw`/`numpy_raw_variable`/`numpy_full`) |
 | `representation_learner` | CNN layers, residual blocks, attention |
 | `classifier` | Classification head architecture |
 | `reliability` | Reliability (OOD) head architecture |
