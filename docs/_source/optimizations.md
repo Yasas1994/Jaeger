@@ -25,7 +25,7 @@ All commands below assume Jaeger is installed with GPU support
 
 | Optimization | Effort | Speedup | Best for |
 |--------------|--------|---------|----------|
-| [Preprocessed data formats](#7-preprocessed-training-data-formats) | One conversion | 20–30× | Training large models where data loading is the bottleneck |
+| [Preprocessed data formats](#7-preprocessed-training-data-formats) | One conversion | 20–40× | Training large models where data loading is the bottleneck |
 
 ---
 
@@ -361,12 +361,26 @@ When training large models, the biggest bottleneck is often not the GPU but the 
 ### 7.1 Convert your training data
 
 ```bash
-# NumPy format (fastest — entire dataset in memory)
-python scripts/convert_preprocessed_data.py \
+# NumPy full format (fastest — fully preprocessed, direct loading)
+python scripts/convert_to_numpy_full.py \
   --csv train_shuffled.csv \
-  --output train_shuffled.npz \
-  --format numpy \
-  --crop-size 500
+  --output train_shuffled_full.npz \
+  --crop-size 500 \
+  --num-classes 3
+
+# NumPy raw format (fast int8 + runtime augmentations)
+python scripts/convert_to_numpy_fast.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled_raw.npz \
+  --crop-size 500 \
+  --num-classes 3
+
+# NumPy raw variable format (variable-length sequences)
+python scripts/convert_to_numpy_variable.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled_variable.npz \
+  --max-length 5000 \
+  --num-classes 3
 
 # TFRecord format (cached on disk, good for very large datasets)
 python scripts/convert_preprocessed_data.py \
@@ -381,27 +395,40 @@ python scripts/convert_preprocessed_data.py \
 ```yaml
 model:
   string_processor:
-    data_format: numpy    # or tfrecord
+    data_format: numpy_full   # csv | tfrecord | numpy | numpy_raw | numpy_raw_variable | numpy_full
     # ... other settings
 
 fragment_classifier_data:
   train:
     - path:
-        - "{{ training.data_dir }}/train_shuffled.npz"
+        - "{{ training.data_dir }}/train_shuffled_full.npz"
   validation:
     - path:
-        - "{{ training.data_dir }}/val_shuffled.npz"
+        - "{{ training.data_dir }}/val_shuffled_full.npz"
 ```
 
 ### 7.3 Expected speedup
 
-| Format | Batches/sec | Speedup vs CSV |
-|--------|-------------|----------------|
-| CSV (live preprocess) | ~160 | 1× |
-| TFRecord + cache | ~3,800 | ~24× |
-| NumPy + cache | ~5,300 | ~33× |
+| Format | Batches/sec | Speedup vs CSV | Notes |
+|--------|-------------|----------------|-------|
+| CSV (live preprocess) | ~130 | 1× | Baseline |
+| TFRecord + cache | ~3,800 | ~24× | Cached on disk |
+| NumPy + cache | ~5,300 | ~33× | Preprocessed in RAM |
+| NumPy raw + cache | ~5,500 | ~35× | int8 + TF preprocessing |
+| NumPy raw variable + cache | ~5,000 | ~32× | Variable-length |
+| NumPy full + cache | ~6,000 | ~40× | Fully preprocessed, no runtime overhead |
 
-A 3.1M sample dataset preprocessed as NumPy is only ~15 GB and easily fits in most server RAM.
+A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily fits in most server RAM.
+
+**Format selection guide:**
+
+| Need | Recommended format |
+|------|-------------------|
+| Maximum throughput, no augmentations | `numpy_full` |
+| Fast loading + runtime augmentations (shuffle, mutate) | `numpy_raw` |
+| Variable-length sequences | `numpy_raw_variable` |
+| Dataset too large for RAM | `tfrecord` |
+| Quick experiments, small datasets | `csv` (default) |
 
 ### When to use
 
@@ -411,9 +438,11 @@ A 3.1M sample dataset preprocessed as NumPy is only ~15 GB and easily fits in mo
 
 ### Caveats
 
-- Data augmentation (mutation, masking, frame shuffling) must be applied **before** conversion.
-- The conversion script does not shuffle — shuffle your CSV first if needed.
-- NumPy format loads the entire dataset into RAM; use TFRecord if memory is limited.
+- **`numpy_full`**: No runtime augmentations (shuffle, mutate, frame_shuffle) are applied. All preprocessing is baked into the converted file. Use `numpy_raw` if you need runtime augmentations.
+- **`numpy_raw` / `numpy_raw_variable`**: Runtime augmentations (shuffle, mutate, frame_shuffle) are applied in TensorFlow during training. Slightly slower than `numpy_full` but more flexible.
+- Data augmentation (mutation, masking) must be applied **before** conversion for `numpy` and `numpy_full` formats.
+- The conversion scripts do not shuffle — shuffle your CSV first if needed.
+- NumPy formats load the entire dataset into RAM; use TFRecord if memory is limited.
 
 ---
 
@@ -434,6 +463,8 @@ A 3.1M sample dataset preprocessed as NumPy is only ~15 GB and easily fits in mo
 
 | Situation | Recommended option |
 |-----------|--------------------|
-| GPU utilization < 20%, epoch time dominated by data loading | Convert to NumPy with `scripts/convert_preprocessed_data.py` |
+| GPU utilization < 20%, epoch time dominated by data loading | Convert to `numpy_full` with `scripts/convert_to_numpy_full.py` |
+| Need runtime augmentations + fast loading | Convert to `numpy_raw` with `scripts/convert_to_numpy_fast.py` |
+| Variable-length sequences | Convert to `numpy_raw_variable` with `scripts/convert_to_numpy_variable.py` |
 | Dataset too large for RAM but still CPU-bound | Convert to TFRecord |
 | Quick experiments, small datasets | Stick with CSV (default) |

@@ -190,6 +190,352 @@ def _load_numpy_dataset(
     return dataset
 
 
+def _build_codon_lookup_table() -> tf.Tensor:
+    """Build a 5x5x5 lookup table for mapping int8 DNA triplets to codon IDs."""
+    CODONS = [
+        "TTT",
+        "TTC",
+        "TTA",
+        "TTG",
+        "CTT",
+        "CTC",
+        "CTA",
+        "CTG",
+        "ATT",
+        "ATC",
+        "ATA",
+        "ATG",
+        "GTT",
+        "GTC",
+        "GTA",
+        "GTG",
+        "TCT",
+        "TCC",
+        "TCA",
+        "TCG",
+        "CCT",
+        "CCC",
+        "CCA",
+        "CCG",
+        "ACT",
+        "ACC",
+        "ACA",
+        "ACG",
+        "GCT",
+        "GCC",
+        "GCA",
+        "GCG",
+        "TAT",
+        "TAC",
+        "TAA",
+        "TAG",
+        "CAT",
+        "CAC",
+        "CAA",
+        "CAG",
+        "AAT",
+        "AAC",
+        "AAA",
+        "AAG",
+        "GAT",
+        "GAC",
+        "GAA",
+        "GAG",
+        "TGT",
+        "TGC",
+        "TGA",
+        "TGG",
+        "CGT",
+        "CGC",
+        "CGA",
+        "CGG",
+        "AGT",
+        "AGC",
+        "AGA",
+        "AGG",
+        "GGT",
+        "GGC",
+        "GGA",
+        "GGG",
+    ]
+    BASES = ["A", "T", "G", "C", "N"]
+    codon_to_id = {c: i for i, c in enumerate(CODONS)}
+
+    lookup = np.zeros((5, 5, 5), dtype=np.int32)
+    for i in range(5):
+        for j in range(5):
+            for k in range(5):
+                codon = BASES[i] + BASES[j] + BASES[k]
+                lookup[i, j, k] = codon_to_id.get(codon, -1)
+
+    return tf.constant(lookup, dtype=tf.int32)
+
+
+def _make_process_raw_sequence_fn(
+    crop_size: int = 500,
+    ngram_width: int = 3,
+    num_classes: int = 3,
+    shuffle: bool = False,
+    mutate: bool = False,
+    mutation_rate: float = 0.1,
+    shuffle_frames: bool = False,
+):
+    """Creates a TF function that converts int8 DNA sequences to 6-frame codon embeddings."""
+    codon_lookup = _build_codon_lookup_table()
+    # Complement mapping for int8: A=0->T=1, T=1->A=0, G=2->C=3, C=3->G=2, N=4->N=4
+    comp_lookup = tf.constant([1, 0, 3, 2, 4], dtype=tf.int32)
+    seq_len = crop_size // ngram_width - 1  # 165 for crop_size=500
+
+    @tf.function
+    def _process_raw_sequence(sequence, label):
+        # sequence: int8 tensor of shape (crop_size,)
+        # label: float32 tensor of shape (num_classes,)
+
+        # Cast to int32 for indexing
+        seq = tf.cast(sequence, tf.int32)
+
+        # Optional: shuffle bases
+        if shuffle:
+            seq = tf.random.shuffle(seq)
+
+        # Optional: mutate bases
+        if mutate:
+            mask = tf.random.uniform(tf.shape(seq)) < mutation_rate
+            random_bases = tf.random.uniform(
+                tf.shape(seq), minval=0, maxval=5, dtype=tf.int32
+            )
+            seq = tf.where(mask, random_bases, seq)
+
+        # Forward strand: extract n-grams as triplets of indices
+        indices = tf.range(crop_size - ngram_width + 1)  # 0 to 497
+        tri0 = tf.gather(seq, indices)
+        tri1 = tf.gather(seq, indices + 1)
+        tri2 = tf.gather(seq, indices + 2)
+
+        # Lookup codon IDs: lookup[tri0, tri1, tri2]
+        codon_ids = tf.gather_nd(codon_lookup, tf.stack([tri0, tri1, tri2], axis=1))
+
+        # Reverse complement strand:
+        # 1. Reverse the sequence
+        rev_seq = tf.reverse(seq, axis=[0])
+        # 2. Map complement
+        rev_comp_seq = tf.gather(comp_lookup, rev_seq)
+        # 3. Extract n-grams from reverse complement
+        rev_tri0 = tf.gather(rev_comp_seq, indices)
+        rev_tri1 = tf.gather(rev_comp_seq, indices + 1)
+        rev_tri2 = tf.gather(rev_comp_seq, indices + 2)
+        # 4. Lookup codon IDs
+        rev_codon_ids = tf.gather_nd(
+            codon_lookup, tf.stack([rev_tri0, rev_tri1, rev_tri2], axis=1)
+        )
+
+        # Extract 6 reading frames with stride ngram_width (3)
+        def extract_frames(codons):
+            f1 = codons[0::ngram_width]
+            f2 = codons[1::ngram_width]
+            f3 = codons[2::ngram_width]
+            return f1, f2, f3
+
+        f1, f2, f3 = extract_frames(codon_ids)
+        r1, r2, r3 = extract_frames(rev_codon_ids)
+
+        # Stack frames: shape (6, seq_len)
+        frames = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
+
+        # Trim to exact seq_len
+        frames = frames[:, :seq_len]
+
+        # +1 for embedding layer (0 is padding/mask)
+        frames = frames + 1
+
+        # Optional: shuffle frames
+        if shuffle_frames:
+            perm = tf.random.shuffle(tf.range(6))
+            frames = tf.gather(frames, perm, axis=0)
+
+        return {"translated": frames}, label
+
+    return _process_raw_sequence
+
+
+def _load_numpy_raw_dataset(
+    path: str,
+    crop_size: int = 500,
+    ngram_width: int = 3,
+    num_classes: int = 3,
+    shuffle: bool = False,
+    mutate: bool = False,
+    mutation_rate: float = 0.1,
+    shuffle_frames: bool = False,
+):
+    """Loads a raw NumPy .npz file (int8 sequences) and returns a tf.data.Dataset."""
+    data = np.load(path, allow_pickle=False)
+    sequences = data["sequences"]
+    labels = data["labels"]
+
+    dataset = tf.data.Dataset.from_tensor_slices((sequences, labels))
+
+    process_fn = _make_process_raw_sequence_fn(
+        crop_size=crop_size,
+        ngram_width=ngram_width,
+        num_classes=num_classes,
+        shuffle=shuffle,
+        mutate=mutate,
+        mutation_rate=mutation_rate,
+        shuffle_frames=shuffle_frames,
+    )
+
+    dataset = dataset.map(process_fn, num_parallel_calls=tf.data.AUTOTUNE)
+    return dataset
+
+
+def _make_process_variable_sequence_fn(
+    ngram_width: int = 3,
+    num_classes: int = 3,
+    shuffle: bool = False,
+    mutate: bool = False,
+    mutation_rate: float = 0.1,
+    shuffle_frames: bool = False,
+):
+    """Creates a TF function for variable-length int8 sequences."""
+    codon_lookup = _build_codon_lookup_table()
+    comp_lookup = tf.constant([1, 0, 3, 2, 4], dtype=tf.int32)
+
+    @tf.function
+    def _process_variable_sequence(sequence, length, label):
+        seq = tf.cast(sequence, tf.int32)
+        actual_len = tf.cast(length, tf.int32)
+
+        # Crop to actual length
+        seq = seq[:actual_len]
+
+        # Optional: shuffle bases
+        if shuffle:
+            seq = tf.random.shuffle(seq)
+
+        # Optional: mutate bases
+        if mutate:
+            mask = tf.random.uniform(tf.shape(seq)) < mutation_rate
+            random_bases = tf.random.uniform(
+                tf.shape(seq), minval=0, maxval=5, dtype=tf.int32
+            )
+            seq = tf.where(mask, random_bases, seq)
+
+        # Compute number of codons for this sequence
+        num_codons = actual_len // ngram_width - 1
+        num_codons = tf.maximum(num_codons, 0)
+
+        # Forward strand n-grams
+        indices = tf.range(actual_len - ngram_width + 1)
+        tri0 = tf.gather(seq, indices)
+        tri1 = tf.gather(seq, indices + 1)
+        tri2 = tf.gather(seq, indices + 2)
+
+        codon_ids = tf.gather_nd(codon_lookup, tf.stack([tri0, tri1, tri2], axis=1))
+
+        # Reverse complement
+        rev_seq = tf.reverse(seq, axis=[0])
+        rev_comp_seq = tf.gather(comp_lookup, rev_seq)
+        rev_tri0 = tf.gather(rev_comp_seq, indices)
+        rev_tri1 = tf.gather(rev_comp_seq, indices + 1)
+        rev_tri2 = tf.gather(rev_comp_seq, indices + 2)
+        rev_codon_ids = tf.gather_nd(
+            codon_lookup, tf.stack([rev_tri0, rev_tri1, rev_tri2], axis=1)
+        )
+
+        # Extract frames
+        def extract_frames(codons):
+            f1 = codons[0::ngram_width]
+            f2 = codons[1::ngram_width]
+            f3 = codons[2::ngram_width]
+            return f1, f2, f3
+
+        f1, f2, f3 = extract_frames(codon_ids)
+        r1, r2, r3 = extract_frames(rev_codon_ids)
+
+        # Find minimum frame length to ensure all frames match
+        min_len = tf.reduce_min(
+            [
+                tf.shape(f1)[0],
+                tf.shape(f2)[0],
+                tf.shape(f3)[0],
+                tf.shape(r1)[0],
+                tf.shape(r2)[0],
+                tf.shape(r3)[0],
+            ]
+        )
+
+        # Trim all frames to same length
+        f1, f2, f3 = f1[:min_len], f2[:min_len], f3[:min_len]
+        r1, r2, r3 = r1[:min_len], r2[:min_len], r3[:min_len]
+
+        # Stack frames
+        frames = tf.stack([f1, f2, f3, r1, r2, r3], axis=0)
+
+        # +1 for embedding layer
+        frames = frames + 1
+
+        # Optional: shuffle frames
+        if shuffle_frames:
+            perm = tf.random.shuffle(tf.range(6))
+            frames = tf.gather(frames, perm, axis=0)
+
+        return {"translated": frames}, label
+
+    return _process_variable_sequence
+
+
+def _load_numpy_raw_variable_dataset(
+    path: str,
+    ngram_width: int = 3,
+    num_classes: int = 3,
+    shuffle: bool = False,
+    mutate: bool = False,
+    mutation_rate: float = 0.1,
+    shuffle_frames: bool = False,
+):
+    """Loads a variable-length raw NumPy .npz file and returns a tf.data.Dataset."""
+    data = np.load(path, allow_pickle=False)
+    sequences = data["sequences"]
+    lengths = data["lengths"]
+    labels = data["labels"]
+
+    dataset = tf.data.Dataset.from_tensor_slices((sequences, lengths, labels))
+
+    process_fn = _make_process_variable_sequence_fn(
+        ngram_width=ngram_width,
+        num_classes=num_classes,
+        shuffle=shuffle,
+        mutate=mutate,
+        mutation_rate=mutation_rate,
+        shuffle_frames=shuffle_frames,
+    )
+
+    dataset = dataset.map(process_fn, num_parallel_calls=tf.data.AUTOTUNE)
+    return dataset
+
+
+def _load_numpy_full_dataset(
+    path: str,
+):
+    """Loads a fully-preprocessed NumPy .npz file and returns a tf.data.Dataset.
+
+    The .npz file must contain:
+        - 'translated': int32 array of shape (N, 6, seq_len) — preprocessed 6 frames
+        - 'label': float32 array of shape (N, num_classes)
+
+    No further preprocessing is applied — the data is ready for direct training.
+    This gives the fastest possible data loading at the cost of no runtime
+    augmentations (shuffle, mutate, frame_shuffle).
+    """
+    data = np.load(path, allow_pickle=False)
+    sequences = data["translated"]
+    labels = data["label"]
+
+    dataset = tf.data.Dataset.from_tensor_slices(({"translated": sequences}, labels))
+    return dataset
+
+
 GRAPH_RE = re.compile(
     r"^jaeger_(?P<id>[0-9a-fA-F]+)_(?P<size>\d+(?:\.\d+)?[A-Z])_fragment_graph$"
 )
@@ -1250,9 +1596,95 @@ def train_fragment_core(**kwargs):
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
+            elif data_format == "numpy_raw":
+                logger.info(f"Loading {k} data from NumPy raw: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy raw format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_raw_dataset(
+                    paths[0],
+                    crop_size=string_processor_config.get("crop_size"),
+                    ngram_width=string_processor_config.get("ngram_width"),
+                    num_classes=builder.classifier_out_dim,
+                    shuffle=string_processor_config.get("shuffle"),
+                    mutate=string_processor_config.get("mutate"),
+                    mutation_rate=string_processor_config.get("mutation_rate"),
+                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
+                )
+                train_data[k] = (
+                    _data.cache()
+                    .shuffle(
+                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                    )
+                    .padded_batch(
+                        batch_size=builder.train_cfg.get("batch_size"),
+                        padded_shapes=(
+                            {"translated": [6, None]},
+                            [builder.classifier_out_dim],
+                        ),
+                        drop_remainder=multi_gpu,
+                    )
+                    .prefetch(tf.data.AUTOTUNE)
+                )
+            elif data_format == "numpy_raw_variable":
+                logger.info(f"Loading {k} data from NumPy raw variable: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy raw variable format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_raw_variable_dataset(
+                    paths[0],
+                    ngram_width=string_processor_config.get("ngram_width"),
+                    num_classes=builder.classifier_out_dim,
+                    shuffle=string_processor_config.get("shuffle"),
+                    mutate=string_processor_config.get("mutate"),
+                    mutation_rate=string_processor_config.get("mutation_rate"),
+                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
+                )
+                train_data[k] = (
+                    _data.cache()
+                    .shuffle(
+                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                    )
+                    .padded_batch(
+                        batch_size=builder.train_cfg.get("batch_size"),
+                        padded_shapes=(
+                            {"translated": [6, None]},
+                            [builder.classifier_out_dim],
+                        ),
+                        drop_remainder=multi_gpu,
+                    )
+                    .prefetch(tf.data.AUTOTUNE)
+                )
+            elif data_format == "numpy_full":
+                logger.info(f"Loading {k} data from NumPy full: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy full format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_full_dataset(paths[0])
+                train_data[k] = (
+                    _data.cache()
+                    .shuffle(
+                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                    )
+                    .padded_batch(
+                        batch_size=builder.train_cfg.get("batch_size"),
+                        padded_shapes=(
+                            {"translated": [6, None]},
+                            [builder.classifier_out_dim],
+                        ),
+                        drop_remainder=multi_gpu,
+                    )
+                    .prefetch(tf.data.AUTOTUNE)
+                )
             else:
                 raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', or 'numpy'."
+                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy', 'numpy_raw', or 'numpy_raw_variable'."
                 )
         # for i in train_data["train"].take(1):
         #     ic(i)
@@ -1440,9 +1872,97 @@ def train_fragment_core(**kwargs):
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
+            elif data_format == "numpy_raw":
+                logger.info(f"Loading reliability {k} data from NumPy raw: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy raw format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_raw_dataset(
+                    paths[0],
+                    crop_size=string_processor_config.get("crop_size"),
+                    ngram_width=string_processor_config.get("ngram_width"),
+                    num_classes=builder.reliability_out_dim,
+                    shuffle=string_processor_config.get("shuffle"),
+                    mutate=string_processor_config.get("mutate"),
+                    mutation_rate=string_processor_config.get("mutation_rate"),
+                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
+                )
+                rel_train_data[k] = (
+                    _data.cache()
+                    .shuffle(
+                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                    )
+                    .padded_batch(
+                        batch_size=builder.train_cfg.get("batch_size"),
+                        padded_shapes=(
+                            {"translated": [6, None]},
+                            [builder.reliability_out_dim],
+                        ),
+                        drop_remainder=multi_gpu,
+                    )
+                    .prefetch(tf.data.AUTOTUNE)
+                )
+            elif data_format == "numpy_raw_variable":
+                logger.info(
+                    f"Loading reliability {k} data from NumPy raw variable: {paths}"
+                )
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy raw variable format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_raw_variable_dataset(
+                    paths[0],
+                    ngram_width=string_processor_config.get("ngram_width"),
+                    num_classes=builder.reliability_out_dim,
+                    shuffle=string_processor_config.get("shuffle"),
+                    mutate=string_processor_config.get("mutate"),
+                    mutation_rate=string_processor_config.get("mutation_rate"),
+                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
+                )
+                rel_train_data[k] = (
+                    _data.cache()
+                    .shuffle(
+                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                    )
+                    .padded_batch(
+                        batch_size=builder.train_cfg.get("batch_size"),
+                        padded_shapes=(
+                            {"translated": [6, None]},
+                            [builder.reliability_out_dim],
+                        ),
+                        drop_remainder=multi_gpu,
+                    )
+                    .prefetch(tf.data.AUTOTUNE)
+                )
+            elif data_format == "numpy_full":
+                logger.info(f"Loading reliability {k} data from NumPy full: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy full format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_full_dataset(paths[0])
+                rel_train_data[k] = (
+                    _data.cache()
+                    .shuffle(
+                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                    )
+                    .padded_batch(
+                        batch_size=builder.train_cfg.get("batch_size"),
+                        padded_shapes=(
+                            {"translated": [6, None]},
+                            [builder.reliability_out_dim],
+                        ),
+                        drop_remainder=multi_gpu,
+                    )
+                    .prefetch(tf.data.AUTOTUNE)
+                )
             else:
                 raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', or 'numpy'."
+                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy', 'numpy_raw', 'numpy_raw_variable', or 'numpy_full'."
                 )
         # ============== check if the model has converged ========
 

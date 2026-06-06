@@ -1665,9 +1665,13 @@ class CrossFrameAttention(tf.keras.layers.Layer):
             self.ffn_dense1 = tf.keras.layers.Dense(
                 feed_forward_dim, activation="gelu", name="ffn_dense1"
             )
-            self.ffn_dropout1 = tf.keras.layers.Dropout(dropout_rate, name="ffn_dropout1")
+            self.ffn_dropout1 = tf.keras.layers.Dropout(
+                dropout_rate, name="ffn_dropout1"
+            )
             self.ffn_dense2 = tf.keras.layers.Dense(embed_dim, name="ffn_dense2")
-            self.ffn_dropout2 = tf.keras.layers.Dropout(dropout_rate, name="ffn_dropout2")
+            self.ffn_dropout2 = tf.keras.layers.Dropout(
+                dropout_rate, name="ffn_dropout2"
+            )
 
     def call(self, inputs, mask=None, training=False, return_attention=False):
         # inputs: (batch, frames, length, channels)

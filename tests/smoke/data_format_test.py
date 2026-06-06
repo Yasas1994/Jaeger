@@ -8,6 +8,7 @@ import tensorflow as tf
 from jaeger.commands.train import (
     _make_parse_tfrecord_fn,
     _load_numpy_dataset,
+    _load_numpy_full_dataset,
     _get_tfrecord_feature_description,
 )
 from jaeger.preprocess.latest.convert import process_string_train
@@ -242,6 +243,52 @@ def test_dataset_pipeline_with_batching():
         print("✓ Dataset pipeline with batching works correctly")
 
 
+def test_load_numpy_full_dataset():
+    """Test loading fully-preprocessed NumPy .npz files (numpy_full format)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        npz_path = os.path.join(tmpdir, "test_full.npz")
+
+        # Create preprocessed data (as produced by convert_to_numpy_full.py)
+        sequences = np.random.randint(
+            1, 65, size=(NUM_SAMPLES, 6, SEQ_LEN), dtype=np.int32
+        )
+        labels = np.eye(NUM_CLASSES, dtype=np.float32)[
+            np.arange(NUM_SAMPLES) % NUM_CLASSES
+        ]
+
+        np.savez_compressed(npz_path, translated=sequences, label=labels)
+
+        # Load back
+        dataset = _load_numpy_full_dataset(npz_path)
+
+        count = 0
+        for features, label in dataset:
+            assert "translated" in features
+            assert features["translated"].shape == (6, SEQ_LEN)
+            assert features["translated"].dtype == tf.int32
+            assert label.shape == (NUM_CLASSES,)
+            assert label.dtype == tf.float32
+            count += 1
+
+        assert count == NUM_SAMPLES
+        print(f"✓ NumPy full load: {count} samples, shapes correct")
+
+        # Test with batching pipeline
+        batched = (
+            dataset.cache()
+            .shuffle(buffer_size=100)
+            .batch(BATCH_SIZE)
+            .prefetch(tf.data.AUTOTUNE)
+        )
+
+        for features, label in batched:
+            assert features["translated"].shape == (BATCH_SIZE, 6, SEQ_LEN)
+            assert label.shape == (BATCH_SIZE, NUM_CLASSES)
+            break
+
+        print("✓ NumPy full dataset pipeline with batching works correctly")
+
+
 if __name__ == "__main__":
     print("Running data format smoke tests...\n")
 
@@ -250,5 +297,6 @@ if __name__ == "__main__":
     test_load_numpy_dataset()
     test_numpy_flattened_format()
     test_dataset_pipeline_with_batching()
+    test_load_numpy_full_dataset()
 
     print("\n✅ All data format tests passed!")

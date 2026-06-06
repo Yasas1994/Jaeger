@@ -7,7 +7,6 @@ This tests that:
 3. All frames are present after shuffling (no duplicates, no drops)
 """
 
-import tensorflow as tf
 import numpy as np
 from jaeger.preprocess.latest.convert import process_string_train
 from jaeger.preprocess.latest.maps import CODONS, CODON_ID
@@ -70,7 +69,7 @@ def test_shuffled_frame_order():
     for i in range(10):
         outputs, label = processor(test_string)
         seq = outputs["translated"]
-        print(f"  Run {i+1}: shape={seq.shape}, dtype={seq.dtype}")
+        print(f"  Run {i + 1}: shape={seq.shape}, dtype={seq.dtype}")
         assert seq.shape[0] == 6, "Expected 6 frames"
 
     return seq
@@ -122,7 +121,7 @@ def test_frame_shuffle_changes_content():
         if is_different:
             n_different += 1
 
-    print(f"\nFrame shuffle content test:")
+    print("\nFrame shuffle content test:")
     print(f"  Trials: {n_trials}")
     print(f"  Different from baseline: {n_different}/{n_trials}")
     print(f"  Shuffle is active: {n_different > 0}")

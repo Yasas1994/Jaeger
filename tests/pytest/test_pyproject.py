@@ -1,6 +1,5 @@
 """Tests for pyproject.toml packaging configuration."""
 
-import json
 import zipfile
 from pathlib import Path
 
@@ -45,8 +44,9 @@ class TestPyprojectConfig:
         """Old broken [tool.setuptools.package-data] should not exist."""
         pyproject = PROJECT_ROOT / "pyproject.toml"
         content = pyproject.read_text()
-        assert "[tool.setuptools.package-data]" not in content, \
+        assert "[tool.setuptools.package-data]" not in content, (
             "Old setuptools package-data config still present"
+        )
 
 
 class TestWheelContents:
@@ -65,12 +65,15 @@ class TestWheelContents:
         wheel = wheels[0]
         with zipfile.ZipFile(wheel) as zf:
             names = zf.namelist()
-            assert any("test_short.fasta" in n for n in names), \
+            assert any("test_short.fasta" in n for n in names), (
                 "test_short.fasta not in wheel"
-            assert any("test_empty.fasta" in n for n in names), \
+            )
+            assert any("test_empty.fasta" in n for n in names), (
                 "test_empty.fasta not in wheel"
-            assert any("test_contigs.fasta" in n for n in names), \
+            )
+            assert any("test_contigs.fasta" in n for n in names), (
                 "test_contigs.fasta not in wheel"
+            )
 
     def test_wheel_contains_config_json(self):
         """Wheel should contain config.json."""
@@ -85,8 +88,7 @@ class TestWheelContents:
         wheel = wheels[0]
         with zipfile.ZipFile(wheel) as zf:
             names = zf.namelist()
-            assert any("config.json" in n for n in names), \
-                "config.json not in wheel"
+            assert any("config.json" in n for n in names), "config.json not in wheel"
 
     def test_wheel_contains_model_weights(self):
         """Wheel should contain default model weights."""
@@ -101,5 +103,4 @@ class TestWheelContents:
         wheel = wheels[0]
         with zipfile.ZipFile(wheel) as zf:
             names = zf.namelist()
-            assert any(".h5" in n for n in names), \
-                "No .h5 weights files in wheel"
+            assert any(".h5" in n for n in names), "No .h5 weights files in wheel"

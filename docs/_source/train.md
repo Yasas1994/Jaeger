@@ -138,13 +138,16 @@ jaeger utils ood-data \
 
 By default, Jaeger loads training data from CSV files and preprocesses sequences on-the-fly (live codon translation, n-gram extraction, etc.). This CPU-bound preprocessing can become a bottleneck, leaving the GPU underutilized.
 
-Jaeger supports three data formats via the `data_format` config option:
+Jaeger supports six data formats via the `data_format` config option:
 
 | Format | Speedup | Best for | Notes |
 |--------|---------|----------|-------|
 | `csv` | 1× (baseline) | Small datasets, quick experiments | Live preprocessing every epoch |
 | `tfrecord` | ~20–25× | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
-| `numpy` | ~30× | Datasets that fit in memory | Fastest loading, preprocessed once |
+| `numpy` | ~30× | Datasets that fit in memory | Preprocessed once, loads into RAM |
+| `numpy_raw` | ~35× | Large datasets, with augmentations | int8 sequences + TF preprocessing |
+| `numpy_raw_variable` | ~32× | Variable-length sequences | int8 sequences, variable length |
+| `numpy_full` | ~40× | Maximum throughput, no augmentations | Fully preprocessed, direct loading |
 
 ### When to optimize
 
@@ -160,12 +163,26 @@ For example, a 3.1M sample dataset (~15 GB preprocessed) easily fits in most tra
 Use the provided conversion script:
 
 ```bash
-# NumPy format (fastest — loads entire dataset into memory)
-python scripts/convert_preprocessed_data.py \
+# NumPy full format (fastest — fully preprocessed, no runtime overhead)
+python scripts/convert_to_numpy_full.py \
   --csv train_shuffled.csv \
-  --output train_shuffled.npz \
-  --format numpy \
-  --crop-size 500
+  --output train_shuffled_full.npz \
+  --crop-size 500 \
+  --num-classes 3
+
+# NumPy raw format (fast int8 + runtime augmentations)
+python scripts/convert_to_numpy_fast.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled_raw.npz \
+  --crop-size 500 \
+  --num-classes 3
+
+# NumPy raw variable format (variable-length sequences)
+python scripts/convert_to_numpy_variable.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled_variable.npz \
+  --max-length 5000 \
+  --num-classes 3
 
 # TFRecord format (good for very large datasets)
 python scripts/convert_preprocessed_data.py \
@@ -179,11 +196,11 @@ Convert both training and validation sets:
 
 ```bash
 for split in train val; do
-  python scripts/convert_preprocessed_data.py \
+  python scripts/convert_to_numpy_full.py \
     --csv ${split}_shuffled.csv \
-    --output ${split}_shuffled.npz \
-    --format numpy \
-    --crop-size 500
+    --output ${split}_shuffled_full.npz \
+    --crop-size 500 \
+    --num-classes 3
 done
 ```
 
@@ -194,7 +211,7 @@ Add `data_format` to the `string_processor` section of your config:
 ```yaml
 model:
   string_processor:
-    data_format: numpy        # csv | tfrecord | numpy
+    data_format: numpy_full   # csv | tfrecord | numpy | numpy_raw | numpy_raw_variable | numpy_full
     seq_onehot: false
     codon: CODON
     codon_id: CODON_ID
@@ -298,7 +315,7 @@ fragment_reliability_data:
 | Section | Purpose |
 |---------|---------|
 | `model` | Architecture, embedding, class labels |
-| `model.string_processor` | Preprocessing settings, **data format** (`csv`/`tfrecord`/`numpy`) |
+| `model.string_processor` | Preprocessing settings, **data format** (`csv`/`tfrecord`/`numpy`/`numpy_raw`/`numpy_raw_variable`/`numpy_full`) |
 | `representation_learner` | CNN layers, residual blocks, attention |
 | `classifier` | Classification head architecture |
 | `reliability` | Reliability (OOD) head architecture |

@@ -1,7 +1,6 @@
 """Tests for the jaeger CLI."""
 
 from click.testing import CliRunner
-import pytest
 
 from jaeger.cli import main
 
@@ -74,4 +73,7 @@ class TestHealthCommand:
         runner = CliRunner()
         result = runner.invoke(main, ["health", "-v"])
         # May fail due to TF/GPU issues in test env, but should produce output
-        assert "Jaeger Health Diagnostics" in result.output or result.exit_code in (0, 1)
+        assert "Jaeger Health Diagnostics" in result.output or result.exit_code in (
+            0,
+            1,
+        )
