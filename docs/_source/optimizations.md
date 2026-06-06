@@ -10,6 +10,8 @@ All commands below assume Jaeger is installed with GPU support
 
 ## Quick comparison
 
+### Inference optimizations
+
 | Optimization | Effort | Speedup | Model size | Best for |
 |--------------|--------|---------|------------|----------|
 | [Mixed precision](#1-mixed-precision) | One flag | 1–1.3× | No change | Any GPU with FP16/BF16 support |
@@ -18,6 +20,12 @@ All commands below assume Jaeger is installed with GPU support
 | [TFLite quantization](#4-tflite-quantization) | One conversion | Similar | ~3.5× smaller | Edge / mobile / low-storage deployments |
 | [ONNX INT8](#5-onnx-int8-quantization) | Conversion + quantization | 1–1.5× | ~2.5× smaller | Smallest GPU-deployable model |
 | [TensorRT (TF-TRT)](#6-tensorrt-tf-trt) | Custom TF build | 2–5× | No change | Maximum GPU performance in specialized containers |
+
+### Training optimizations
+
+| Optimization | Effort | Speedup | Best for |
+|--------------|--------|---------|----------|
+| [Preprocessed data formats](#7-preprocessed-training-data-formats) | One conversion | 20–30× | Training large models where data loading is the bottleneck |
 
 ---
 
@@ -344,7 +352,74 @@ Expected output on a working NVIDIA system:
 
 ---
 
+## 7. Preprocessed training data formats
+
+**Effort:** medium — convert CSV data once, then update config.
+
+When training large models, the biggest bottleneck is often not the GPU but the CPU preprocessing pipeline (codon translation, n-gram extraction, frame stacking). Jaeger can skip live preprocessing entirely by loading data that has already been converted to tensors.
+
+### 7.1 Convert your training data
+
+```bash
+# NumPy format (fastest — entire dataset in memory)
+python scripts/convert_preprocessed_data.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled.npz \
+  --format numpy \
+  --crop-size 500
+
+# TFRecord format (cached on disk, good for very large datasets)
+python scripts/convert_preprocessed_data.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled.tfrecord \
+  --format tfrecord \
+  --crop-size 500
+```
+
+### 7.2 Update your training config
+
+```yaml
+model:
+  string_processor:
+    data_format: numpy    # or tfrecord
+    # ... other settings
+
+fragment_classifier_data:
+  train:
+    - path:
+        - "{{ training.data_dir }}/train_shuffled.npz"
+  validation:
+    - path:
+        - "{{ training.data_dir }}/val_shuffled.npz"
+```
+
+### 7.3 Expected speedup
+
+| Format | Batches/sec | Speedup vs CSV |
+|--------|-------------|----------------|
+| CSV (live preprocess) | ~160 | 1× |
+| TFRecord + cache | ~3,800 | ~24× |
+| NumPy + cache | ~5,300 | ~33× |
+
+A 3.1M sample dataset preprocessed as NumPy is only ~15 GB and easily fits in most server RAM.
+
+### When to use
+
+- GPU utilization is low (< 20%) during training
+- Epoch times are dominated by data loading, not computation
+- You train the same dataset for many epochs (amortizes conversion cost)
+
+### Caveats
+
+- Data augmentation (mutation, masking, frame shuffling) must be applied **before** conversion.
+- The conversion script does not shuffle — shuffle your CSV first if needed.
+- NumPy format loads the entire dataset into RAM; use TFRecord if memory is limited.
+
+---
+
 ## Choosing an optimization
+
+### Inference
 
 | Situation | Recommended option |
 |-----------|--------------------|
@@ -354,3 +429,11 @@ Expected output on a working NVIDIA system:
 | Need smallest model on GPU | Convert to ONNX INT8, then `--onnx --int8` |
 | Need smallest model for edge/mobile | `jaeger utils quantize --mode dynamic` |
 | Maximum performance in NGC containers | `jaeger utils convert-graph --mode tensorrt` |
+
+### Training
+
+| Situation | Recommended option |
+|-----------|--------------------|
+| GPU utilization < 20%, epoch time dominated by data loading | Convert to NumPy with `scripts/convert_preprocessed_data.py` |
+| Dataset too large for RAM but still CPU-bound | Convert to TFRecord |
+| Quick experiments, small datasets | Stick with CSV (default) |

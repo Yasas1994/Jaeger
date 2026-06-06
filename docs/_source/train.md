@@ -10,6 +10,7 @@ Jaeger provides a complete training pipeline for building custom phage detection
 - [Training workflow](#training-workflow)
 - [Preparing training data](#preparing-training-data)
 - [Configuration file](#configuration-file)
+- [Data format optimization](#data-format-optimization)
 - [Running training](#running-training)
 - [Fine-tuning](#fine-tuning)
 - [Self-supervised pretraining](#self-supervised-pretraining)
@@ -133,6 +134,96 @@ jaeger utils ood-data \
 
 ---
 
+## Data format optimization
+
+By default, Jaeger loads training data from CSV files and preprocesses sequences on-the-fly (live codon translation, n-gram extraction, etc.). This CPU-bound preprocessing can become a bottleneck, leaving the GPU underutilized.
+
+Jaeger supports three data formats via the `data_format` config option:
+
+| Format | Speedup | Best for | Notes |
+|--------|---------|----------|-------|
+| `csv` | 1× (baseline) | Small datasets, quick experiments | Live preprocessing every epoch |
+| `tfrecord` | ~20–25× | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
+| `numpy` | ~30× | Datasets that fit in memory | Fastest loading, preprocessed once |
+
+### When to optimize
+
+Consider converting to TFRecord or NumPy when:
+- GPU utilization is low (< 20%)
+- Epoch times are dominated by data loading
+- You have enough RAM to hold the dataset (NumPy) or disk space (TFRecord)
+
+For example, a 3.1M sample dataset (~15 GB preprocessed) easily fits in most training servers' RAM and loads **30× faster** as NumPy.
+
+### Converting CSV to optimized formats
+
+Use the provided conversion script:
+
+```bash
+# NumPy format (fastest — loads entire dataset into memory)
+python scripts/convert_preprocessed_data.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled.npz \
+  --format numpy \
+  --crop-size 500
+
+# TFRecord format (good for very large datasets)
+python scripts/convert_preprocessed_data.py \
+  --csv train_shuffled.csv \
+  --output train_shuffled.tfrecord \
+  --format tfrecord \
+  --crop-size 500
+```
+
+Convert both training and validation sets:
+
+```bash
+for split in train val; do
+  python scripts/convert_preprocessed_data.py \
+    --csv ${split}_shuffled.csv \
+    --output ${split}_shuffled.npz \
+    --format numpy \
+    --crop-size 500
+done
+```
+
+### Configuring training to use optimized formats
+
+Add `data_format` to the `string_processor` section of your config:
+
+```yaml
+model:
+  string_processor:
+    data_format: numpy        # csv | tfrecord | numpy
+    seq_onehot: false
+    codon: CODON
+    codon_id: CODON_ID
+    crop_size: 500
+    buffer_size: 500000
+    shuffle: true
+    # ... other fields
+```
+
+Then point `fragment_classifier_data` to the converted files:
+
+```yaml
+fragment_classifier_data:
+  train:
+    - class: ["chromosome", "virus", "plasmid"]
+      path:
+        - "{{ training.data_dir }}/train_shuffled.npz"
+      label: [0, 1, 2]
+  validation:
+    - class: ["chromosome", "virus", "plasmid"]
+      path:
+        - "{{ training.data_dir }}/val_shuffled.npz"
+      label: [0, 1, 2]
+```
+
+**Important:** When using `tfrecord` or `numpy`, the `shuffle`, `mutate`, and `masking` settings in `string_processor` are ignored because preprocessing (including shuffling) is already baked into the converted files. Use the conversion script's `--shuffle` option if you need shuffled data.
+
+---
+
 ## Configuration file
 
 Training is controlled by a YAML configuration file. A template is provided at `train_config/nn_config.yaml`.
@@ -207,6 +298,7 @@ fragment_reliability_data:
 | Section | Purpose |
 |---------|---------|
 | `model` | Architecture, embedding, class labels |
+| `model.string_processor` | Preprocessing settings, **data format** (`csv`/`tfrecord`/`numpy`) |
 | `representation_learner` | CNN layers, residual blocks, attention |
 | `classifier` | Classification head architecture |
 | `reliability` | Reliability (OOD) head architecture |
