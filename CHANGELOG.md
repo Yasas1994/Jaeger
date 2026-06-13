@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 <!-- insertion marker -->
+## v1.26.4 (2026-06-13)
+
+### Feat
+
+- major data/seq ops refactor + CLI smoke tests + deps (#33)
+- linear genome plots and prophage prediction in new pipeline (#32)
+- ONNX inference, INT8 quantization, and performance optimizations (#31)
+- add one-liner install script
+
+### Fix
+
+- prevent GPU OOM by moving predictions to CPU immediately (#30)
+- resolve inference pipeline bugs in v1.26.3
+- resolve smoke test failures and CI lint errors
+- add test data files to git tracking
+- include SavedModel graph directory in pdm-backend build
+- rename jaeger test to jaeger health and add diagnostics (#26)
+- add pdm-backend to host requirements for conda build
+- use underscore in PyPI source URL (jaeger_bio instead of jaeger-bio)
+
+## v1.26.1 (2026-06-04)
+
+## v1.26.1b1 (2026-01-06)
+
+## v1.26.1b0 (2026-01-06)
+
 ## [v1.1.30](https://github.com/Yasas1994/Jaeger/releases/tag/v1.1.30) - 2025-06-05
 
 <small>[Compare with v1.1.30-alpha](https://github.com/Yasas1994/Jaeger/compare/v1.1.30-alpha...v1.1.30)</small>
