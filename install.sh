@@ -5,7 +5,7 @@
 #        bash <(curl -sSL https://raw.githubusercontent.com/MGXlab/Jaeger/main/install.sh)
 #
 # This script detects your platform and installs Jaeger with the appropriate
-# dependencies (GPU, CPU, or Apple Silicon).
+# dependencies (GPU, CPU, or Apple Silicon). Requires Python 3.11–3.13.
 
 set -euo pipefail
 
@@ -78,8 +78,8 @@ main() {
         fi
 
         # Create environment
-        info "Creating conda environment 'jaeger' with Python 3.11–3.12"
-        $env_cmd create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<=3.12" pip -y
+        info "Creating conda environment 'jaeger' with Python 3.11–3.13"
+        $env_cmd create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.14" pip -y
 
         # Activate and install
         info "Activating environment and installing jaeger-bio${pkg_extra}"
@@ -94,8 +94,8 @@ main() {
         # Check Python version
         local py_version
         py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        if [[ "$py_version" != "3.11" && "$py_version" != "3.12" ]]; then
-            error "Python ${py_version} detected. Jaeger requires Python 3.11 or 3.12."
+        if [[ "$py_version" != "3.11" && "$py_version" != "3.12" && "$py_version" != "3.13" ]]; then
+            error "Python ${py_version} detected. Jaeger requires Python 3.11, 3.12, or 3.13."
             exit 1
         fi
 
