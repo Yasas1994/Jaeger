@@ -4,3 +4,6 @@ tag_format = "v$version"
 version_scheme = "pep440"
 version = "1.26.4"
 update_changelog_on_bump = true
+version_files = [
+    "pyproject.toml:version",
+]
