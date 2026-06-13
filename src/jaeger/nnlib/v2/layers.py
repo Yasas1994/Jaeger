@@ -23,7 +23,8 @@ class GeLU(keras.layers.Layer):
         self.supports_masking = True
 
     def call(self, inputs):
-        return tf.nn.gelu(inputs)
+        # Use the tanh approximation so the graph can be converted to TFLite.
+        return tf.nn.gelu(inputs, approximate=True)
 
     def compute_output_shape(self, input_shape):
         return input_shape

@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Any, Dict
+from typing import Any
 import pandas as pd
 import pyfastx
 import logging
@@ -118,12 +118,17 @@ def generate_summary_legacy(config, data) -> pd.DataFrame:
     lab = {int(k): v for k, v in config["all_labels"].items()}
 
     # Basic summary columns
+    if data.get("has_reliability", True):
+        reliability_score = [np.mean(x) for x in data["ood"]]
+    else:
+        reliability_score = ["unavailable"] * len(data["headers"])
+
     columns = {
         "contig_id": data["headers"],
         "length": data["length"],
         "prediction": [class_map[x] for x in data["consensus"]],
         "entropy": data["entropy"],
-        "reliability_score": [np.mean(x) for x in data["ood"]],
+        "reliability_score": reliability_score,
         "host_contam": data["host_contam"],
         "prophage_contam": data["prophage_contam"],
     }
@@ -179,7 +184,11 @@ def generate_summary_legacy(config, data) -> pd.DataFrame:
 
 
 def write_output_legacy(
-    config: Any, data: Dict, reliability_cutoff: float = 0.5, **kwargs
+    config: Any,
+    data: dict,
+    reliability_cutoff: float = 0.5,
+    phage_score: int = 3,
+    **kwargs,
 ):
     """
     Writes the output based on the provided arguments, configuration, and data.
@@ -202,8 +211,12 @@ def write_output_legacy(
     )
 
     # Save only phage-related sequences
+    if data.get("has_reliability", True):
+        reliability_clause = f" and (reliability_score > {reliability_cutoff})"
+    else:
+        reliability_clause = ""
     df.query(
-        f'(prediction == "phage") and (phage_score > 3) and (reliability_score > {reliability_cutoff})'
+        f'(prediction == "phage") and (phage_score > {phage_score}){reliability_clause}'
     ).to_csv(
         kwargs.get("output_phage_table_path"),
         sep="\t",
@@ -256,7 +269,12 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
 
     # -- Step 2: Split predictions and embeddings
     predictions = np.split(y_pred["prediction"], split_indices, axis=0)
-    ood = np.split(y_pred["reliability"], split_indices, axis=0)
+    has_reliability = "reliability" in y_pred
+    if has_reliability:
+        ood = np.split(y_pred["reliability"], split_indices, axis=0)
+    else:
+        # Models without a reliability head have no OOD/reliability scores.
+        ood = None
     # embedding = np.split(y_pred["embedding"], split_indices, axis=0)
     # Step 3: Apply reliability filter (keep only keep windows with reliability_score > 0.5)
     # ood_mask = [np.squeeze(block > kwargs.get('ood_thresh', -100)) for block in ood]
@@ -333,9 +351,12 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
         host_contam = (pred_sum < pred_var) & (consensus == 1)
 
     # explore differernt ways to summarize
-    # ood = np.array([np.squeeze(np.mean(sigmoid(p), axis=0)) for p in ood], dtype=np.float16)
-    ood = np.array([frac_above_threshold(sigmoid(p)) for p in ood], dtype=np.float16)
-    # ood = np.array([sigmoid(p) for p in ood_sum])
+    if ood is not None:
+        # ood = np.array([np.squeeze(np.mean(sigmoid(p), axis=0)) for p in ood], dtype=np.float16)
+        ood = np.array(
+            [frac_above_threshold(sigmoid(p)) for p in ood], dtype=np.float16
+        )
+        # ood = np.array([sigmoid(p) for p in ood_sum])
 
     entropy_mean = np.array(
         [np.squeeze(np.mean(e)) for e in entropy_pred], dtype=np.float16
@@ -356,6 +377,7 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
         "pred_var": pred_var,
         "frag_pred": frag_pred,
         "ood": ood,
+        "has_reliability": has_reliability,
         "entropy": entropy_mean,
         "energy": energy_mean,
         "host_contam": host_contam,
@@ -402,13 +424,18 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
     indices_ = kwargs.get("indices")
     class_map = {int(k): v for k, v in zip(indices_, classes_)}
     # Basic summary columns
+    if data.get("has_reliability", True):
+        reliability_score = data["ood"]
+    else:
+        reliability_score = ["unavailable"] * len(data["headers"])
+
     columns = {
         "contig_id": data["headers"],
         "length": data["length"],
         "prediction": [class_map[x] for x in data["consensus"]],
         "entropy": data["entropy"],
         "energy": data["energy"],
-        "reliability_score": data["ood"],
+        "reliability_score": reliability_score,
         "host_contam": data["host_contam"],
         "prophage_contam": data["prophage_contam"],
     }
@@ -473,7 +500,7 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
     return df
 
 
-def write_output(data: Dict, reliability_cutoff: float = 0.5, phage_score=1, **kwargs):
+def write_output(data: dict, reliability_cutoff: float = 0.5, phage_score=1, **kwargs):
     """
     Writes the output based on the provided arguments, configuration, and data.
 
@@ -494,9 +521,24 @@ def write_output(data: Dict, reliability_cutoff: float = 0.5, phage_score=1, **k
         kwargs.get("output_table_path"), sep="\t", index=False, float_format="%.3f"
     )
 
-    # Save only phage-related sequences
+    # Determine the viral class label from the class map. Some models distinguish
+    # bacteriophage ("phage") from eukaryotic virus ("virus"); prophage reporting
+    # targets phage, so prefer "phage" and fall back to "virus".
+    classes = kwargs.get("labels", [])
+    lower_classes = [label.lower() for label in classes]
+    viral_label = "phage"
+    if "phage" in lower_classes:
+        viral_label = classes[lower_classes.index("phage")]
+    elif "virus" in lower_classes:
+        viral_label = classes[lower_classes.index("virus")]
+
+    # Save only phage/virus-related sequences
+    if data.get("has_reliability", True):
+        reliability_clause = f" and (reliability_score > {reliability_cutoff})"
+    else:
+        reliability_clause = ""
     phage_df = df.query(
-        f'(prediction == "phage") and (phage_score > {phage_score}) and (reliability_score > {reliability_cutoff})'
+        f'(prediction == "{viral_label}") and ({viral_label}_score > {phage_score}){reliability_clause}'
     )
     if not phage_df.empty:
         phage_df.to_csv(

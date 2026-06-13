@@ -5,13 +5,13 @@ import tempfile
 import numpy as np
 import tensorflow as tf
 
-from jaeger.commands.train import (
+from jaeger.data.tfrecord import (
     _make_parse_tfrecord_fn,
-    _load_numpy_full_dataset,
     _get_tfrecord_feature_description,
 )
-from jaeger.preprocess.latest.convert import process_string_train
-from jaeger.preprocess.latest.maps import CODONS, CODON_ID
+from jaeger.data.loaders import _load_numpy_full_dataset
+from jaeger.seqops.encode import process_string_train
+from jaeger.seqops.maps import CODONS, CODON_ID
 
 # Test configuration matching typical Jaeger training setup
 CROP_SIZE = 500

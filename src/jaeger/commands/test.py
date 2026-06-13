@@ -8,7 +8,7 @@ import tensorflow as tf
 from jaeger.nnlib.inference import JaegerModel
 from jaeger.nnlib.v1.layers import WRes_model_embeddings
 from jaeger.preprocess.v1.convert import process_string
-from jaeger.preprocess.fasta import fragment_generator
+from jaeger.seqops.io import fragment_generator
 from jaeger.utils.fs import validate_fasta_entries
 from jaeger.utils.logging import get_logger
 from jaeger.utils.test import test_tf
@@ -103,7 +103,7 @@ def test_core(**kwargs) -> None:
         )
 
         input_dataset = tf.data.Dataset.from_generator(
-            fragment_generator(
+            lambda: fragment_generator(
                 input_file,
                 fragsize=fsize,
                 stride=stride,

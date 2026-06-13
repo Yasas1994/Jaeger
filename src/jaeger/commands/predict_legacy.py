@@ -22,7 +22,7 @@ from jaeger.postprocess.prophages import (
     prophage_report,
     segment,
 )
-from jaeger.preprocess.fasta import fragment_generator
+from jaeger.seqops.io import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
 from jaeger.utils.fs import validate_fasta_entries
@@ -164,7 +164,7 @@ def run_core(**kwargs):
     tf.config.set_soft_device_placement(True)
     with strategy.scope():
         input_dataset = tf.data.Dataset.from_generator(
-            fragment_generator(
+            lambda: fragment_generator(
                 str(input_file_path),
                 no_progress=False,
                 fragsize=kwargs.get("fsize"),
@@ -249,6 +249,8 @@ def run_core(**kwargs):
             data,
             output_table_path=output_table_path,
             output_phage_table_path=output_phage_table_path,
+            reliability_cutoff=kwargs.get("rc", 0.5),
+            phage_score=kwargs.get("pc", 3),
         )
 
         logger.info(f"processed {data.get('headers').shape[0]}/{num} sequences")
@@ -263,16 +265,21 @@ def run_core(**kwargs):
             )
             logger.info(f"{output_fasta_file} created")
 
-        if kwargs.get("getalllogits"):
-            output_logits = f"{file_base}_{config['suffix']}_jaeger.npy"
-            output_logits_path = os.path.join(OUTPUT_DIR, output_logits)
-            logger.info(f"writing window-wise scores to {output_logits}")
-            np.save(
-                output_logits_path,
-                dict(zip(data.get("headers"), data.get("predictions"))),
-                allow_pickle=True,
+        if kwargs.get("window_scores"):
+            output_scores = f"{file_base}_{config['suffix']}_window_scores.npz"
+            output_scores_path = os.path.join(OUTPUT_DIR, output_scores)
+            logger.info(
+                f"writing window-wise scores and metadata to {output_scores_path}"
             )
-            logger.info(f"{output_logits} created")
+            np.savez(
+                output_scores_path,
+                headers=data_full["headers"],
+                lengths=data_full["lengths"],
+                predictions=np.array(data_full["predictions"], dtype=object),
+                gc_skews=np.array(data_full["gc_skews"], dtype=object),
+                gcs=np.array(data_full["gcs"], dtype=object),
+            )
+            logger.info(f"{output_scores} created")
 
         if kwargs.get("prophage"):
             # still experimental - needs more testing!!!!

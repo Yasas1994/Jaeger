@@ -27,7 +27,7 @@ conda config --add channels conda-forge
 conda config --set channel_priority strict
 
 # Create environment and install
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.13" pip jaeger-bio
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.14" pip jaeger-bio
 
 # Activate
 conda activate jaeger
@@ -44,7 +44,7 @@ Recommended for users who want the latest stable release or need to install into
 
 ```bash
 # Create a conda environment
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.13" pip
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.14" pip
 conda activate jaeger
 
 # Or use venv
@@ -76,7 +76,7 @@ git clone https://github.com/MGXlab/Jaeger.git
 cd Jaeger
 
 # Create a conda environment
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.13" pip
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.14" pip
 conda activate jaeger
 
 # Or use venv
@@ -144,7 +144,7 @@ apptainer run --nv jaeger.sif jaeger predict \
 3. **Manually install CUDA toolkit** (if the above fails):
    ```bash
    # Create environment
-   conda create -n jaeger -c conda-forge -c bioconda -c defaults "python>=3.11,<3.13" pip
+   conda create -n jaeger -c conda-forge -c bioconda -c defaults "python>=3.11,<3.14" pip
 
    # Install CUDA and cuDNN
    conda install -n jaeger -c "nvidia/label/cuda-11.8.0" cudatoolkit=11

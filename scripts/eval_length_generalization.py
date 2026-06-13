@@ -22,8 +22,8 @@ import argparse
 
 from jaeger.utils.misc import load_model_config
 from jaeger.commands.train import DynamicModelBuilder
-from jaeger.preprocess.latest.convert import process_string_train
-from jaeger.preprocess.latest.maps import CODONS, CODON_ID
+from jaeger.seqops.encode import process_string_train
+from jaeger.seqops.maps import CODONS, CODON_ID
 
 CLASS_NAMES = ["chromosome", "virus", "plasmid"]
 

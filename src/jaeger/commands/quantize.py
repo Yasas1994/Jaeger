@@ -75,6 +75,12 @@ def quantize_model(model: str, output: Path, mode: str, verbose: int):
 
     log.info(f"Converting to TFLite (mode={mode})...")
     converter = tf.lite.TFLiteConverter.from_concrete_functions([frozen_func])
+    # Jaeger models use ops (e.g., Gelu, BatchMatMul) that are not in the
+    # baseline TFLite builtin set; allow TensorFlow fallback ops.
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS,
+        tf.lite.OpsSet.SELECT_TF_OPS,
+    ]
 
     if mode == "dynamic":
         converter.optimizations = [tf.lite.Optimize.DEFAULT]

@@ -409,13 +409,18 @@ fragment_classifier_data:
 
 ### 7.3 Expected speedup
 
-| Format | Batches/sec | Speedup vs numpy_raw | Notes |
-|--------|-------------|----------------------|-------|
-| CSV (live preprocess) | ~130 | 0.1× | Baseline — very slow |
-| TFRecord + cache | ~3,800 | ~3× | Cached on disk |
-| NumPy raw + cache | ~1,150 | 1.0× | int8 + TF preprocessing, augmentations supported |
-| NumPy raw variable + cache | ~830 | ~0.7× | Variable-length sequences |
-| NumPy full + cache | ~10,000 | ~8.7× | Fully preprocessed, no runtime overhead |
+| Format | Batches/sec | Speedup vs CSV | Notes |
+|--------|-------------|----------------|-------|
+| CSV (live preprocess) | ~130–317 | 1.0× | Baseline — very slow |
+| TFRecord + cache | ~3,800 | ~12× | Cached on disk |
+| NumPy raw + cache | ~1,150–5,500 | ~17× | int8 + TF preprocessing, augmentations supported |
+| NumPy raw variable + cache | ~830 | ~3× | Variable-length sequences |
+| NumPy full + cache | ~2,900–10,000 | **~9×** | Fully preprocessed, no runtime overhead |
+
+**Hardware notes:**
+- Local RTX 3500 Ada: numpy_full ~10K batches/sec, CSV ~130 batches/sec
+- Zeus L40S (node030): numpy_full ~2.9K batches/sec, CSV ~317 batches/sec
+- Zeus GTX 1080 Ti (node029): not benchmarked yet
 
 A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily fits in most server RAM.
 

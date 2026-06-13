@@ -140,13 +140,17 @@ By default, Jaeger loads training data from CSV files and preprocesses sequences
 
 Jaeger supports five data formats via the `data_format` config option:
 
-| Format | Speedup | Best for | Notes |
-|--------|---------|----------|-------|
-| `csv` | 1× (baseline) | Small datasets, quick experiments | Live preprocessing every epoch |
-| `tfrecord` | ~3× vs numpy_raw | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
-| `numpy_raw` | 1× (baseline) | Large datasets, with augmentations | int8 sequences + TF preprocessing |
-| `numpy_raw_variable` | ~0.7× | Variable-length sequences | int8 sequences, variable length |
-| `numpy_full` | ~8.7× | Maximum throughput, no augmentations | Fully preprocessed, direct loading |
+| Format | Speedup vs CSV | Best for | Notes |
+|--------|----------------|----------|-------|
+| `csv` | 1.0× (baseline) | Small datasets, quick experiments | Live preprocessing every epoch |
+| `tfrecord` | ~12× | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
+| `numpy_raw` | ~17× | Large datasets, with augmentations | int8 sequences + TF preprocessing |
+| `numpy_raw_variable` | ~3× | Variable-length sequences | int8 sequences, variable length |
+| `numpy_full` | **~9×** | Maximum throughput, no augmentations | Fully preprocessed, direct loading |
+
+**Hardware-dependent speeds:**
+- Local RTX 3500 Ada: numpy_full ~10K batches/sec, CSV ~130 batches/sec
+- Zeus L40S (node030): numpy_full ~2.9K batches/sec, CSV ~317 batches/sec
 
 ### When to optimize
 

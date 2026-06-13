@@ -48,3 +48,7 @@ compress*
 setup_remote_office.sh
 TRAINING_STATUS.md
 DATA_FORMAT_PROPOSAL.md
+
+# CLI smoke-test outputs
+test_cli/outputs/
+test_cli/**/*.log

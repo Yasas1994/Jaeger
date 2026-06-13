@@ -8,8 +8,8 @@ This tests that:
 """
 
 import numpy as np
-from jaeger.preprocess.latest.convert import process_string_train
-from jaeger.preprocess.latest.maps import CODONS, CODON_ID
+from jaeger.seqops.encode import process_string_train
+from jaeger.seqops.maps import CODONS, CODON_ID
 
 
 def create_test_csv_string(label=1, sequence="ATGCGTACGTTAGCTAGCTAGC"):

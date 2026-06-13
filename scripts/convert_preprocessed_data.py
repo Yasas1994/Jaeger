@@ -30,8 +30,8 @@ import time
 import numpy as np
 import tensorflow as tf
 
-from jaeger.preprocess.latest.convert import process_string_train
-from jaeger.preprocess.latest.maps import CODONS, CODON_ID
+from jaeger.seqops.encode import process_string_train
+from jaeger.seqops.maps import CODONS, CODON_ID
 
 
 def _bytes_feature(value):

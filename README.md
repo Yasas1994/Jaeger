@@ -84,7 +84,7 @@ jaeger health
 
 ```bash
 # create a conda environment and activate
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<=3.12" pip
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.14" pip
 conda activate jaeger
 
 # OR create a virtual environment using venv
@@ -108,7 +108,7 @@ jaeger health
 
 ```bash
 # create a conda environment and activate
-mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.12" pip
+mamba create -n jaeger -c nvidia -c conda-forge cuda-nvcc "python>=3.11,<3.14" pip
 conda activate jaeger
 
 # OR create a virtual environment using venv
@@ -151,10 +151,10 @@ apptainer run --nv jaeger.sif jaeger health
 # list jaeger models available for download
 apptainer run --nv jaeger.sif jaeger download --list
 # download jaeger models
-apptainer run --nv jaeger.sif jaeger download --model_name jaeger_57341_1.5M_fragment --path /path/to/save/model --config /path/to/config.json
+apptainer run --nv jaeger.sif jaeger download --model_name jaeger_38341_1.4M_fragment --path /path/to/save/model --config /path/to/config.json
 
 # run jaeger
-apptainer run --nv jaeger.sif jaeger predict --model jaeger_57341_1.5M_fragment --config /path/to/config.json -i /path/to/input.fasta -o /path/to/save/results
+apptainer run --nv jaeger.sif jaeger predict --model jaeger_38341_1.4M_fragment --config /path/to/config.json -i /path/to/input.fasta -o /path/to/save/results
 
 ```
 
@@ -162,7 +162,7 @@ apptainer run --nv jaeger.sif jaeger predict --model jaeger_57341_1.5M_fragment 
 ---
 #### Downloading models
 ---
-Starting from version 1.26.0, users will need to download the new models separately after installing Jaeger. However, for backward compatibility, Jaeger will still include the old model by default.
+Starting from version 1.26.0, users will need to download the new models separately after installing Jaeger. The bundled `default` model is deprecated and uses the legacy prediction workflow; modern SavedModels (e.g., `jaeger_38341_1.4M_fragment`) are recommended.
 
 Use the --list flag to print out all models available for download
 ```bash
