@@ -34,7 +34,7 @@ remote_train.py
 quick_eval_baseline.py
 evaluate_all_models.py
 evaluate_length_generalization.py
-length_generalization_results.json
+evaluate_length_generalization_results.json
 evaluation_results/
 monitor_*.sh
 monitor_*.log
@@ -52,3 +52,14 @@ DATA_FORMAT_PROPOSAL.md
 # CLI smoke-test outputs
 test_cli/outputs/
 test_cli/**/*.log
+
+# Local scratch / chat exports
+API_AUDIT.md
+kimi-export-*.md
+
+# pyfastx index files
+*.fxi
+
+# Local/test train configs
+train_config/nn_config_500bp_*_test.yaml
+train_config/nn_config_500bp_*_zeus_v2.yaml
