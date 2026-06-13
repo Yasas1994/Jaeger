@@ -607,6 +607,7 @@ def _convert_to_numpy_full(
 # numpy_raw_variable (variable-length int8)
 # ---------------------------------------------------------------------------
 
+
 def _encode_variable_length(line: str, max_length: int) -> tuple:
     """Encode a single CSV line to variable-length int8 sequence."""
     line = line.strip()
@@ -709,6 +710,7 @@ def _convert_to_numpy_raw_variable(
 # ---------------------------------------------------------------------------
 # Public dispatcher
 # ---------------------------------------------------------------------------
+
 
 def convert_dataset(
     input_path: str,

@@ -159,7 +159,13 @@ def read_sequences(
             reader = csv.reader(f)
             for row in reader:
                 if len(row) >= 2:
-                    records.append({"id": row[0], "seq": row[1], "label": row[2] if len(row) > 2 else None})
+                    records.append(
+                        {
+                            "id": row[0],
+                            "seq": row[1],
+                            "label": row[2] if len(row) > 2 else None,
+                        }
+                    )
     else:
         raise ValueError("input_type must be 'CSV' or 'FASTA'")
     return records
@@ -247,7 +253,10 @@ def validate_fasta_entries(
 
 
 def split_fasta_with_pyfastx(
-    input_fasta: str, output_dir: str, chunks: int | None = None, counts: int | None = None
+    input_fasta: str,
+    output_dir: str,
+    chunks: int | None = None,
+    counts: int | None = None,
 ) -> list[str]:
     """Split a FASTA file into chunks using pyfastx.
 
@@ -257,9 +266,25 @@ def split_fasta_with_pyfastx(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if chunks:
-        cmd = ["pyfastx", "split", "-n", str(chunks), "-o", str(output_dir), input_fasta]
+        cmd = [
+            "pyfastx",
+            "split",
+            "-n",
+            str(chunks),
+            "-o",
+            str(output_dir),
+            input_fasta,
+        ]
     elif counts:
-        cmd = ["pyfastx", "split", "-c", str(counts), "-o", str(output_dir), input_fasta]
+        cmd = [
+            "pyfastx",
+            "split",
+            "-c",
+            str(counts),
+            "-o",
+            str(output_dir),
+            input_fasta,
+        ]
     else:
         raise ValueError("You must specify either chunks (-n) or counts (-c)")
 

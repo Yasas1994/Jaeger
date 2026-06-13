@@ -11,11 +11,26 @@ import numpy as np
 def reverse_complement(dna_sequence: str) -> str:
     """Return the reverse complement of a DNA sequence."""
     complement_dict = {
-        "A": "T", "T": "A", "C": "G", "G": "C",
-        "-": "-", "N": "N", "W": "W", "S": "S",
-        "Y": "R", "R": "Y", "M": "K", "K": "M",
-        "B": "V", "V": "B", "H": "D", "D": "H",
-        "a": "T", "t": "A", "g": "C", "c": "G",
+        "A": "T",
+        "T": "A",
+        "C": "G",
+        "G": "C",
+        "-": "-",
+        "N": "N",
+        "W": "W",
+        "S": "S",
+        "Y": "R",
+        "R": "Y",
+        "M": "K",
+        "K": "M",
+        "B": "V",
+        "V": "B",
+        "H": "D",
+        "D": "H",
+        "a": "T",
+        "t": "A",
+        "g": "C",
+        "c": "G",
     }
     return "".join(complement_dict.get(base, "N") for base in reversed(dna_sequence))
 

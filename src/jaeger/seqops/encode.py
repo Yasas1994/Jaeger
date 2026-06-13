@@ -317,6 +317,7 @@ def process_string_inference(
 
     return p
 
+
 # ------------------------------------------------------------------
 # Raw sequence processors (for numpy_raw / numpy_raw_variable loaders)
 # ------------------------------------------------------------------

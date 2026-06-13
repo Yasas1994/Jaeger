@@ -8,7 +8,6 @@ from __future__ import annotations
 from math import log2
 
 
-
 def shannon_entropy(seq: str) -> float:
     """Calculate Shannon entropy (bits) for a DNA sequence."""
     counts = {}

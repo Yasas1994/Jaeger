@@ -26,5 +26,8 @@ def validate_fasta_entry(header: str, sequence: str) -> tuple[bool, str | None]:
     if not sequence:
         return False, "Empty sequence"
     if not is_valid_dna(sequence):
-        return False, f"Invalid characters in sequence: {set(sequence) - set('ATGCNatgcn')}"
+        return (
+            False,
+            f"Invalid characters in sequence: {set(sequence) - set('ATGCNatgcn')}",
+        )
     return True, None
