@@ -58,7 +58,7 @@ jobs:
       - name: Run smoke tests
         run: |
           python tests/smoke/convert_test.py
-          python tests/smoke/layers.test.py
+          python tests/smoke/layers_test.py
           python tests/smoke/loss_test.py
           python tests/smoke/train_test.py
 
