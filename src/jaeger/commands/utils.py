@@ -1,518 +1,19 @@
-from jaeger.preprocess.shuffle_dna import dinuc_shuffle
-import polars as pl
-import pyfastx
+import csv
 import random
 import subprocess
 import shutil
 import sys
+import pyfastx
 import numpy as np
 from pathlib import Path
-from typing import List
 from rich.progress import track
-from math import log2, sqrt
-from scipy import stats
-import csv
 from jaeger.utils.logging import get_logger
 
+from jaeger.dataops.dataset import build_dataset
+from jaeger.dataops.convert import convert_dataset
+
+
 logger = get_logger(log_file=None, log_path=None, level=3)
-
-
-def shannon_entropy(seq: str) -> float:
-    """
-    Calculate Shannon entropy for a sequence.
-    """
-    counts = {}
-    for base in seq:
-        counts[base] = counts.get(base, 0) + 1
-    entropy = 0.0
-    length = len(seq)
-    for count in counts.values():
-        p = count / length
-        entropy -= p * log2(p)
-    return entropy
-
-
-def generate_homopolymer(length: int, base: str = "A") -> str:
-    """
-    Generate a homopolymer (single-base repeat) of given length.
-    """
-    return base * length
-
-
-def generate_tandem_repeat(motif: str, copies: int) -> str:
-    """
-    Generate a tandem repeat sequence by repeating a given motif a specified number of times.
-    """
-    return motif * copies
-
-
-def generate_random_tandem_repeats(
-    num_sequences: int,
-    motif_length_range: tuple = (3, 30),
-    copy_number: int = 2000,
-    alphabet: List[str] = ["A", "C", "G", "T"],
-) -> List[str]:
-    """
-    Automatically generate a list of random tandem repeat sequences.
-
-    Parameters
-    ----------
-    num_sequences : int
-        Number of sequences to generate.
-    motif_length_range : tuple (min_len, max_len)
-        Range of lengths for randomly generated motifs.
-    copy_number_range : tuple (min_copies, max_copies)
-        Range of copy counts to repeat the motif.
-    alphabet : list of str
-        List of nucleotide characters to sample motifs from.
-
-    Returns
-    -------
-    List[str]
-        Generated tandem repeat sequences.
-    """
-    sequences = []
-    for _ in range(num_sequences):
-        motif_len = random.randint(*motif_length_range)
-        motif = "".join(random.choices(alphabet, k=motif_len))
-        seq = generate_tandem_repeat(motif, copy_number)
-        sequences.append(seq[:2048])
-    return sequences
-
-
-def generate_biased_sequence(length: int, freqs: dict = None) -> str:
-    """
-    Generate a sequence of given length with biased nucleotide frequencies.
-    freqs should be a dict like {'A':0.7, 'C':0.1, 'G':0.1, 'T':0.1}.
-    """
-    if freqs is None:
-        freqs = {"A": 0.7, "C": 0.1, "G": 0.1, "T": 0.1}
-    bases = list(freqs.keys())
-    weights = list(freqs.values())
-    return "".join(random.choices(bases, weights=weights, k=length))
-
-
-def generate_low_entropy_sequence(
-    length: int, window_size: int, threshold: float, max_attempts: int = 10000
-) -> str:
-    """
-    Generate a random sequence and ensure all sliding windows have entropy below threshold.
-    """
-    for attempt in range(max_attempts):
-        seq = generate_biased_sequence(length)
-        # check all windows
-        valid = True
-        for i in range(length - window_size + 1):
-            if shannon_entropy(seq[i : i + window_size]) >= threshold:
-                valid = False
-                break
-        if valid:
-            return seq
-    raise ValueError(
-        f"Failed to generate low-entropy sequence after {max_attempts} attempts"
-    )
-
-
-def shuffle_dna(seq: str) -> str:
-    """Randomly shuffles a DNA sequence."""
-    seq_list = list(seq)
-    random.shuffle(seq_list)
-    return "".join(seq_list)
-
-
-def kmer_shuffle(seq: str, k: int) -> str:
-    """Randomly shuffles a DNA sequence at the non-overlapping k-mer level"""
-    # Trim sequence to nearest multiple of k
-    trimmed_len = len(seq) - (len(seq) % k)
-    trimmed_seq = seq[:trimmed_len]
-
-    # Split into non-overlapping k-mers
-    kmers = [trimmed_seq[i : i + k] for i in range(0, trimmed_len, k)]
-
-    # Shuffle
-    np.random.shuffle(kmers)
-
-    # Join and return
-    return "".join(kmers)
-
-
-def kmer_mix_shuffle(seq1: str, seq2: str, k: int):
-    """
-    Shuffle kmers from 2 sequences from 2 different classes to generate
-    """
-    pass
-
-
-def shuffle_core(**kwargs):
-    """
-    shuffle sequences while mainintaining the
-    1. dinuc composition or
-    2. break a seqeunce into k-mers -> shuffle -> concat
-    3. random shuffling
-    """
-    if kwargs.get("dinuc"):
-        shuffle_fn = dinuc_shuffle
-    else:
-
-        def shuffle_fn(x):
-            return kmer_shuffle(seq=x, k=kwargs.get("k", 1))
-
-    n_tandem_repeats = kwargs.get("num_tandem_repeats")
-    if kwargs.get("input_predictions"):
-        logger.info("using jaeger predictions to generate the ood dataset")
-        map_ = {
-            0: "bacteria",
-            1: "phage",
-            2: "eukarya",
-            3: "archaea",
-            4: "plasmid",
-            5: "virus",
-        }
-        ip = pl.read_csv(
-            kwargs.get("input_predictions"),
-            truncate_ragged_lines=True,
-            separator="\t",
-            columns=[0, 2],
-        )
-        ip = ip.with_columns(
-            true_class=pl.col("contig_id").str.split("__class=").list.last()
-        )
-        ip = ip.with_columns(true_class=pl.col("true_class").replace(map_))
-        ip = ip.with_columns(
-            is_correct=(pl.col("true_class") == pl.col("prediction")) * 1
-        )
-        ip = ip.with_columns(
-            contig_id=pl.col("contig_id").str.split("__class=").list.first()
-        )
-        correct = set(ip.filter(pl.col("is_correct") == 1)["contig_id"].to_list())
-    match kwargs.get("itype"):
-        case "CSV":
-            f = pl.read_csv(
-                kwargs.get("input"), truncate_ragged_lines=True, has_header=False
-            )
-            f = f.select(["column_1", "column_2", "column_3"])
-            f = f.with_columns(
-                pl.when(pl.col("column_3").is_in(correct))
-                .then(pl.lit(1, dtype=pl.Int64))
-                .otherwise(pl.lit(0, dtype=pl.Int64))
-                .alias("column_1")
-            )
-            f = f.with_columns(
-                pl.when(
-                    (
-                        pl.col("column_2").str.count_matches("N")
-                        / pl.col("column_2").str.len_chars()
-                    )
-                    > 0.3
-                )
-                .then(pl.lit(0, dtype=pl.Int64))
-                .otherwise(pl.col("column_1"))
-                .alias("column_1")
-            )
-            print(f.head())
-            fs = f.with_columns(
-                pl.col("column_2").map_elements(
-                    lambda x: shuffle_fn(x), return_dtype=pl.String
-                ),
-                pl.lit(0, dtype=pl.Int64).alias("column_1"),
-            )
-            print(fs.head())
-            ft = pl.DataFrame()
-            if n_tandem_repeats > 0:
-                ft = pl.from_dict(
-                    dict(
-                        column_1=np.array(
-                            [0 for _ in range(n_tandem_repeats)], dtype=np.int64
-                        ),
-                        column_2=generate_random_tandem_repeats(
-                            num_sequences=n_tandem_repeats
-                        ),
-                        column_3=[
-                            f"tandem_repeat_{i}" for i in range(n_tandem_repeats)
-                        ],
-                    )
-                )
-            print(ft.head())
-            logger.info(
-                f"id : {len(f)} ood: {len(fs)} ood_tandem: {0 if ft.is_empty() else len(ft)}"
-            )
-
-            f = pl.concat(
-                [i for i in [f, fs, ft] if not i.is_empty()], how="vertical"
-            ).sample(fraction=1.0, shuffle=True, with_replacement=False)
-
-            match kwargs.get("otype"):
-                case "CSV":
-                    f.select(["column_1", "column_2", "column_3"]).write_csv(
-                        kwargs.get("output"), include_header=False
-                    )
-                case "FASTA":
-                    with open(kwargs.get("output"), "w") as fh:
-                        for row in f.iter_rows(named=True):
-                            label = row["col1"]
-                            seq = row["col2"]
-                            seq_id = row["col3"].split("__class=")[0]
-                            # use the 3rd column as header
-                            fh.write(f">{seq_id}__class={label}\n")
-                            for i in range(0, len(seq), 70):
-                                fh.write(seq[i : i + 70] + "\n")
-
-        case "FASTA":
-            input_path = kwargs.get("input")
-            output_path = kwargs.get("output")
-            otype = kwargs.get("otype")  # "FASTA" or "CSV"
-            fasta_iter = pyfastx.Fasta(input_path, build_index=False)
-
-            # 1) pre‑generate your tandem dict
-            tandem = dict(
-                column_1=[0 for _ in range(n_tandem_repeats)],
-                column_2=generate_random_tandem_repeats(num_sequences=n_tandem_repeats),
-                column_3=[f"tandem_repeat_{i}" for i in range(n_tandem_repeats)],
-            )
-
-            # 2) collect ALL entries into a list
-            entries = []
-
-            # 2a) from your input FASTA
-            for name, seq in fasta_iter:
-                ncount = seq.count("N")
-                lowcomplex = len(seq) > 0 and (ncount / len(seq)) > 0.3
-                not_in_correct = name not in correct
-                shuffled = shuffle_fn(seq)
-                id_ = name.split("__class=")[0]
-                orig_label = 0 if (lowcomplex or not_in_correct) else 1
-
-                # store tuples of (id, sequence, label)
-                entries.append((id_, seq, orig_label))
-                entries.append((id_, shuffled, 0))
-
-            # 2b) from your tandem dict
-            for label, tandem_seq, tandem_id in zip(
-                tandem["column_1"], tandem["column_2"], tandem["column_3"]
-            ):
-                entries.append((tandem_id, tandem_seq, label))
-
-            # 3) shuffle the entire pool
-            random.shuffle(entries)
-
-            # 4) write them out in the new order
-            with open(output_path, "w") as fh:
-                for seq_id, sequence, label in entries:
-                    if otype == "FASTA":
-                        write_fasta_entry(fh, seq_id, sequence, label)
-                    else:  # CSV
-                        fh.write(f"{label},{sequence},{seq_id}\n")
-
-
-def write_fasta_entry(fh, header, seq, label):
-    """
-    formats and writes a fasta record to a file
-    """
-    fh.write(f">{header}class={label}\n")
-    for i in range(0, len(seq), 70):
-        fh.write(seq[i : i + 70] + "\n")
-
-
-# def split_core(**kwargs):
-#     """
-#     sequencially sample random fragments from genomes (to mimic metagenome assemblies) for a given size
-#     distribution
-#     """
-
-
-#     input_path = kwargs.get("input")
-#     output_path = kwargs.get("output")
-#     min_len = kwargs.get("minlen", 2000)
-#     max_len = kwargs.get("maxlen", 50000)
-#     overlap = kwargs.get("overlap", 0)  # how many bases to overlap
-#     shuffle = kwargs.get("shuffle", False)
-
-#     f = pyfastx.Fasta(input_path, build_index=False)
-
-#     with open(output_path, "w") as fh:
-#         for name, seq in track(f, description="Processing..."):
-#             seq = str(seq)
-#             if shuffle:
-#                 seq = dinuc_shuffle(seq)
-
-#             start = 0
-#             frag_id = 0
-
-#             while start < len(seq):
-#                 frag_len = random.randint(min_len, max_len)
-#                 end = min(start + frag_len, len(seq))
-#                 fragment = seq[start:end]
-
-#                 # Write FASTA record
-#                 Ns = fragment.count("N")
-#                 if Ns / len(fragment) < 0.3 and len(fragment) >= min_len:
-#                     fh.write(f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n")
-#                     for i in range(0, len(fragment), 60):
-#                         fh.write(fragment[i : i + 60] + "\n")
-
-#                 # Move to next fragment start (with overlap)
-#                 if end == len(seq):
-#                     break
-
-#                 start = end - overlap
-#                 frag_id += 1
-
-
-def split_core(**kwargs):
-    """
-    Sample random fragments from genomes (to mimic metagenome assemblies)
-    for a given size distribution.
-
-    Two modes:
-    1) Sequentially sample random fragments of varying size (given a size distribution):
-       - Used when `coverage` is NOT provided.
-       - Walks along each genome with random fragment lengths and fixed overlap.
-       - when minlen == maxlen -> sliding window with constant window size
-
-    2) Coverage-based random sampling:
-       - Used when `coverage` is provided.
-       - For each genome, sample random fragments until
-         target_bases = coverage * genome_length is reached (approx).
-
-    Parameters
-    ----------
-    minlen : int
-    minimum fragment length (min of discrete uniform dinstribution)
-
-    maxlen: int
-    maximum fragment length (max of discrete uniform dinstribution)
-
-    overlap: int
-    number of overlapping nuc between two consecutive fragments
-
-    coverage: int
-    switch from sequential sampling to coverage based sampling if not None
-
-    circular: bool
-    treats the sequences as circular (conts the ends)
-
-    nax_n_prop: float
-    max proportion of Ns allowed in a fragment
-
-    seed: int
-    seed for the random number generator
-
-    """
-
-    input_path = kwargs.get("input")
-    output_path = kwargs.get("output")
-
-    min_len = kwargs.get("minlen", 2000)
-    max_len = kwargs.get("maxlen", 50000)
-    overlap = kwargs.get("overlap", 0)  # used only in sequential mode
-    shuffle = kwargs.get("shuffle", False)
-    coverage = kwargs.get("coverage", None)  # per-genome coverage; if None → sequential
-    circular = kwargs.get("circular", False)
-    max_n_prop = kwargs.get("max_n_prop", 0.3)
-    seed = kwargs.get("seed", None)
-
-    if seed is not None:
-        random.seed(seed)
-        logger.info(f"using seed: {seed}")
-
-    if min_len <= 0 or max_len < min_len:
-        raise ValueError("Invalid minlen/maxlen: ensure 0 < minlen <= maxlen")
-
-    f = pyfastx.Fasta(input_path, build_index=False)
-
-    def sample_fragment(seq, frag_len, circular=False):
-        """
-        Sample a fragment of length `frag_len` from `seq`.
-        If circular=True, allow wrapping around the end.
-        Returns (start, fragment_seq).
-        """
-        G = len(seq)
-        if frag_len > G:
-            frag_len = G
-        if circular:
-            start = random.randint(0, G - 1)
-            end = start + frag_len
-            if end <= G:
-                fragment = seq[start:end]
-            else:
-                # wrap around
-                end_part = seq[start:]
-                wrap_part = seq[: (end - G)]
-                fragment = end_part + wrap_part
-        else:
-            # ensure we don't go out of bounds
-            start = random.randint(0, G - frag_len)
-            fragment = seq[start : start + frag_len]
-        return start, fragment
-
-    with open(output_path, "w") as fh:
-        for name, seq in track(f, description="Processing..."):
-            seq = str(seq)
-            if shuffle:
-                seq = dinuc_shuffle(seq)
-
-            genome_len = len(seq)
-            frag_id = 0
-
-            # If genome is shorter than min_len, skip it
-            if genome_len < min_len:
-                continue
-
-            # --- MODE 1: coverage-based random sampling ---
-            if coverage is not None:
-                target_bases = coverage * genome_len
-                bases_so_far = 0
-
-                while bases_so_far < target_bases:
-                    frag_len = random.randint(min_len, max_len)
-                    if frag_len > genome_len:
-                        frag_len = genome_len
-
-                    start, fragment = sample_fragment(seq, frag_len, circular=circular)
-
-                    Ns = fragment.count("N")
-                    n_prop = Ns / len(fragment)
-
-                    if n_prop <= max_n_prop and len(fragment) >= min_len:
-                        header = (
-                            f">{name}_frag{frag_id}_start{start}_"
-                            f"len{len(fragment)}_cov{coverage}\n"
-                        )
-                        fh.write(header)
-                        for i in range(0, len(fragment), 60):
-                            fh.write(fragment[i : i + 60] + "\n")
-
-                        bases_so_far += len(fragment)
-                        frag_id += 1
-
-            # --- MODE 2: original sequential tiling with overlap ---
-            else:
-                start = 0
-                while start < genome_len:
-                    frag_len = random.randint(min_len, max_len)
-                    end = min(start + frag_len, genome_len)
-                    fragment = seq[start:end]
-
-                    Ns = fragment.count("N")
-                    if len(fragment) > 0:
-                        n_prop = Ns / len(fragment)
-                    else:
-                        n_prop = 1.0  # force skip
-
-                    # Write FASTA record if passes filters
-                    if n_prop <= max_n_prop and len(fragment) >= min_len:
-                        fh.write(
-                            f">{name}_frag{frag_id}_start{start}_len{len(fragment)}\n"
-                        )
-                        for i in range(0, len(fragment), 60):
-                            fh.write(fragment[i : i + 60] + "\n")
-
-                    # Move to next fragment start (with overlap)
-                    if end == genome_len:
-                        break
-
-                    start = end - overlap
-                    frag_id += 1
 
 
 def mask_core(**kwargs):
@@ -741,73 +242,7 @@ def dataset_core(**kwargs):
       class_col  : int     # col index of CSV with class id
       seq_col    : int     # col index of CSV with sequence
     """
-    inp = Path(kwargs["input"])
-    out_pref = Path(kwargs["output"])
-    valperc = kwargs.get("valperc", 0.1)
-    trainperc = kwargs.get("trainperc", 0.8)
-    testperc = kwargs.get("testperc", 0.1)
-    maxiden = kwargs.get("maxiden", 0.6)
-    maxcov = kwargs.get("maxcov", 0.6)
-    fraglen = kwargs.get("fraglen", 2048)
-    overlap = kwargs.get("overlap", 1024)
-    method = kwargs.get("method", "ANI").upper()
-    outtype = kwargs.get("outtype", "CSV").upper()
-    intype = kwargs.get("intype", "CSV").upper()
-    class_col = kwargs.get("class_col")
-    seq_col = kwargs.get("seq_col")
-    class_id = kwargs.get("class")
-
-    assert abs(trainperc + valperc + testperc - 1.0) < 1e-6, (
-        "train+val+test must sum to 1"
-    )
-
-    def get_class(x):
-        return x.split("=")[-1]
-
-    out_pref.mkdir(exist_ok=True, parents=True)
-
-    # 1. Read input sequences
-    records = read_sequences(inp, intype, seq_col, class_col, class_id)
-
-    # 2. Generate fragments
-    fragments = generate_fragments(records, frag_len=fraglen, overlap=overlap)
-    frag_fasta = out_pref / f"{inp.name}.fragments.fasta"
-    write_fasta(fragments, frag_fasta)
-
-    # 3. Run MMseqs2
-    clusters = out_pref / f"{inp.name}.fragments.clusters"
-    tmpdir = out_pref / "tmp"
-    match method:
-        case "ANI":
-            run_mmseqs_cluster(frag_fasta, clusters, tmpdir, maxiden, maxcov)
-        case "AAI":
-            NotImplementedError("AAI method is not yet implemented")
-
-    # 4. Load representatives
-    rep_seq = out_pref / f"{inp.name}.fragments.clusters_rep_seq.fasta"
-    if not rep_seq.exists():
-        raise FileNotFoundError(f"Expected MMseqs2 rep file: {rep_seq}")
-    if class_id:
-        reps = [
-            (h, str(s), class_id)
-            for h, s in pyfastx.Fasta(str(rep_seq), build_index=False)
-        ]
-    else:
-        reps = [
-            (h, str(s), get_class(h))
-            for h, s in pyfastx.Fasta(str(rep_seq), build_index=False)
-        ]
-
-    # 5. Split datasets
-    train, val, test = split_dataset(reps, trainperc, valperc, testperc)
-
-    # 6. Write outputs
-    write_output(train, val, test, out_pref, outtype)
-
-    print(
-        f"{len(fragments)} fragments → {len(reps)} reps → "
-        f"{len(train)} train, {len(val)} val, {len(test)} test"
-    )
+    build_dataset(**kwargs)
 
 
 def convert_core(**kwargs):
@@ -856,51 +291,10 @@ def convert_core(**kwargs):
         raise ValueError("input_type must be 'CSV' or 'FASTA'")
 
 
-def significant_top_class(logits_class1, logits_class2, alpha=0.05):
-    """
-    One-tailed paired t-test to check if top 1 class logits are significantly higher than top 2 class
-    logits.
-    """
-    # Differences per window
-    diffs = np.array(logits_class1) - np.array(logits_class2)
-
-    # Compute t-statistic and p-value
-    t_stat, p_two_tailed = stats.ttest_1samp(diffs, 0)
-    # Convert to one-tailed (greater-than)
-    p_one_tailed = p_two_tailed / 2 if t_stat > 0 else 1 - (p_two_tailed / 2)
-
-    # Decision
-    significant = p_one_tailed < alpha
-
-    return {"t_stat": t_stat, "p_value": p_one_tailed, "significant": significant}
-
-
-def welch_t_one_tailed(mean1, var1, n1, mean2, var2, n2, alternative="greater"):
-    """
-    One-tailed Welch's t-test using summary statistics.
-    alternative: "greater" tests mean1 > mean2,
-                 "less" tests mean1 < mean2.
-    """
-    # Standard error
-    se = sqrt(var1 / n1 + var2 / n2)
-
-    # t-statistic
-    t_stat = (mean1 - mean2) / se
-
-    # Welch–Satterthwaite degrees of freedom
-    df_num = (var1 / n1 + var2 / n2) ** 2
-    df_denom = ((var1 / n1) ** 2 / (n1 - 1)) + ((var2 / n2) ** 2 / (n2 - 1))
-    df = df_num / df_denom
-
-    # One-tailed p-value
-    if alternative == "greater":
-        p = 1 - stats.t.cdf(t_stat, df)
-    elif alternative == "less":
-        p = stats.t.cdf(t_stat, df)
-    else:
-        raise ValueError("alternative must be 'greater' or 'less'")
-
-    return t_stat, df, p
+# ------------------------------------------------------------------
+# Stats (late import to avoid heavy deps at module load time)
+# ------------------------------------------------------------------
+from jaeger.utils.stats import welch_t_one_tailed  # noqa: E402
 
 
 def stats_core(**kwargs):
@@ -931,57 +325,63 @@ def stats_core(**kwargs):
 
     df = pd.read_table(input_path)
     sns.set_context("paper", font_scale=1.2)
+    reliability_available = pd.api.types.is_numeric_dtype(df["reliability_score"])
+    if not reliability_available:
+        logger.warning(
+            "Reliability score is unavailable in the input; skipping reliability-related plots."
+        )
     if len(df) > 1:
-        # Create the count plot
-        df["above_threshold"] = df["reliability_score"].apply(
-            lambda x: "passed" if x >= 0.8 else "failed"
-        )
-        ax = sns.countplot(
-            data=df,
-            x="prediction",
-            hue="above_threshold",
-            palette="pastel",
-            stat="percent",
-        )
-        # Annotate bars with percentage values (already in percent)
-        for p in ax.patches:
-            percentage = p.get_height()
-            if percentage > 0:
-                ax.text(
-                    p.get_x() + p.get_width() / 2,
-                    p.get_height(),
-                    f"{percentage:.1f}%",
-                    ha="center",
-                    va="bottom",
-                    fontsize=10,
-                )
-        # Style tweaks
-        ax.set_ylabel("Percentage")
-        ax.set_xlabel("Prediction")
-        ax.set_title("Class Distribution (%)")
-        sns.despine()
-        plt.tight_layout()
-        plt.savefig(pct_class, dpi=150, bbox_inches="tight")
-        plt.close()
+        if reliability_available:
+            # Create the count plot
+            df["above_threshold"] = df["reliability_score"].apply(
+                lambda x: "passed" if x >= 0.8 else "failed"
+            )
+            ax = sns.countplot(
+                data=df,
+                x="prediction",
+                hue="above_threshold",
+                palette="pastel",
+                stat="percent",
+            )
+            # Annotate bars with percentage values (already in percent)
+            for p in ax.patches:
+                percentage = p.get_height()
+                if percentage > 0:
+                    ax.text(
+                        p.get_x() + p.get_width() / 2,
+                        p.get_height(),
+                        f"{percentage:.1f}%",
+                        ha="center",
+                        va="bottom",
+                        fontsize=10,
+                    )
+            # Style tweaks
+            ax.set_ylabel("Percentage")
+            ax.set_xlabel("Prediction")
+            ax.set_title("Class Distribution (%)")
+            sns.despine()
+            plt.tight_layout()
+            plt.savefig(pct_class, dpi=150, bbox_inches="tight")
+            plt.close()
 
-        # Calculate per-class distribution of reliability scores
-        ax = sns.violinplot(df, x="prediction", y="reliability_score")
-        sns.stripplot(
-            df,
-            x="prediction",
-            y="reliability_score",
-            s=1,
-            alpha=0.1,
-            color="gray",
-            ax=ax,
-        )
-        ax.set_ylabel("Reliability score")
-        ax.set_xlabel("Class")
-        ax.set_title("Per-class distribution of reliability scores")
-        sns.despine()
-        plt.tight_layout()
-        plt.savefig(relscore, dpi=150, bbox_inches="tight")
-        plt.close()
+            # Calculate per-class distribution of reliability scores
+            ax = sns.violinplot(df, x="prediction", y="reliability_score")
+            sns.stripplot(
+                df,
+                x="prediction",
+                y="reliability_score",
+                s=1,
+                alpha=0.1,
+                color="gray",
+                ax=ax,
+            )
+            ax.set_ylabel("Reliability score")
+            ax.set_xlabel("Class")
+            ax.set_title("Per-class distribution of reliability scores")
+            sns.despine()
+            plt.tight_layout()
+            plt.savefig(relscore, dpi=150, bbox_inches="tight")
+            plt.close()
 
         # Calculate per-class distribution of entropy
         ax = sns.violinplot(df, x="prediction", y="entropy")
@@ -1142,3 +542,73 @@ def stats_core(**kwargs):
         plt.tight_layout()
         plt.savefig(pct_class_pval, dpi=150, bbox_inches="tight")
         plt.close()
+
+
+# =============================================================================
+# Data optimization / format conversion
+# =============================================================================
+
+
+def optimize_data_core(
+    input_path: str,
+    output_path: str,
+    format: str,
+    crop_size: int = 500,
+    num_classes: int = 3,
+    num_workers: int | None = None,
+    use_embedding_layer: bool = True,
+    max_length: int = 5000,
+):
+    """Convert Jaeger CSV training data to an optimized format.
+
+    Supports four output formats:
+        - tfrecord: Preprocessed tensors in TFRecord format
+        - numpy_raw: int8 sequences + TF preprocessing at train time
+        - numpy_full: Fully preprocessed, fastest loading
+        - numpy_raw_variable: Variable-length int8 sequences
+
+    Parameters
+    ----------
+    input_path : str
+        Path to input CSV file (label,sequence format).
+    output_path : str
+        Path to output file.
+    format : str
+        One of: tfrecord, numpy_raw, numpy_full, numpy_raw_variable.
+    crop_size : int
+        Sequence crop size (default: 500).
+    num_classes : int
+        Number of classes (default: 3).
+    num_workers : int | None
+        Number of parallel workers for CPU-bound formats.
+        Defaults to all CPUs.
+    use_embedding_layer : bool
+        For tfrecord: use embedding layer (int indices) vs one-hot.
+    max_length : int
+        For numpy_raw_variable: maximum sequence length.
+    """
+    format = format.lower()
+    valid_formats = [
+        "tfrecord",
+        "numpy_raw",
+        "numpy_full",
+        "numpy_raw_variable",
+    ]
+    if format not in valid_formats:
+        raise ValueError(
+            f"Invalid format: {format}. Choose from: {', '.join(valid_formats)}"
+        )
+
+    print(f"Converting {input_path} -> {output_path}")
+    print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
+
+    convert_dataset(
+        input_path=input_path,
+        output_path=output_path,
+        format=format,
+        crop_size=crop_size,
+        num_classes=num_classes,
+        num_workers=num_workers,
+        use_embedding_layer=use_embedding_layer,
+        max_length=max_length,
+    )

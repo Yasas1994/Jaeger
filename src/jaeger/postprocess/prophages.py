@@ -13,7 +13,7 @@ import numpy as np
 import ruptures as rpt
 import pandas as pd
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
@@ -25,12 +25,12 @@ from jaeger.postprocess.helpers import (
     merge_overlapping_ranges,
     scale_range,
 )
-from jaeger.utils.seq import reverse_complement
+from jaeger.seqops.transform import reverse_complement
 
 logger = logging.getLogger("jaeger")
 
 
-def logits_to_df(config: Any, cmdline_kwargs: Dict, **kwargs) -> Dict:
+def logits_to_df(config: Any, cmdline_kwargs: dict, **kwargs) -> dict:
     """
     Convert logits to a dict of dataframe for prophage region identification.
     Output of this function serves as the input for change point based
@@ -43,7 +43,7 @@ def logits_to_df(config: Any, cmdline_kwargs: Dict, **kwargs) -> Dict:
 
     Returns:
     -------
-        tmp : Dict of [pandas dataframes, str:host, int:lengths]
+        tmp : dict of [pandas dataframes, str:host, int:lengths]
     """
     lab = {int(k): v for k, v in config["all_labels"].items()}
     tmp = {}
@@ -110,7 +110,7 @@ def logits_to_df_v2(
     legacy ``config["all_labels"]`` dict.
 
     Returns:
-        Dict mapping contig_id -> [DataFrame, host_label, length]
+        dict mapping contig_id -> [DataFrame, host_label, length]
     """
     indices = class_map.get("index", [])
     classes = class_map.get("class", [])
@@ -155,7 +155,7 @@ def plot_scores(
     fsize: int,
     infile_base: str,
     outdir: Path,
-    phage_cordinates: Dict,
+    phage_cordinates: dict,
 ) -> None:
     """
     Creates a circos plot of the host genome including putative prophages
@@ -352,7 +352,7 @@ def plot_scores_linear(
     fsize: int,
     infile_base: str,
     outdir: Path,
-    phage_cordinates: Dict,
+    phage_cordinates: dict,
 ) -> None:
     """
     Creates a linear genome plot of the host genome including putative
@@ -507,7 +507,7 @@ def segment(
     cutoff_length: int = 500_000,
     sensitivity: float = 1.5,
     identifier: str = "phage",
-) -> Dict:
+) -> dict:
     """
     Segments the logit arrays based on change point detection and a
     sensitivity threshold.
@@ -584,7 +584,7 @@ def segment(
 
 def get_prophage_alignment_summary(
     result_object, seq_len, record, cordinates, phage_score, type_="DTR"
-) -> Dict:
+) -> dict:
     """
     Generates a summary of the prophage alignment results.
 
@@ -684,7 +684,7 @@ def get_prophage_alignment_summary(
 
 
 def prophage_report(
-    fsize: int, filehandle: Any, prophage_cordinates: Dict, outdir: Path
+    fsize: int, filehandle: Any, prophage_cordinates: dict, outdir: Path
 ):
     """
     Searches for direct repeats at prophage boundaries and generates

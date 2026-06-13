@@ -2,6 +2,10 @@
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration"]
+python_files = ["test_*.py", "*_test.py"]
+
 [tool.pdm]
 package-dir = "src"
 
@@ -23,11 +27,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-requires-python = ">=3.11, <3.13"
+requires-python = ">=3.11, <3.14"
 dependencies = [
+    "h5py >= 3.0",
+    "joblib >= 1.0",
     "keras >= 3.12.0",
     "kneed >= 0.8.5",
     "matplotlib >= 3.7",
+    "numpy >= 1.24",
     "pandas >= 2.2.3",
     "polars >= 1.2.6",
     "parasail == 1.3.4",
@@ -35,9 +42,13 @@ dependencies = [
     "psutil >=7.0.0",
     "click >=8.1",
     "pycirclize",
+    "requests >= 2.0",
+    "rich >= 13.0",
+    "scipy >= 1.10",
     "pyfastx >= 2",
     "ruptures >= 1.1.9",
     "scikit-learn >= 1.6.0",
+    "seaborn >= 0.13.0",
     "pyyaml >= 6.0.2",
     "jinja2 >= 3.1",
     "pydustmasker >= 1.0.3"
@@ -52,18 +63,26 @@ Homepage = "https://github.com/Yasas1994/Jaeger"
 
 [project.optional-dependencies]
 darwin-arm = [
-    "tensorflow >=2.17, <2.18",
+    "tensorflow >=2.21, <2.22",
     "tensorflow-metal",
 ]
 gpu = [
-    "tensorflow[and-cuda] >=2.18, <2.19",
+    "tensorflow[and-cuda] >=2.21, <2.22",
 ]
 cpu = [
-    "tensorflow >=2.18, <2.19",
+    "tensorflow >=2.21, <2.22",
 ]
 onnx = [
     "onnxruntime-gpu >=1.26",
     "tf2onnx >=1.17",
     "sympy >=1.13",
     "onnx >=1.16",
+]
+test = [
+    "pytest >=8.0",
+    "pytest-mock >=3.14",
+]
+taxonomy = [
+    "taxopy",
+    "faiss-cpu",
 ]

@@ -1,7 +1,7 @@
 import sys
 import logging
 import traceback
-from typing import Union, Any, Dict
+from typing import Union, Any
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pyfastx
@@ -9,7 +9,7 @@ import parasail
 import pandas as pd
 from rich.progress import Progress
 from jaeger.utils.misc import safe_divide
-from jaeger.utils.seq import reverse_complement
+from jaeger.seqops.transform import reverse_complement
 
 logger = logging.getLogger("jaeger")
 
@@ -20,7 +20,7 @@ def get_alignment_summary(
     record_id: str,
     input_length: int,
     type_: str = "DTR",
-) -> Dict:
+) -> dict:
     """
     Generates a summary of the alignment results from parasail.
 

@@ -23,7 +23,8 @@ class GeLU(keras.layers.Layer):
         self.supports_masking = True
 
     def call(self, inputs):
-        return tf.nn.gelu(inputs)
+        # Use the tanh approximation so the graph can be converted to TFLite.
+        return tf.nn.gelu(inputs, approximate=True)
 
     def compute_output_shape(self, input_shape):
         return input_shape
@@ -1602,6 +1603,203 @@ class TransformerEncoder(tf.keras.layers.Layer):
                 "num_heads": self.num_heads,
                 "feed_forward_dim": self.feed_forward_dim,
                 "dropout_rate": self.dropout_rate,
+            }
+        )
+        return cfg
+
+
+class CrossFrameAttention(tf.keras.layers.Layer):
+    """
+    Multi-Head Self-Attention across reading frames.
+
+    For input shape (batch, frames, length, channels), this layer reshapes to
+    (batch * length, frames, channels) and applies self-attention across the
+    frame dimension. This allows each position in the sequence to attend to all
+    6 reading frames simultaneously, enabling the model to learn relationships
+    like: "frame 1 and frame 4 are reverse complements", "frame 2 has a shift",
+    or "the correct ORF is frame 3".
+
+    After attention, the tensor is reshaped back to (batch, frames, length, channels).
+
+    Args:
+        embed_dim: Dimension of the input/output features (must be divisible by num_heads).
+        num_heads: Number of attention heads.
+        feed_forward_dim: Hidden dimension of the feed-forward network.
+        dropout_rate: Dropout rate for attention and FFN.
+        use_ffn: Whether to include the feed-forward sublayer (default True).
+    """
+
+    def __init__(
+        self,
+        embed_dim,
+        num_heads,
+        feed_forward_dim,
+        dropout_rate=0.1,
+        use_ffn=True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.feed_forward_dim = feed_forward_dim
+        self.dropout_rate = dropout_rate
+        self.use_ffn = use_ffn
+
+        # Self-attention sublayer — attention over frames (axis=1 after reshape)
+        self.attn_norm = tf.keras.layers.LayerNormalization(
+            epsilon=1e-6, name="attn_norm"
+        )
+        self.mha = tf.keras.layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=embed_dim // num_heads,
+            dropout=dropout_rate,
+            attention_axes=[1],  # attend over frames after reshape
+            name="mha",
+        )
+        self.attn_dropout = tf.keras.layers.Dropout(dropout_rate, name="attn_dropout")
+
+        # Optional feed-forward sublayer
+        if use_ffn:
+            self.ffn_norm = tf.keras.layers.LayerNormalization(
+                epsilon=1e-6, name="ffn_norm"
+            )
+            self.ffn_dense1 = tf.keras.layers.Dense(
+                feed_forward_dim, activation="gelu", name="ffn_dense1"
+            )
+            self.ffn_dropout1 = tf.keras.layers.Dropout(
+                dropout_rate, name="ffn_dropout1"
+            )
+            self.ffn_dense2 = tf.keras.layers.Dense(embed_dim, name="ffn_dense2")
+            self.ffn_dropout2 = tf.keras.layers.Dropout(
+                dropout_rate, name="ffn_dropout2"
+            )
+
+    def call(self, inputs, mask=None, training=False, return_attention=False):
+        # inputs: (batch, frames, length, channels)
+        batch_size = tf.shape(inputs)[0]
+        num_frames = tf.shape(inputs)[1]
+        seq_len = tf.shape(inputs)[2]
+        channels = tf.shape(inputs)[3]
+
+        # Reshape to (batch * length, frames, channels) for frame-wise attention
+        # Each sequence position attends across all 6 frames
+        x = tf.transpose(inputs, [0, 2, 1, 3])  # (B, L, F, C)
+        x = tf.reshape(x, [-1, num_frames, channels])  # (B*L, F, C)
+
+        # --- Multi-Head Self-Attention + Residual
+        x_norm = self.attn_norm(x)
+        attn_out, attn_weights = self.mha(
+            x_norm, x_norm, training=training, return_attention_scores=True
+        )
+        attn_out = self.attn_dropout(attn_out, training=training)
+        x = x + attn_out  # residual over frames
+
+        # --- Optional Feed-Forward Network + Residual
+        if self.use_ffn:
+            x_norm = self.ffn_norm(x)
+            ffn_out = self.ffn_dense1(x_norm)
+            ffn_out = self.ffn_dropout1(ffn_out, training=training)
+            ffn_out = self.ffn_dense2(ffn_out)
+            ffn_out = self.ffn_dropout2(ffn_out, training=training)
+            x = x + ffn_out
+
+        # Reshape back to (batch, frames, length, channels)
+        x = tf.reshape(x, [batch_size, seq_len, num_frames, channels])
+        x = tf.transpose(x, [0, 2, 1, 3])  # (B, F, L, C)
+
+        if return_attention:
+            return x, attn_weights
+        return x
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(
+            {
+                "embed_dim": self.embed_dim,
+                "num_heads": self.num_heads,
+                "feed_forward_dim": self.feed_forward_dim,
+                "dropout_rate": self.dropout_rate,
+                "use_ffn": self.use_ffn,
+            }
+        )
+        return cfg
+
+
+class AxialAttention(tf.keras.layers.Layer):
+    """
+    Axial attention for 4D sequence tensors (batch, frames, length, channels).
+
+    Applies attention alternately along the length axis (intra-frame) and the
+    frame axis (cross-frame). This captures both local sequence patterns within
+    each frame and global relationships across frames.
+
+    Args:
+        embed_dim: Feature dimension.
+        num_heads: Number of attention heads.
+        feed_forward_dim: FFN hidden dimension.
+        dropout_rate: Dropout rate.
+        num_blocks: Number of (length-attn + frame-attn) blocks to stack.
+    """
+
+    def __init__(
+        self,
+        embed_dim,
+        num_heads,
+        feed_forward_dim,
+        dropout_rate=0.1,
+        num_blocks=1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.feed_forward_dim = feed_forward_dim
+        self.dropout_rate = dropout_rate
+        self.num_blocks = num_blocks
+
+        self.length_attns = []
+        self.frame_attns = []
+
+        for i in range(num_blocks):
+            # Attention over length (intra-frame) — uses existing TransformerEncoder logic
+            self.length_attns.append(
+                TransformerEncoder(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    feed_forward_dim=feed_forward_dim,
+                    dropout_rate=dropout_rate,
+                    attention_axes=2,  # length axis in (B, F, L, C)
+                    name=f"length_attn_{i}",
+                )
+            )
+            # Attention over frames (cross-frame)
+            self.frame_attns.append(
+                CrossFrameAttention(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    feed_forward_dim=feed_forward_dim,
+                    dropout_rate=dropout_rate,
+                    use_ffn=True,
+                    name=f"frame_attn_{i}",
+                )
+            )
+
+    def call(self, inputs, training=False):
+        x = inputs
+        for length_attn, frame_attn in zip(self.length_attns, self.frame_attns):
+            x = length_attn(x, training=training)
+            x = frame_attn(x, training=training)
+        return x
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(
+            {
+                "embed_dim": self.embed_dim,
+                "num_heads": self.num_heads,
+                "feed_forward_dim": self.feed_forward_dim,
+                "dropout_rate": self.dropout_rate,
+                "num_blocks": self.num_blocks,
             }
         )
         return cfg

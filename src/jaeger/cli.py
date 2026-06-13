@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# ruff: noqa: E402
 
 """
 Copyright 2024 R. Y. Wijesekara - University Medicine Greifswald, Germany
@@ -11,6 +12,65 @@ both phages and prophages in metagenomic assemblies.
 
 import os
 import sys
+
+# Suppress TensorFlow and C++ warnings before any TF imports.
+# These must be set before the first tensorflow import.
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN custom ops warning
+os.environ["GRPC_VERBOSITY"] = "ERROR"  # Suppress gRPC logs
+os.environ["GLOG_minloglevel"] = "2"  # Suppress glog INFO messages
+os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
+
+if sys.platform.startswith("linux"):
+    os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
+
+
+# Patch TensorFlow 2.18 + Python 3.12 compatibility bug before any TF imports.
+# TF's internal _DictWrapper objects fail inspect.getattr_static during
+# isinstance checks with typing generics, causing SavedModel loading to crash.
+# This bug is fixed in TensorFlow 2.21+.
+# See: https://github.com/tensorflow/tensorflow/issues/78784
+# We also temporarily silence native stderr during this first TF import to
+# suppress harmless but noisy startup messages (oneDNN, CUDA plugin checks,
+# absl pre-init warnings, etc.).
+def _silence_tf_import():
+    import os as _os
+
+    stderr_fd = _os.dup(2)
+    devnull = _os.open(_os.devnull, _os.O_WRONLY)
+    try:
+        _os.dup2(devnull, 2)
+        import tensorflow as tf  # noqa: F401
+        from tensorflow.python.framework import tensor_util
+
+        _original_is_tf_type = tensor_util.is_tf_type
+
+        def _patched_is_tf_type(x):
+            try:
+                return _original_is_tf_type(x)
+            except TypeError:
+                return False
+
+        # Detect the bug by trying the actual _DictWrapper class
+        from tensorflow.python.trackable.data_structures import _DictWrapper
+
+        try:
+            _original_is_tf_type(_DictWrapper())
+        except TypeError:
+            tensor_util.is_tf_type = _patched_is_tf_type
+    finally:
+        _os.dup2(stderr_fd, 2)
+        _os.close(devnull)
+        _os.close(stderr_fd)
+
+
+try:
+    _silence_tf_import()
+except Exception:
+    pass  # TF not installed, incompatible version, or bug already fixed
+finally:
+    del _silence_tf_import
+
 import click
 import logging
 from pathlib import Path
@@ -23,12 +83,8 @@ from jaeger.commands.convert_graph import convert_graph
 
 warnings.filterwarnings("ignore")
 
-if sys.platform == "darwin":
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
-elif sys.platform.startswith("linux"):
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
+if sys.platform.startswith("linux"):
     os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
-os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 
 
 USER_MODEL_PATHS = json_to_dict(files("jaeger.data") / "config.json").get("model_paths")
@@ -38,6 +94,10 @@ AVAIL_MODELS = [
     for i in AvailableModels(path=DEFAULT_MODEL_PATH + USER_MODEL_PATHS).info.keys()
     if i != "jaeger_fragment"
 ] + ["default"]
+
+# Models that still use the legacy prediction workflow.
+LEGACY_PREDICT_MODELS = {"default", "experimental_1", "experimental_2"}
+
 logger = logging.getLogger("Jaeger")
 
 
@@ -145,7 +205,9 @@ def health(**kwargs):
 )
 @click.option("--workers", type=int, default=4, help="Number of threads to use")
 @click.option(
-    "--getalllogits", is_flag=True, help="Writes window-wise scores to a .npy file"
+    "--window-scores",
+    is_flag=True,
+    help="Writes window-wise prediction scores and per-window metadata to a .npz file",
 )
 @click.option(
     "--getsequences",
@@ -227,6 +289,19 @@ def predict(**kwargs):
             )
 
     """Run jaeger inference pipeline."""
+    if model in LEGACY_PREDICT_MODELS:
+        import click as _click
+
+        _click.echo(
+            _click.style(
+                f"Warning: model '{model}' uses the legacy prediction workflow and is deprecated. "
+                "It will be removed in a future release. Please migrate to a modern model "
+                "(e.g., 'jaeger_38341_1.4M_fragment').",
+                fg="yellow",
+            ),
+            err=True,
+        )
+
     if model == "default":
         from jaeger.commands.predict_legacy import run_core
 
@@ -330,6 +405,12 @@ def tune(**kwargs):
     is_flag=True,
     required=False,
     help="use mix-precision floats to speed up training",
+)
+@click.option(
+    "--xla",
+    is_flag=True,
+    required=False,
+    help="Enable XLA JIT compilation for training",
 )
 @click.option(
     "--meta",
@@ -591,7 +672,7 @@ def utils(obj):
     help="csv col with sequence (when --itype CSV)",
 )
 def ood_data(**kwargs):
-    from jaeger.commands.utils import shuffle_core
+    from jaeger.dataops.ood import shuffle_core
 
     if kwargs.get("itype") == "CSV":
         seq_col = kwargs.get("seq_col")
@@ -633,7 +714,7 @@ def ood_data(**kwargs):
 @click.option("--shuffle", is_flag=True, help="enable shuffling.")
 def fragment(**kwargs):
     """shuffles DNA sequences while preserving the dinucleotide composition."""
-    from jaeger.commands.utils import split_core
+    from jaeger.dataops.split import split_core
 
     split_core(**kwargs)
 
@@ -858,6 +939,97 @@ def convert(**kwargs):
     from jaeger.commands.utils import convert_core
 
     convert_core(**kwargs)
+    pass
+
+
+@utils.command(
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+            Convert training data to optimized formats for faster loading.
+            Preprocesses CSV data once so training can skip live preprocessing.
+
+            usage
+            -----
+
+            jaeger utils optimize-data -i train.csv -o train.npz --format numpy_full
+
+            Supported formats:
+              tfrecord            - TFRecord with preprocessed tensors
+              numpy_raw           - int8 sequences + TF preprocessing at train time
+              numpy_full          - fully preprocessed, fastest loading
+              numpy_raw_variable  - variable-length int8 sequences
+        """,
+)
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input CSV file",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=str,
+    required=True,
+    help="Path to output file",
+)
+@click.option(
+    "--format",
+    type=click.Choice(
+        ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"],
+        case_sensitive=False,
+    ),
+    required=True,
+    help="Output format",
+)
+@click.option(
+    "--crop-size",
+    type=int,
+    default=500,
+    show_default=True,
+    help="Sequence crop size",
+)
+@click.option(
+    "--num-classes",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Number of classes",
+)
+@click.option(
+    "--num-workers",
+    type=int,
+    default=None,
+    help="Number of parallel workers (default: all CPUs)",
+)
+@click.option(
+    "--use-embedding-layer/--no-embedding-layer",
+    default=True,
+    show_default=True,
+    help="Use embedding layer (int indices) vs one-hot (tfrecord only)",
+)
+@click.option(
+    "--max-length",
+    type=int,
+    default=5000,
+    show_default=True,
+    help="Maximum sequence length (numpy_raw_variable only)",
+)
+def optimize_data(**kwargs):
+    """Convert CSV training data to optimized formats"""
+    from jaeger.commands.utils import optimize_data_core
+
+    optimize_data_core(
+        input_path=kwargs.get("input"),
+        output_path=kwargs.get("output"),
+        format=kwargs.get("format"),
+        crop_size=kwargs.get("crop_size"),
+        num_classes=kwargs.get("num_classes"),
+        num_workers=kwargs.get("num_workers"),
+        use_embedding_layer=kwargs.get("use_embedding_layer"),
+        max_length=kwargs.get("max_length"),
+    )
     pass
 
 
@@ -1131,6 +1303,17 @@ def taxonomy(obj):
     help="GPU memory limit",
 )
 @click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"]),
+    default="fp32",
+    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
+)
+@click.option(
+    "--xla",
+    is_flag=True,
+    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
@@ -1246,6 +1429,17 @@ def build(**kwargs):
     type=int,
     default=4,
     help="GPU memory limit",
+)
+@click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"]),
+    default="fp32",
+    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
+)
+@click.option(
+    "--xla",
+    is_flag=True,
+    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
 )
 @click.option(
     "-v",

@@ -146,6 +146,7 @@ training:
     path : "/Users/javis/Documents/Programming/Jaeger/data/experiment_{{ model.experiment }}_{{ model.seed }}/model"
     save_weights : true #saves layer-wise weights
     save_exec_graph: true #saves the model in tf saved_model format
+    save_embedding_graph: true #saves a dedicated embedding-only SavedModel graph
 
 # separate files per-class or a file with all classes
 # path, label and class should be defined per file

@@ -3,15 +3,12 @@
 import sys
 import platform
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 import pytest
 
 # Skip all tests if tensorflow is not available
-try:
-    import tensorflow as tf
-    HAS_TF = True
-except ImportError:
-    HAS_TF = False
+import importlib.util
+
+HAS_TF = importlib.util.find_spec("tensorflow") is not None
 
 
 pytestmark = pytest.mark.skipif(not HAS_TF, reason="tensorflow not installed")
@@ -41,72 +38,86 @@ class TestHealthDependencies:
     def test_jaeger_bio_importable(self):
         """jaeger-bio package should be importable."""
         import jaeger
+
         assert jaeger.__file__ is not None
 
     def test_tensorflow_importable(self):
         """tensorflow should be importable."""
         import tensorflow as tf
+
         assert tf.__version__ is not None
 
     def test_numpy_importable(self):
         """numpy should be importable."""
         import numpy as np
+
         assert np.__version__ is not None
 
     def test_click_importable(self):
         """click should be importable."""
         import click
+
         assert click.__version__ is not None
 
     def test_parasail_importable(self):
         """parasail should be importable."""
         import parasail
+
         assert parasail.__version__ is not None
 
     def test_pyfastx_importable(self):
         """pyfastx should be importable."""
         import pyfastx
+
         # pyfastx doesn't expose a simple version attribute; just check it loads
         assert pyfastx.Fasta is not None
 
     def test_pydustmasker_importable(self):
         """pydustmasker should be importable."""
         import pydustmasker
+
         assert pydustmasker.__version__ is not None
 
     def test_sklearn_importable(self):
         """scikit-learn should be importable."""
         import sklearn
+
         assert sklearn.__version__ is not None
 
     def test_polars_importable(self):
         """polars should be importable."""
         import polars
+
         assert polars.__version__ is not None
 
     def test_pandas_importable(self):
         """pandas should be importable."""
         import pandas
+
         assert pandas.__version__ is not None
 
     def test_matplotlib_importable(self):
         """matplotlib should be importable."""
         import matplotlib
+
         assert matplotlib.__version__ is not None
 
     def test_ruptures_importable(self):
         """ruptures should be importable."""
         import ruptures
+
         assert ruptures.__version__ is not None
 
     def test_pycirclize_importable(self):
         """pycirclize should be importable."""
         import pycirclize
+
         assert pycirclize.__version__ is not None
 
     def test_biopython_importable(self):
         """biopython should be importable."""
         import Bio
+
         assert Bio.__version__ is not None
 
 
@@ -116,6 +127,7 @@ class TestHealthTensorFlow:
     def test_tf_can_list_devices(self):
         """TensorFlow should be able to list physical devices."""
         import tensorflow as tf
+
         cpus = tf.config.list_physical_devices("CPU")
         assert len(cpus) >= 1, "At least one CPU should be available"
 
@@ -135,6 +147,7 @@ class TestHealthTensorFlow:
     def test_tf_version_parsable(self):
         """TensorFlow version should be a non-empty string."""
         import tensorflow as tf
+
         assert tf.__version__
         assert "." in tf.__version__
 
@@ -145,6 +158,7 @@ class TestHealthModels:
     def test_config_json_exists(self):
         """config.json should exist in jaeger.data."""
         from importlib.resources import files
+
         config_path = files("jaeger.data").joinpath("config.json")
         assert config_path.exists(), "config.json not found in jaeger.data"
 
@@ -183,11 +197,11 @@ class TestHealthCoreFunction:
 
     def test_health_core_runs_without_error(self, tmp_path, caplog):
         """health_core should run without raising exceptions."""
-        import logging
         from jaeger.commands.health import health_core
 
         # Change to tmp_path so test_log is created there
         import os
+
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
@@ -215,7 +229,6 @@ class TestHealthCoreFunction:
     def test_health_core_all_tests_pass(self, tmp_path):
         """health_core should report 5/5 tests passed."""
         import os
-        import logging
         from jaeger.commands.health import health_core
 
         original_cwd = os.getcwd()
@@ -226,7 +239,8 @@ class TestHealthCoreFunction:
             log_files = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime)
             assert log_files, "No log file found"
             log_content = log_files[-1].read_text()
-            assert "5/5 tests passed!" in log_content, \
+            assert "5/5 tests passed!" in log_content, (
                 f"Expected 5/5 tests passed, got:\n{log_content[-500:]}"
+            )
         finally:
             os.chdir(original_cwd)

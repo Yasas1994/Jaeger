@@ -1,12 +1,12 @@
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 import yaml
 import math
 import tensorflow as tf
 import numpy as np
 from jaeger.utils.misc import track_ms as track
-from jaeger.preprocess.latest.maps import (
+from jaeger.seqops.maps import (
     CODON_ID,
     CODONS,
     AA_ID,
@@ -81,7 +81,7 @@ class DynamicInferenceModelBuilder:
     tf.saved.Model graph
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         self.cfg = config
         self.model_cfg = config.get("model")
         self.class_map = self.model_cfg.get("class_label_map")
@@ -123,23 +123,39 @@ class DynamicInferenceModelBuilder:
         else:
             raise ValueError("Missing 'representation_learner' section in config")
 
+        # Store the representation (input to the classifier head) for embedding export.
+        self.representation = x
+
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
-            y = self._build_head(self.model_cfg["classifier"], x)
+            y = self._build_head(self.model_cfg["classifier"], x, prefix="cls_")
             models["classifier"] = tf.keras.Model(inputs=self.inputs, outputs=y)
         else:
             raise ValueError("Missing 'classifier' section in config")
 
         # === 4. RELIABILITY MODEL ===
         if "reliability_model" in self.model_cfg:
-            r = self._build_head(self.model_cfg["reliability_model"], r_lbn)
+            r = self._build_head(
+                self.model_cfg["reliability_model"], r_lbn, prefix="rel_"
+            )
             models["reliability"] = tf.keras.Model(inputs=self.inputs, outputs=r)
         else:
             raise ValueError("Missing 'reliability_model' section in config")
 
+        # === 5. COMBINED MODEL ===
+        outputs = {"prediction": y}
+        if "reliability_model" in self.model_cfg:
+            outputs["reliability"] = r
+        models["jaeger_model"] = tf.keras.Model(
+            inputs=self.inputs, outputs=outputs, name="jaeger_model"
+        )
+        models["embedding"] = tf.keras.Model(
+            inputs=self.inputs, outputs=self.representation, name="embedding_model"
+        )
+
         return models
 
-    def _build_embedding(self, cfg: Dict[str, Any]):
+    def _build_embedding(self, cfg: dict[str, Any]):
         """Builds the embedding layer based on config."""
         input_shape = cfg.get("input_shape")
         seq_type = cfg.get("type", "translated")
@@ -159,7 +175,7 @@ class DynamicInferenceModelBuilder:
 
         return inputs, x
 
-    def _build_representation_learner(self, cfg: Dict[str, Any], x):
+    def _build_representation_learner(self, cfg: dict[str, Any], x):
         """Builds the representation learner (conv blocks)."""
         block_sizes = cfg.get("block_sizes", [2, 2, 2])
         block_filters = cfg.get("block_filters", [128, 128, 128])
@@ -169,6 +185,14 @@ class DynamicInferenceModelBuilder:
         block_regularizer = cfg.get("block_regularizer", ["l2", "l2", "l2"])
         block_regularizer_w = cfg.get("block_regularizer_w", [0, 0, 0])
         pooling = cfg.get("pooling", "max")
+
+        # MaskedConv1D and ResidualBlock operate on 4-D frame tensors
+        # (batch, frames, length, channels). Add a singleton frame axis if a
+        # plain 3-D tensor (batch, length, channels) is provided.
+        if len(x.shape) == 3:
+            x = tf.keras.layers.Lambda(
+                lambda t: tf.expand_dims(t, axis=1), name="add_frame_axis"
+            )(x)
 
         # Initial conv
         x = MaskedConv1D(
@@ -209,9 +233,11 @@ class DynamicInferenceModelBuilder:
                     name=f"resblock_{i}_{j}",
                 )(x)
             if pooling == "max":
-                x = tf.keras.layers.MaxPooling1D(pool_size=2, name=f"pool_{i}")(x)
+                x = tf.keras.layers.MaxPooling2D(pool_size=(1, 2), name=f"pool_{i}")(x)
             elif pooling == "avg":
-                x = tf.keras.layers.AveragePooling1D(pool_size=2, name=f"pool_{i}")(x)
+                x = tf.keras.layers.AveragePooling2D(
+                    pool_size=(1, 2), name=f"pool_{i}"
+                )(x)
 
         # Final conv
         x = MaskedConv1D(
@@ -228,12 +254,13 @@ class DynamicInferenceModelBuilder:
         )(x)
         x = self.Activation(name="activation_final")(x)
 
-        # Global pooling for reliability model
-        r_lbn = tf.keras.layers.GlobalAveragePooling1D(name="gap_reliability")(x)
+        # Global pooling for reliability model: pool over both frame and
+        # length axes to produce a single vector per example.
+        r_lbn = tf.keras.layers.GlobalAveragePooling2D(name="gap_reliability")(x)
 
         return x, r_lbn
 
-    def _build_head(self, cfg: Dict[str, Any], x):
+    def _build_head(self, cfg: dict[str, Any], x, prefix: str = ""):
         """Builds a classification head."""
         hidden_layers = cfg.get("hidden_layers", [])
 
@@ -246,12 +273,12 @@ class DynamicInferenceModelBuilder:
                     layer_cfg.get("kernel_regularizer", "l2"),
                     tf.keras.regularizers.L2,
                 )(layer_cfg.get("kernel_regularizer_w", 1e-5)),
-                name=f"dense_{i}",
+                name=f"{prefix}dense_{i}",
             )(x)
-            x = self.Activation(name=f"activation_dense_{i}")(x)
+            x = self.Activation(name=f"{prefix}activation_dense_{i}")(x)
             if layer_cfg.get("dropout_rate", 0) > 0:
                 x = tf.keras.layers.Dropout(
-                    layer_cfg["dropout_rate"], name=f"dropout_{i}"
+                    layer_cfg["dropout_rate"], name=f"{prefix}dropout_{i}"
                 )(x)
 
         # Output layer
@@ -259,7 +286,7 @@ class DynamicInferenceModelBuilder:
             units=cfg.get("output_units", 6),
             activation=cfg.get("output_activation", None),
             use_bias=cfg.get("output_use_bias", False),
-            name="output",
+            name=f"{prefix}output",
         )(x)
 
         return x
@@ -277,7 +304,9 @@ class InferModel:
     (works with latest generation of models)
     """
 
-    def __init__(self, path_dict, use_xla: bool = False):
+    def __init__(
+        self, path_dict, use_xla: bool = False, return_embedding: bool = False
+    ):
         self.class_map = self._load_class_map(path_dict.get("classes"))
         self.loaded_model = tf.saved_model.load(path_dict.get("graph"))
         self.inference_fn = self.loaded_model.signatures["serving_default"]
@@ -285,6 +314,14 @@ class InferModel:
             path_dict.get("project", None)
         )
         self.use_xla = use_xla
+        self.return_embedding = return_embedding
+
+        if return_embedding and "embedding" not in self.inference_fn.structured_outputs:
+            raise ValueError(
+                "The selected model does not expose an 'embedding' output. "
+                "The taxonomy workflow requires a model trained with an embedding head."
+            )
+
         self._predict_step = self._build_predict_step()
 
     def _build_predict_step(self):
@@ -372,6 +409,8 @@ class InferModel:
         return {"loss": loss, "accuracy": accuracy}
 
     def _load_class_map(self, path):
+        if path is None:
+            return None
         with open(path) as f:
             _class_map = yaml.safe_load(f)["classes"]
 
@@ -381,7 +420,7 @@ class InferModel:
                 "index": [i["label"] for i in _class_map],
             }
 
-    def _load_string_processor_config(self, path) -> Dict:
+    def _load_string_processor_config(self, path) -> dict[str, Any]:
         _map = {
             "CODON": CODONS,
             "CODON_ID": CODON_ID,
@@ -528,7 +567,7 @@ class TFLiteInferModel:
                 "index": [i["label"] for i in _class_map],
             }
 
-    def _load_string_processor_config(self, path) -> Dict:
+    def _load_string_processor_config(self, path) -> dict[str, Any]:
         _map = {
             "CODON": CODONS,
             "CODON_ID": CODON_ID,
@@ -827,7 +866,7 @@ class ONNXEngine:
                 "index": [i["label"] for i in _class_map],
             }
 
-    def _load_string_processor_config(self, path) -> Dict:
+    def _load_string_processor_config(self, path) -> dict[str, Any]:
         _map = {
             "CODON": CODONS,
             "CODON_ID": CODON_ID,
@@ -969,7 +1008,7 @@ class TensorRTEngine:
                 "index": [i["label"] for i in _class_map],
             }
 
-    def _load_string_processor_config(self, path) -> Dict:
+    def _load_string_processor_config(self, path) -> dict[str, Any]:
         _map = {
             "CODON": CODONS,
             "CODON_ID": CODON_ID,

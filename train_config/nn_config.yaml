@@ -67,7 +67,7 @@ model:
 ###################################################################
 # model parameters
 # available layers: masled_conv1d, masked_batchnorm, residual_block,
-# activation, dense, attention, recurrent
+# activation, dense, attention, recurrent, axial_attention
 ###################################################################
 
   representation_learner:
@@ -204,7 +204,19 @@ model:
         kernel_regularizer_w: 0.0001
         return_nmd: true
     
-    pooling: "max"
+    - name: "axial_attention"
+      config:
+        embed_dim: 256
+        num_heads: 8
+        feed_forward_dim: 512
+        dropout_rate: 0.1
+        num_blocks: 1
+    
+    - name: "masked_batchnorm"
+      config:
+        return_nmd: false
+    
+    pooling: "average"
 
   projection:
     # for supervised contrastive pre-training
@@ -457,6 +469,7 @@ training:
     path: "{{ model.base_dir }}/{{ training.experiment_root }}/model"
     save_weights: true #saves layer-wise weights
     save_exec_graph: true #saves the model in tf saved_model format
+    save_embedding_graph: true #saves a dedicated embedding-only SavedModel graph
 
   # separate files per-class or a file with all classes
   # path, label and class should be defined per file

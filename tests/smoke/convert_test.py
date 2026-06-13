@@ -1,5 +1,5 @@
 import tensorflow as tf
-from jaeger.preprocess.latest.convert import process_string_train
+from jaeger.seqops.encode import process_string_train
 
 ds = tf.data.Dataset.from_tensor_slices([
     "0,ATGCGCACGTAGACTACGTACGAC",

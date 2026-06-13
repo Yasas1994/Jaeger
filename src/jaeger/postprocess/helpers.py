@@ -205,13 +205,18 @@ def energy(x: np.ndarray, axis: int = -1) -> np.ndarray:
     """
     x = np.asarray(x, dtype=np.float64)
 
-    # Binary case: single logit per sample
-    if x.ndim == 0 or (x.ndim >= 1 and x.shape[-1] != 2):
-        # log(exp(z) + 1) = logsumexp([z, 0])
-        return -logsumexp(np.stack([x, np.zeros_like(x)], axis=-1), axis=-1)
+    if x.ndim == 0:
+        # Scalar binary logit.
+        return -logsumexp(np.array([x, 0.0]), axis=-1)
 
     # Multiclass softmax case
-    return -logsumexp(x, axis=axis)
+    if x.shape[-1] == 2:
+        return -logsumexp(x, axis=axis)
+
+    # Binary case: single logit per sample.
+    # log(exp(z) + 1) = logsumexp([z, 0])
+    squeezed = x.squeeze(axis=-1) if x.shape[-1] == 1 else x
+    return -logsumexp(np.stack([squeezed, np.zeros_like(squeezed)], axis=-1), axis=-1)
 
 
 def sigmoid(x):

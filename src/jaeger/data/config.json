@@ -167,7 +167,9 @@
   },
   "model_paths": [
     "/home/yasas-wijesekara/Downloads/test",
-    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/Jaeger/models"
-
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/Jaeger/models",
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format/experiments/experiment_500bp_axial_npz_42",
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format/experiments/experiment_500bp_axial_npz_42/model",
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/models/jaeger_models"
   ]
 }

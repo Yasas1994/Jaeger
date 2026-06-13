@@ -1,7 +1,3 @@
-import os
-
-os.environ["GRPC_VERBOSITY"] = "ERROR"
-os.environ["GLOG_minloglevel"] = "2"
 import traceback
 import sys
 import psutil
@@ -12,7 +8,7 @@ from pathlib import Path
 import tensorflow as tf
 
 from jaeger.nnlib.inference import InferModel, TFLiteInferModel, ONNXEngine
-from jaeger.preprocess.fasta import fragment_generator
+from jaeger.seqops.io import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
 from jaeger.utils.fs import validate_fasta_entries
@@ -242,7 +238,7 @@ def run_core(**kwargs):
 
     string_processor_config = model.string_processor_config
     input_dataset = tf.data.Dataset.from_generator(
-        fragment_generator(
+        lambda: fragment_generator(
             # str(INPUT_FILE_MASKED),
             file_path=str(input_file_path),
             no_progress=False,
@@ -253,7 +249,7 @@ def run_core(**kwargs):
         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
     )
 
-    from jaeger.preprocess.latest.convert import process_string_inference
+    from jaeger.seqops.encode import process_string_inference
 
     # from icecream import ic
     # ic(string_processor_config)
@@ -306,6 +302,8 @@ def run_core(**kwargs):
             indices=model.class_map.get("index"),
             output_table_path=output_table_path,
             output_phage_table_path=output_phage_table_path,
+            reliability_cutoff=kwargs.get("rc", 0.5),
+            phage_score=kwargs.get("pc", 1),
         )
 
         logger.info(f"processed {num_written}/{num} sequences")
@@ -405,19 +403,24 @@ def run_core(**kwargs):
             )
             logger.info(f"{output_fasta_file} created")
 
-        # --- Write window-wise logits ---
-        if kwargs.get("getalllogits"):
+        # --- Write window-wise scores + metadata to NPZ ---
+        if kwargs.get("window_scores"):
             import numpy as np
 
-            output_logits = f"{file_base}_jaeger.npy"
-            output_logits_path = OUTPUT_DIR / output_logits
-            logger.info(f"writing window-wise scores to {output_logits}")
-            np.save(
-                output_logits_path,
-                dict(zip(data_full["headers"], data_full["predictions"])),
-                allow_pickle=True,
+            output_scores = f"{file_base}_window_scores.npz"
+            output_scores_path = OUTPUT_DIR / output_scores
+            logger.info(
+                f"writing window-wise scores and metadata to {output_scores_path}"
             )
-            logger.info(f"{output_logits} created")
+            np.savez(
+                output_scores_path,
+                headers=data_full["headers"],
+                lengths=data_full["lengths"],
+                predictions=np.array(data_full["predictions"], dtype=object),
+                gc_skews=np.array(data_full["gc_skews"], dtype=object),
+                gcs=np.array(data_full["gcs"], dtype=object),
+            )
+            logger.info(f"{output_scores} created")
 
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
         logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")

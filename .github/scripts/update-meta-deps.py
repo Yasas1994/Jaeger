@@ -47,7 +47,7 @@ def update_meta_yaml(meta_path: Path, deps: list[tuple[str, str]]) -> None:
     content = meta_path.read_text()
 
     run_lines = [
-        "    - python >=3.11,<3.13",
+        "    - python >=3.11,<3.14",
         "    - pip",
         "    # Core dependencies synced from pyproject.toml",
     ]

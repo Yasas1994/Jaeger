@@ -52,17 +52,17 @@ apptainer run --nv jaeger.sif jaeger predict -i contigs.fasta -o output_dir
 
 ## Choosing a model
 
-Jaeger ships with a `default` model. Additional models can be downloaded and selected via the `-m` flag.
+The bundled `default` model, together with `experimental_1` and `experimental_2`, use the legacy prediction workflow and are deprecated. They will be removed in a future release. New users should download and use a modern SavedModel, for example `jaeger_38341_1.4M_fragment`.
 
 ```bash
 # List all available models
 jaeger download --list
 
 # Download a specific model
-jaeger download --model_name jaeger_57341_1.5M_fragment --path ~/jaeger_models
+jaeger download --model_name jaeger_38341_1.4M_fragment --path ~/jaeger_models
 
 # Use the downloaded model
-jaeger predict -i contigs.fasta -o output_dir -m jaeger_57341_1.5M_fragment
+jaeger predict -i contigs.fasta -o output_dir -m jaeger_38341_1.4M_fragment
 ```
 
 To register a custom model path:
@@ -101,6 +101,18 @@ output_dir/
 └── <input>_jaeger.log           # Runtime log
 ```
 
+When `--window-scores` is passed, per-window logits and metadata are also written:
+
+```
+output_dir/
+├── <input>_jaeger.tsv
+├── <input>_phages_jaeger.tsv
+├── <input>_window_scores.npz   # Per-window predictions + metadata
+└── <input>_jaeger.log
+```
+
+The `.npz` file contains the arrays `headers`, `lengths`, `predictions`, `gc_skews`, and `gcs`. `predictions`, `gc_skews`, and `gcs` are stored as object arrays with one entry per contig.
+
 When prophage extraction is enabled (`-p`):
 
 ```
@@ -126,7 +138,7 @@ The main TSV file (`<input>_jaeger.tsv`) contains one row per contig:
 | `length` | Sequence length | ≥ `fsize` |
 | `prediction` | Final call | `phage` or `bacteria` |
 | `entropy` | Softmax entropy | 0 (confident) → 2 (uncertain) |
-| `reliability_score` | Model confidence | 0 (uncertain) → 1 (confident) |
+| `reliability_score` | Model confidence | 0 (uncertain) → 1 (confident); `unavailable` if the model has no reliability head |
 | `host_contam` | Potential host contamination | `True` / `False` |
 | `prophage_contam` | Potential prophage contamination | `True` / `False` |
 | `G+C` | GC content | 0–1 |
@@ -153,6 +165,7 @@ The main TSV file (`<input>_jaeger.tsv`) contains one row per contig:
 - High-confidence phages: `prediction == "phage"` and `reliability_score > 0.5`
 - Uncertain calls: `entropy > 1.0` or `reliability_score < 0.3`
 - Potential prophages: `prophage_contam == True`
+- Models without a reliability head report `reliability_score` as `unavailable`; in this case phage calls are filtered using the class score and `--pc` only
 
 ---
 
@@ -248,7 +261,8 @@ Options:
   --batch INTEGER          Parallel batch size, lower if GPU runs out of
                            memory  [default: 96]
   --workers INTEGER        Number of threads to use  [default: 4]
-  --getalllogits           Writes window-wise scores to a .npy file
+  --window-scores          Writes window-wise prediction scores and per-window
+                           metadata to a .npz file
   --getsequences           Writes the putative phage sequences to a .fasta
                            file
   --cpu                    Ignore available GPUs and explicitly run on CPU

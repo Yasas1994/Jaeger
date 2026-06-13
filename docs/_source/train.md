@@ -10,6 +10,7 @@ Jaeger provides a complete training pipeline for building custom phage detection
 - [Training workflow](#training-workflow)
 - [Preparing training data](#preparing-training-data)
 - [Configuration file](#configuration-file)
+- [Data format optimization](#data-format-optimization)
 - [Running training](#running-training)
 - [Fine-tuning](#fine-tuning)
 - [Self-supervised pretraining](#self-supervised-pretraining)
@@ -133,6 +134,125 @@ jaeger utils ood-data \
 
 ---
 
+## Data format optimization
+
+By default, Jaeger loads training data from CSV files and preprocesses sequences on-the-fly (live codon translation, n-gram extraction, etc.). This CPU-bound preprocessing can become a bottleneck, leaving the GPU underutilized.
+
+Jaeger supports five data formats via the `data_format` config option:
+
+| Format | Speedup vs CSV | Best for | Notes |
+|--------|----------------|----------|-------|
+| `csv` | 1.0× (baseline) | Small datasets, quick experiments | Live preprocessing every epoch |
+| `tfrecord` | ~12× | Large datasets that don't fit in RAM | Preprocessed once, cached on disk |
+| `numpy_raw` | ~17× | Large datasets, with augmentations | int8 sequences + TF preprocessing |
+| `numpy_raw_variable` | ~3× | Variable-length sequences | int8 sequences, variable length |
+| `numpy_full` | **~9×** | Maximum throughput, no augmentations | Fully preprocessed, direct loading |
+
+**Hardware-dependent speeds:**
+- Local RTX 3500 Ada: numpy_full ~10K batches/sec, CSV ~130 batches/sec
+- Zeus L40S (node030): numpy_full ~2.9K batches/sec, CSV ~317 batches/sec
+
+### When to optimize
+
+Consider converting to TFRecord or NumPy when:
+- GPU utilization is low (< 20%)
+- Epoch times are dominated by data loading
+- You have enough RAM to hold the dataset (NumPy) or disk space (TFRecord)
+
+For example, a 3.1M sample dataset (~15 GB preprocessed) easily fits in most training servers' RAM and loads **30× faster** as NumPy.
+
+### Converting CSV to optimized formats
+
+Use the `jaeger utils optimize-data` command:
+
+```bash
+# NumPy full format (fastest — fully preprocessed, no runtime overhead)
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_full.npz \
+  --format numpy_full \
+  --crop-size 500 \
+  --num-classes 3
+
+# NumPy raw format (fast int8 + runtime augmentations)
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_raw.npz \
+  --format numpy_raw \
+  --crop-size 500 \
+  --num-classes 3
+
+# NumPy raw variable format (variable-length sequences)
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_variable.npz \
+  --format numpy_raw_variable \
+  --crop-size 500 \
+  --num-classes 3 \
+  --max-length 5000
+
+# TFRecord format (good for very large datasets)
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled.tfrecord \
+  --format tfrecord \
+  --crop-size 500 \
+  --num-classes 3
+
+```
+
+Convert both training and validation sets:
+
+```bash
+for split in train val; do
+  jaeger utils optimize-data \
+    -i ${split}_shuffled.csv \
+    -o ${split}_shuffled_full.npz \
+    --format numpy_full \
+    --crop-size 500 \
+    --num-classes 3
+done
+```
+
+
+
+### Configuring training to use optimized formats
+
+Add `data_format` to the `string_processor` section of your config:
+
+```yaml
+model:
+  string_processor:
+    data_format: numpy_full   # csv | tfrecord | numpy_raw | numpy_raw_variable | numpy_full
+    seq_onehot: false
+    codon: CODON
+    codon_id: CODON_ID
+    crop_size: 500
+    buffer_size: 500000
+    shuffle: true
+    # ... other fields
+```
+
+Then point `fragment_classifier_data` to the converted files:
+
+```yaml
+fragment_classifier_data:
+  train:
+    - class: ["chromosome", "virus", "plasmid"]
+      path:
+        - "{{ training.data_dir }}/train_shuffled.npz"
+      label: [0, 1, 2]
+  validation:
+    - class: ["chromosome", "virus", "plasmid"]
+      path:
+        - "{{ training.data_dir }}/val_shuffled.npz"
+      label: [0, 1, 2]
+```
+
+**Important:** When using `tfrecord` or `numpy_full`, the `shuffle`, `mutate`, and `masking` settings in `string_processor` are ignored because preprocessing (including shuffling) is already baked into the converted files. Use the conversion script's `--shuffle` option if you need shuffled data.
+
+---
+
 ## Configuration file
 
 Training is controlled by a YAML configuration file. A template is provided at `train_config/nn_config.yaml`.
@@ -207,6 +327,7 @@ fragment_reliability_data:
 | Section | Purpose |
 |---------|---------|
 | `model` | Architecture, embedding, class labels |
+| `model.string_processor` | Preprocessing settings, **data format** (`csv`/`tfrecord`/`numpy_raw`/`numpy_raw_variable`/`numpy_full`) |
 | `representation_learner` | CNN layers, residual blocks, attention |
 | `classifier` | Classification head architecture |
 | `reliability` | Reliability (OOD) head architecture |

@@ -3,7 +3,7 @@ import shutil
 from decimal import Decimal
 from jinja2 import Environment
 from pathlib import Path
-from typing import Dict, DefaultDict, Any
+from typing import DefaultDict, Any
 import yaml
 import json
 import os
@@ -63,7 +63,7 @@ def clear_directory(path: Path):
                 shutil.rmtree(item)
 
 
-def load_model_config(path: Path) -> Dict[str, Any]:
+def load_model_config(path: Path) -> dict[str, Any]:
     """
     Load a YAML config that uses Jinja2 templating, with two-pass rendering.
 

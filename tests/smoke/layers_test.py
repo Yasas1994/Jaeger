@@ -10,6 +10,8 @@ from jaeger.nnlib.v2.layers import (
     ResidualBlock,
     SinusoidalPositionEmbedding,
     TransformerEncoder,
+    CrossFrameAttention,
+    AxialAttention,
 )
 
 tf.random.set_seed(7)
@@ -97,3 +99,29 @@ transformer = TransformerEncoder(
 yt = transformer(y, mask=y_mask, training=True)
 
 print("TransformerEncoder output:", yt.shape)
+
+# --- CrossFrameAttention ---
+cfa = CrossFrameAttention(
+    embed_dim=8,
+    num_heads=2,
+    feed_forward_dim=32,
+    dropout_rate=0.1,
+)
+yc = cfa(y, training=True)
+print("CrossFrameAttention output:", yc.shape)
+
+# --- AxialAttention ---
+aa = AxialAttention(
+    embed_dim=8,
+    num_heads=2,
+    feed_forward_dim=32,
+    dropout_rate=0.1,
+    num_blocks=1,
+)
+ya = aa(y, training=True)
+print("AxialAttention output:", ya.shape)
+
+# Verify shapes
+assert yc.shape == y.shape, f"CrossFrameAttention shape mismatch: {yc.shape} vs {y.shape}"
+assert ya.shape == y.shape, f"AxialAttention shape mismatch: {ya.shape} vs {y.shape}"
+print("\nAll checks passed.")
