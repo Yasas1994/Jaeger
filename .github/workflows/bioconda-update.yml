@@ -99,9 +99,10 @@ jobs:
           NAME="jaeger-bio"
           BRANCH="bump-${NAME}-${VERSION}"
 
-          # Push branch to the user's fork (origin = fork)
+          # Push branch to the user's fork (origin = fork).
+          # Force-push is safe here: this is an ephemeral version-bump branch.
           AUTH_TOKEN="${TOKEN:-${{ github.token }}}"
-          git push origin "${BRANCH}"
+          git push --force origin "${BRANCH}"
 
           echo ""
           echo "Branch '${BRANCH}' pushed to your fork."
