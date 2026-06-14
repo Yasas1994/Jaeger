@@ -1,10 +1,11 @@
+import pytest
 import torch
 
 from jaeger.nnlib.pytorch.builder import ModelBuilder
 
 
-def test_builder_creates_jaeger_model():
-    config = {
+def _minimal_config():
+    return {
         "model": {
             "name": "test_model",
             "classifier_out_dim": 3,
@@ -46,9 +47,54 @@ def test_builder_creates_jaeger_model():
             "optimizer_params": {"lr": 1e-3},
         },
     }
-    builder = ModelBuilder(config)
+
+
+def test_builder_creates_jaeger_model():
+    builder = ModelBuilder(_minimal_config())
     models = builder.build_fragment_classifier()
     x = torch.randint(0, 65, (2, 6, 50))
     mask = torch.ones(2, 6, 50, dtype=torch.bool)
     out = models["jaeger_model"](x, mask)
     assert out["prediction"].shape == (2, 3)
+
+
+def test_builder_compile_classifier():
+    builder = ModelBuilder(_minimal_config())
+    models = builder.build_fragment_classifier()
+    model, optimizer, loss = builder.compile_model(models, "classifier")
+    x = torch.randint(0, 65, (2, 6, 50))
+    mask = torch.ones(2, 6, 50, dtype=torch.bool)
+    out = model(x, mask)
+    assert out.shape == (2, 3)
+    assert optimizer is not None
+    assert isinstance(loss, torch.nn.CrossEntropyLoss)
+
+
+def test_builder_missing_classifier_raises():
+    config = _minimal_config()
+    del config["model"]["classifier"]
+    builder = ModelBuilder(config)
+    with pytest.raises(ValueError, match="classifier config is required"):
+        builder.build_fragment_classifier()
+
+
+def test_builder_mask_propagation():
+    builder = ModelBuilder(_minimal_config())
+    models = builder.build_fragment_classifier()
+    model, _, _ = builder.compile_model(models, "classifier")
+    model.eval()
+
+    x = torch.zeros(2, 6, 50, dtype=torch.long)
+    x[0, 0, 25] = 50
+
+    mask_all = torch.ones(2, 6, 50, dtype=torch.bool)
+    mask_masked = mask_all.clone()
+    mask_masked[0, 0, 25] = False
+
+    with torch.no_grad():
+        out_all = model(x, mask_all)
+        out_masked = model(x, mask_masked)
+
+    assert out_all.shape == (2, 3)
+    assert not torch.allclose(out_all[0], out_masked[0], atol=1e-6)
+    assert torch.allclose(out_all[1], out_masked[1])

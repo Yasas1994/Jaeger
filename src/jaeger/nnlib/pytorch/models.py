@@ -171,8 +171,9 @@ class RepresentationModel(nn.Module):
                 output_dim = dim
                 break
 
+        # Match the forward loop: the last block that returns NMD wins.
         nmd_dim = None
-        for block in self.blocks:
+        for block in reversed(self.blocks):
             dim = self._block_nmd_dim(block)
             if dim is not None:
                 nmd_dim = dim
@@ -218,10 +219,21 @@ class RepresentationModel(nn.Module):
         nmd = None
         for block in self.blocks:
             if self._accepts_mask(block):
-                if hasattr(block, "return_nmd") and block.return_nmd:
-                    x, nmd = block(x, mask)
+                out = block(x, mask)
+                if isinstance(out, tuple):
+                    x, maybe_mask_or_nmd = out
+                    if maybe_mask_or_nmd is None:
+                        # mask unchanged
+                        pass
+                    elif getattr(block, "return_nmd", False):
+                        nmd = maybe_mask_or_nmd
+                    elif (
+                        isinstance(maybe_mask_or_nmd, torch.Tensor)
+                        and maybe_mask_or_nmd.dtype == torch.bool
+                    ):
+                        mask = maybe_mask_or_nmd
                 else:
-                    x, mask = block(x, mask)
+                    x = out
             else:
                 x = block(x)
         pooled = self.pooler(x, mask)

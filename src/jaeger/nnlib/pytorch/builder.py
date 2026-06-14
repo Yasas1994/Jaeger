@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,21 @@ from jaeger.nnlib.pytorch.models import (
 )
 
 
+class _ClassifierPipeline(nn.Module):
+    """Runs the representation model and classification head, propagating masks."""
+
+    def __init__(self, rep_model: nn.Module, head: nn.Module):
+        super().__init__()
+        self.rep_model = rep_model
+        self.head = head
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        embedding = self.rep_model(x, mask)
+        if isinstance(embedding, tuple):
+            embedding = embedding[0]
+        return self.head(embedding)
+
+
 class ModelBuilder:
     """Build PyTorch Jaeger models from YAML config."""
 
@@ -23,6 +38,9 @@ class ModelBuilder:
         self.reliability_out_dim = int(self.model_cfg.get("reliability_out_dim", 0))
 
     def build_fragment_classifier(self) -> Dict[str, nn.Module]:
+        if "classifier" not in self.model_cfg:
+            raise ValueError("classifier config is required for build_fragment_classifier")
+
         models: Dict[str, nn.Module] = {}
 
         embedding_cfg = self.model_cfg.get("embedding", {})
@@ -41,18 +59,18 @@ class ModelBuilder:
         )
         models["rep_model"] = rep_model
 
-        if "classifier" in self.model_cfg:
-            cls_cfg = self.model_cfg["classifier"]
-            head = ClassificationHead(
-                input_dim=cls_cfg.get("input_shape", rep_model.output_dim),
-                num_classes=self.classifier_out_dim,
-                hidden_units=[
-                    layer["config"]["units"]
-                    for layer in cls_cfg.get("hidden_layers", [])[:-1]
-                ],
-            )
-            models["classification_head"] = head
-            models["jaeger_classifier"] = nn.Sequential(rep_model, head)
+        cls_cfg = self.model_cfg["classifier"]
+        head = ClassificationHead(
+            input_dim=cls_cfg.get("input_shape", rep_model.output_dim),
+            num_classes=self.classifier_out_dim,
+            hidden_units=[
+                layer["config"]["units"]
+                for layer in cls_cfg.get("hidden_layers", [])[:-1]
+            ],
+            dropout=cls_cfg.get("dropout", 0.0),
+        )
+        models["classification_head"] = head
+        models["jaeger_classifier"] = _ClassifierPipeline(rep_model, head)
 
         if "reliability_model" in self.model_cfg:
             rel_cfg = self.model_cfg["reliability_model"]
@@ -63,6 +81,7 @@ class ModelBuilder:
                     layer["config"]["units"]
                     for layer in rel_cfg.get("hidden_layers", [])[:-1]
                 ],
+                dropout=rel_cfg.get("dropout", 0.0),
             )
             models["reliability_head"] = rel_head
 
@@ -86,15 +105,13 @@ class ModelBuilder:
             loss = nn.CrossEntropyLoss()
             return model, optimizer, loss
         if train_branch == "reliability":
-            model = models["jaeger_reliability"]
-            optimizer = opt_class(model.parameters(), **opt_params)
-            loss = nn.BCEWithLogitsLoss()
-            return model, optimizer, loss
+            raise NotImplementedError(
+                "reliability training branch is not implemented yet"
+            )
         if train_branch == "pretrain":
-            model = models["jaeger_projection"]
-            optimizer = opt_class(model.parameters(), **opt_params)
-            loss = models["arcface_loss"]
-            return model, optimizer, loss
+            raise NotImplementedError(
+                "pretrain training branch is not implemented yet"
+            )
         raise ValueError(f"Unknown train_branch: {train_branch}")
 
     def get_metrics(self, branch: str = "classifier") -> Dict[str, Any]:
