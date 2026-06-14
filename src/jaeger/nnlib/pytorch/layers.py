@@ -1,4 +1,3 @@
-import math
 from typing import Optional, Tuple
 
 import torch
@@ -21,7 +20,21 @@ class MaskedConv1D(nn.Module):
 
     Masked positions are zeroed before convolution and the output mask is
     propagated based on whether the full kernel window contained valid values.
+    Bias is added at all positions, so downstream code should apply the
+    returned mask if masked positions must remain suppressed.
+
+    For API compatibility with Keras-style configs, ``kernel_initializer``,
+    ``bias_initializer`` and ``kernel_regularizer`` are accepted in the
+    signature but only their default values are supported; passing a non-default
+    value raises ``NotImplementedError``.
     """
+
+    _SUPPORTED_ACTIVATIONS = {
+        "relu": F.relu,
+        "gelu": F.gelu,
+        "sigmoid": F.sigmoid,
+        "tanh": F.tanh,
+    }
 
     def __init__(
         self,
@@ -37,16 +50,51 @@ class MaskedConv1D(nn.Module):
         kernel_regularizer: Optional[float] = None,
     ):
         super().__init__()
+        padding_norm = padding.lower()
+        if padding_norm not in ("same", "valid"):
+            raise ValueError(
+                f"padding must be 'same' or 'valid', got {padding!r}"
+            )
+
+        if kernel_initializer != "glorot_uniform":
+            raise NotImplementedError(
+                f"kernel_initializer {kernel_initializer!r} is not supported; "
+                "only 'glorot_uniform' is implemented."
+            )
+        if bias_initializer != "zeros":
+            raise NotImplementedError(
+                f"bias_initializer {bias_initializer!r} is not supported; "
+                "only 'zeros' is implemented."
+            )
+        if kernel_regularizer is not None:
+            raise NotImplementedError(
+                f"kernel_regularizer {kernel_regularizer!r} is not supported."
+            )
+
         self.filters = filters
         self.kernel_size = kernel_size
         self.strides = strides
-        self.padding = padding.lower()
+        self.padding = padding_norm
         self.dilation_rate = dilation_rate
         self.use_bias = use_bias
-        self.activation = activation
 
+        if activation is None:
+            self.activation: Optional[callable] = None
+        else:
+            act_norm = activation.lower()
+            if act_norm not in self._SUPPORTED_ACTIVATIONS:
+                raise ValueError(
+                    f"activation must be one of "
+                    f"{list(self._SUPPORTED_ACTIVATIONS.keys())} or None, "
+                    f"got {activation!r}"
+                )
+            self.activation = self._SUPPORTED_ACTIVATIONS[act_norm]
+
+        # Placeholder conv so that ``parameters()`` and ``state_dict()`` are
+        # available before the first forward.  ``in_channels`` is set to the
+        # real value on the first forward call.
         self.conv = nn.Conv1d(
-            in_channels=filters,  # placeholder; set in build
+            in_channels=1,
             out_channels=filters,
             kernel_size=kernel_size,
             stride=strides,
@@ -54,20 +102,30 @@ class MaskedConv1D(nn.Module):
             dilation=dilation_rate,
             bias=use_bias,
         )
-        # Actual in_channels will be determined at first forward; override then.
+        self._in_channels: Optional[int] = None
 
     def _resolve_padding(self, length: int) -> int:
         if self.padding == "same":
             dilated = self.dilation_rate * (self.kernel_size - 1)
-            return (length + self.strides - 1) // self.strides * self.strides - length + dilated
+            return (
+                (length + self.strides - 1) // self.strides * self.strides
+                - length
+                + dilated
+            )
         return 0
 
     def forward(
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        if x.ndim != 4:
+            raise ValueError(
+                f"Expected 4D input of shape (B, F, L, C), got {x.ndim}D"
+            )
+
         b, f, l, c = x.shape
-        # Lazy set conv in_channels on first call
-        if self.conv.in_channels != c:
+
+        if self._in_channels is None:
+            # First forward: create the real conv with the correct in_channels.
             self.conv = nn.Conv1d(
                 in_channels=c,
                 out_channels=self.filters,
@@ -77,6 +135,12 @@ class MaskedConv1D(nn.Module):
                 dilation=self.dilation_rate,
                 bias=self.use_bias,
             ).to(x.device)
+            self._in_channels = c
+        elif c != self._in_channels:
+            raise ValueError(
+                f"Expected input channels {self._in_channels}, got {c}. "
+                "MaskedConv1D does not support variable channel dimensions."
+            )
 
         if mask is not None:
             x = x * mask.unsqueeze(-1).to(x.dtype)
@@ -93,8 +157,8 @@ class MaskedConv1D(nn.Module):
         _, _, l_out = out.shape
         out = out.reshape(b, f, l_out, self.filters)
 
-        if self.activation:
-            out = getattr(F, self.activation)(out)
+        if self.activation is not None:
+            out = self.activation(out)
 
         out_mask = None
         if mask is not None:
@@ -103,7 +167,9 @@ class MaskedConv1D(nn.Module):
                 mask_f = F.pad(mask_f, (pad_left, pad_right))
             with torch.no_grad():
                 kernel = torch.ones(
-                    (1, 1, self.kernel_size), dtype=mask_f.dtype, device=mask_f.device
+                    (1, 1, self.kernel_size),
+                    dtype=mask_f.dtype,
+                    device=mask_f.device,
                 )
                 out_mask = F.conv1d(
                     mask_f,
