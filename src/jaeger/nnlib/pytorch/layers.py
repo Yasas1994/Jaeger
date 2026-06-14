@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -32,8 +32,8 @@ class MaskedConv1D(nn.Module):
     _SUPPORTED_ACTIVATIONS = {
         "relu": F.relu,
         "gelu": F.gelu,
-        "sigmoid": F.sigmoid,
-        "tanh": F.tanh,
+        "sigmoid": torch.sigmoid,
+        "tanh": torch.tanh,
     }
 
     def __init__(
@@ -79,7 +79,7 @@ class MaskedConv1D(nn.Module):
         self.use_bias = use_bias
 
         if activation is None:
-            self.activation: Optional[callable] = None
+            self.activation: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
         else:
             act_norm = activation.lower()
             if act_norm not in self._SUPPORTED_ACTIVATIONS:
@@ -122,7 +122,7 @@ class MaskedConv1D(nn.Module):
                 f"Expected 4D input of shape (B, F, L, C), got {x.ndim}D"
             )
 
-        b, f, l, c = x.shape
+        b, f, length, c = x.shape
 
         if self._in_channels is None:
             # First forward: create the real conv with the correct in_channels.
@@ -146,23 +146,23 @@ class MaskedConv1D(nn.Module):
             x = x * mask.unsqueeze(-1).to(x.dtype)
 
         # Merge batch and frame dims: (B*F, C, L)
-        x_2d = x.reshape(b * f, c, l)
+        x_2d = x.reshape(b * f, c, length)
         if self.padding == "same":
-            pad_total = self._resolve_padding(l)
+            pad_total = self._resolve_padding(length)
             pad_left = pad_total // 2
             pad_right = pad_total - pad_left
             x_2d = F.pad(x_2d, (pad_left, pad_right))
 
         out = self.conv(x_2d)
-        _, _, l_out = out.shape
-        out = out.reshape(b, f, l_out, self.filters)
+        _, _, length_out = out.shape
+        out = out.reshape(b, f, length_out, self.filters)
 
         if self.activation is not None:
             out = self.activation(out)
 
         out_mask = None
         if mask is not None:
-            mask_f = mask.reshape(b * f, 1, l).to(x.dtype)
+            mask_f = mask.reshape(b * f, 1, length).to(x.dtype)
             if self.padding == "same":
                 mask_f = F.pad(mask_f, (pad_left, pad_right))
             with torch.no_grad():
@@ -178,7 +178,7 @@ class MaskedConv1D(nn.Module):
                     dilation=self.dilation_rate,
                 )
                 out_mask = (out_mask >= self.kernel_size).squeeze(1)
-            out_mask = out_mask.reshape(b, f, l_out)
+            out_mask = out_mask.reshape(b, f, length_out)
 
         return out, out_mask
 
@@ -187,6 +187,9 @@ class MaskedBatchNorm(nn.Module):
     """Batch normalization that excludes masked positions from statistics.
 
     Can optionally return normalized mean difference (nmd) vectors.
+
+    The running statistics are updated with Keras-style momentum:
+    ``running = momentum * running + (1 - momentum) * batch``.
     """
 
     def __init__(
@@ -211,7 +214,7 @@ class MaskedBatchNorm(nn.Module):
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         xf = x.to(torch.float32)
-        b, f, l, c = xf.shape
+        b, f, length, c = xf.shape
 
         if mask is not None:
             mask_f = mask.unsqueeze(-1).to(torch.float32)
@@ -224,8 +227,8 @@ class MaskedBatchNorm(nn.Module):
             var = xf.var(dim=(0, 1, 2), unbiased=False)
 
         if self.training:
-            self.running_mean = self.momentum * self.running_mean + (1 - self.momentum) * mean.detach()
-            self.running_var = self.momentum * self.running_var + (1 - self.momentum) * var.detach()
+            self.running_mean.lerp_(mean.detach(), 1 - self.momentum)
+            self.running_var.lerp_(var.detach(), 1 - self.momentum)
             mean_use, var_use = mean, var
         else:
             mean_use, var_use = self.running_mean, self.running_var
@@ -250,7 +253,13 @@ class MaskedBatchNorm(nn.Module):
 
 
 class MaskedLayerNorm(nn.Module):
-    """Layer normalization that excludes masked positions."""
+    """Layer normalization that excludes masked positions.
+
+    Normalization is performed over the channel dimension for each
+    (batch, frame, position) tuple. Positions excluded by ``mask`` are
+    omitted from the mean and variance, and the corresponding output is
+    zeroed.
+    """
 
     def __init__(self, num_features: int, eps: float = 1e-3):
         super().__init__()
@@ -264,7 +273,8 @@ class MaskedLayerNorm(nn.Module):
         if mask is not None:
             mask_f = mask.unsqueeze(-1).to(torch.float32)
             masked_x = xf * mask_f
-            count = mask_f.sum(dim=-1, keepdim=True) + self.eps
+            count = mask_f.sum(dim=-1, keepdim=True) * x.shape[-1]
+            count = count.masked_fill(count == 0, self.eps)
             mean = masked_x.sum(dim=-1, keepdim=True) / count
             var = ((masked_x - mean) * mask_f).pow(2).sum(dim=-1, keepdim=True) / count
         else:

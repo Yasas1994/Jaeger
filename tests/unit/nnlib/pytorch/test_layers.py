@@ -1,5 +1,4 @@
 import torch
-import pytest
 from jaeger.nnlib.pytorch.layers import GeLU, MaskedBatchNorm, MaskedConv1D, MaskedLayerNorm
 
 
@@ -98,6 +97,34 @@ def test_masked_batchnorm_output_shape_and_nmd():
     assert nmd.shape == (2, 4)
 
 
+def test_masked_batchnorm_no_mask():
+    x = torch.randn(2, 6, 10, 4)
+    layer = MaskedBatchNorm(num_features=4)
+    out, _ = layer(x, mask=None)
+    assert out.shape == (2, 6, 10, 4)
+    # running stats should have updated in train mode
+    assert not torch.allclose(layer.running_mean, torch.zeros(4))
+    assert not torch.allclose(layer.running_var, torch.ones(4))
+
+
+def test_masked_batchnorm_eval_uses_running_stats():
+    x = torch.randn(2, 6, 10, 4)
+    layer = MaskedBatchNorm(num_features=4)
+    layer.train()
+    _ = layer(x)
+    running_mean = layer.running_mean.clone()
+    running_var = layer.running_var.clone()
+    layer.eval()
+    out, _ = layer(x, mask=None)
+    assert out.shape == (2, 6, 10, 4)
+    # manual normalization using running stats should match
+    expected = (x - running_mean.view(1, 1, 1, -1)) / torch.sqrt(
+        running_var.view(1, 1, 1, -1) + layer.eps
+    )
+    expected = expected * layer.gamma.view(1, 1, 1, -1) + layer.beta.view(1, 1, 1, -1)
+    assert torch.allclose(out, expected, atol=1e-5)
+
+
 def test_masked_layer_norm_shape():
     x = torch.randn(2, 6, 10, 4)
     mask = torch.ones(2, 6, 10, dtype=torch.bool)
@@ -105,3 +132,28 @@ def test_masked_layer_norm_shape():
     layer = MaskedLayerNorm(num_features=4)
     out = layer(x, mask)
     assert out.shape == (2, 6, 10, 4)
+    # masked positions should be zeroed
+    assert torch.allclose(out[0, :, 5:, :], torch.zeros_like(out[0, :, 5:, :]))
+
+
+def test_masked_layer_norm_no_mask():
+    x = torch.randn(2, 6, 10, 4)
+    mask = torch.ones(2, 6, 10, dtype=torch.bool)
+    layer = MaskedLayerNorm(num_features=4)
+    out_masked = layer(x, mask)
+    out_unmasked = layer(x, mask=None)
+    assert torch.allclose(out_masked, out_unmasked, atol=1e-5)
+
+
+def test_masked_layer_norm_numerical():
+    # Simple 1 position, 4 channels, all valid.
+    x = torch.tensor([[[[1.0, 2.0, 3.0, 4.0]]]])
+    layer = MaskedLayerNorm(num_features=4)
+    with torch.no_grad():
+        layer.gamma.fill_(1.0)
+        layer.beta.fill_(0.0)
+    out = layer(x)
+    mean = x.mean(dim=-1)
+    var = x.var(dim=-1, unbiased=False)
+    expected = (x - mean) / torch.sqrt(var + layer.eps)
+    assert torch.allclose(out, expected, atol=1e-5)
