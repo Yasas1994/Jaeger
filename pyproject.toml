@@ -61,25 +61,27 @@ jaeger = "jaeger.cli:main"
 Homepage = "https://github.com/Yasas1994/Jaeger"
 
 [project.optional-dependencies]
-darwin-arm = [
-    "tensorflow >=2.21, <2.22",
-    "tensorflow-metal",
-]
 gpu = [
-    "tensorflow[and-cuda] >=2.21, <2.22",
+    "torch >=2.0, <3.0",
 ]
 cpu = [
+    "torch >=2.0, <3.0",
+]
+darwin-arm = [
+    "torch >=2.0, <3.0",
+]
+legacy = [
     "tensorflow >=2.21, <2.22",
+]
+test = [
+    "pytest >=8.0",
+    "pytest-mock >=3.14",
 ]
 onnx = [
     "onnxruntime-gpu >=1.26",
     "tf2onnx >=1.17",
     "sympy >=1.13",
     "onnx >=1.16",
-]
-test = [
-    "pytest >=8.0",
-    "pytest-mock >=3.14",
 ]
 taxonomy = [
     "taxopy",
