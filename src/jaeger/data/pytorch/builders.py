@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
+from jaeger.data.pytorch.collate import pad_collate
 from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset
 
 
@@ -13,6 +14,10 @@ def build_datasets(
     config: Dict[str, Any], branch: str = "classifier"
 ) -> Dict[str, DataLoader]:
     """Build training and validation DataLoaders for a config branch.
+
+    The returned DataLoaders use :func:`pad_collate`, so they support
+    variable-length samples by padding each batch to the longest sequence
+    length in that batch.
 
     Parameters
     ----------
@@ -39,7 +44,7 @@ def build_datasets(
     )
     data_cfg = train_cfg.get(data_key, {})
 
-    datasets: Dict[str, NumpyFullDataset] = {}
+    datasets: Dict[str, Dataset] = {}
     for split in ["train", "validation"]:
         entries = data_cfg.get(split, [])
         paths = [p for entry in entries for p in entry.get("path", [])]
@@ -48,7 +53,12 @@ def build_datasets(
 
         data_format = string_cfg.get("data_format", "numpy_full")
         if data_format == "numpy_full":
-            datasets[split] = NumpyFullDataset(paths[0])
+            split_datasets: list[Dataset] = [NumpyFullDataset(path) for path in paths]
+            datasets[split] = (
+                split_datasets[0]
+                if len(split_datasets) == 1
+                else ConcatDataset(split_datasets)
+            )
         else:
             raise ValueError(f"Unsupported data_format in Task 11: {data_format}")
 
@@ -58,11 +68,13 @@ def build_datasets(
             batch_size=batch_size,
             shuffle=True,
             num_workers=0,
+            collate_fn=pad_collate,
         ),
         "validation": DataLoader(
             datasets["validation"],
             batch_size=batch_size,
             shuffle=False,
             num_workers=0,
+            collate_fn=pad_collate,
         ),
     }
