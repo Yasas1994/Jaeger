@@ -294,27 +294,17 @@ class GatedFrameGlobalMaxPooling(nn.Module):
     def __init__(self, return_gate: bool = False):
         super().__init__()
         self.return_gate = return_gate
-        # Placeholder; real in_features is set on first forward.
-        self.score_dense = nn.Linear(1, 1)
-        self._in_features: Optional[int] = None
+        self.score_dense = nn.LazyLinear(1)
 
     def forward(
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
         # x: (B, F, L, D)
-        b, f, length, d = x.shape
-        if self._in_features is None:
-            self.score_dense = nn.Linear(d, 1).to(x.device)
-            self._in_features = d
-        elif d != self._in_features:
-            raise ValueError(
-                f"Expected input channels {self._in_features}, got {d}. "
-                "GatedFrameGlobalMaxPooling does not support variable channel dimensions."
-            )
-
+        if mask is not None:
+            x = x.masked_fill(~mask.unsqueeze(-1), -1e9)
         per_frame = x.max(dim=2)[0]  # (B, F, D)
         logits = self.score_dense(per_frame).squeeze(-1)  # (B, F)
-        gates = torch.softmax(logits, dim=1)
+        gates = F.softmax(logits, dim=1)
         pooled = (per_frame * gates.unsqueeze(-1)).sum(dim=1)  # (B, D)
         if self.return_gate:
             return pooled, gates
@@ -337,15 +327,15 @@ class AxialAttention(nn.Module):
     def forward(
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        b, f, l, d = x.shape
+        b, f, seq_len, d = x.shape
         # Reshape to (B*F, L, D)
-        x_2d = x.reshape(b * f, l, d)
+        x_2d = x.reshape(b * f, seq_len, d)
         key_padding_mask = None
         if mask is not None:
-            key_padding_mask = ~mask.reshape(b * f, l)
+            key_padding_mask = ~mask.reshape(b * f, seq_len)
         attn_out, _ = self.attn(
             x_2d, x_2d, x_2d, key_padding_mask=key_padding_mask, need_weights=False
         )
-        out = self.norm(x_2d + attn_out).reshape(b, f, l, d)
+        out = self.norm(x_2d + attn_out).reshape(b, f, seq_len, d)
         out_mask = mask
         return out, out_mask

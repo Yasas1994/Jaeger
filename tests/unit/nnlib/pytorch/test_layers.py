@@ -178,3 +178,37 @@ def test_axial_attention_shape():
     layer = AxialAttention(embed_dim=4, num_heads=2)
     out, mask = layer(x)
     assert out.shape == (2, 6, 10, 4)
+
+
+def test_gated_frame_pooling_return_gate():
+    x = torch.randn(2, 6, 10, 4)
+    layer = GatedFrameGlobalMaxPooling(return_gate=True)
+    pooled, gates = layer(x)
+    assert pooled.shape == (2, 4)
+    assert gates.shape == (2, 6)
+    assert torch.allclose(gates.sum(dim=1), torch.ones(2), atol=1e-5)
+
+
+def test_gated_frame_pooling_with_mask():
+    x = torch.zeros(1, 2, 4, 4)
+    x[0, 0, 0, :] = 10.0  # unmasked high value in frame 0
+    x[0, 1, 0, :] = 10.0  # high value in frame 1, will be masked out
+    mask = torch.ones(1, 2, 4, dtype=torch.bool)
+    mask[0, 1, 0] = False  # mask out the high position in frame 1
+    layer = GatedFrameGlobalMaxPooling(return_gate=False)
+    out = layer(x, mask)
+    # Masked position should not affect per-frame max; frame 1 max becomes 0.0,
+    # so the gated pooled output must be strictly less than 10.0.
+    assert out.shape == (1, 4)
+    assert (out < 10.0).all()
+
+
+def test_axial_attention_with_mask():
+    x = torch.randn(2, 6, 10, 4)
+    mask = torch.ones(2, 6, 10, dtype=torch.bool)
+    mask[:, :, 5:] = False
+    layer = AxialAttention(embed_dim=4, num_heads=2)
+    out, out_mask = layer(x, mask)
+    assert out.shape == (2, 6, 10, 4)
+    assert torch.isfinite(out).all()
+    assert out_mask is mask
