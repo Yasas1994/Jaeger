@@ -286,3 +286,66 @@ class MaskedLayerNorm(nn.Module):
         if mask is not None:
             out = out * mask_f
         return out.to(x.dtype)
+
+
+class GatedFrameGlobalMaxPooling(nn.Module):
+    """Frame-aware global max pooling. Input (B,F,L,D) -> output (B,D)."""
+
+    def __init__(self, return_gate: bool = False):
+        super().__init__()
+        self.return_gate = return_gate
+        # Placeholder; real in_features is set on first forward.
+        self.score_dense = nn.Linear(1, 1)
+        self._in_features: Optional[int] = None
+
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
+        # x: (B, F, L, D)
+        b, f, length, d = x.shape
+        if self._in_features is None:
+            self.score_dense = nn.Linear(d, 1).to(x.device)
+            self._in_features = d
+        elif d != self._in_features:
+            raise ValueError(
+                f"Expected input channels {self._in_features}, got {d}. "
+                "GatedFrameGlobalMaxPooling does not support variable channel dimensions."
+            )
+
+        per_frame = x.max(dim=2)[0]  # (B, F, D)
+        logits = self.score_dense(per_frame).squeeze(-1)  # (B, F)
+        gates = torch.softmax(logits, dim=1)
+        pooled = (per_frame * gates.unsqueeze(-1)).sum(dim=1)  # (B, D)
+        if self.return_gate:
+            return pooled, gates
+        return pooled
+
+
+class AxialAttention(nn.Module):
+    """Axial attention over the sequence axis."""
+
+    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.0):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        b, f, l, d = x.shape
+        # Reshape to (B*F, L, D)
+        x_2d = x.reshape(b * f, l, d)
+        key_padding_mask = None
+        if mask is not None:
+            key_padding_mask = ~mask.reshape(b * f, l)
+        attn_out, _ = self.attn(
+            x_2d, x_2d, x_2d, key_padding_mask=key_padding_mask, need_weights=False
+        )
+        out = self.norm(x_2d + attn_out).reshape(b, f, l, d)
+        out_mask = mask
+        return out, out_mask

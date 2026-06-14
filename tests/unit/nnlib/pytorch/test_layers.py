@@ -1,5 +1,12 @@
 import torch
-from jaeger.nnlib.pytorch.layers import GeLU, MaskedBatchNorm, MaskedConv1D, MaskedLayerNorm
+from jaeger.nnlib.pytorch.layers import (
+    AxialAttention,
+    GeLU,
+    GatedFrameGlobalMaxPooling,
+    MaskedBatchNorm,
+    MaskedConv1D,
+    MaskedLayerNorm,
+)
 
 
 def test_gelu_matches_torch_nn_gelu():
@@ -157,3 +164,17 @@ def test_masked_layer_norm_numerical():
     var = x.var(dim=-1, unbiased=False)
     expected = (x - mean) / torch.sqrt(var + layer.eps)
     assert torch.allclose(out, expected, atol=1e-5)
+
+
+def test_gated_frame_pooling_shape():
+    x = torch.randn(2, 6, 10, 4)
+    layer = GatedFrameGlobalMaxPooling(return_gate=False)
+    out = layer(x)
+    assert out.shape == (2, 4)
+
+
+def test_axial_attention_shape():
+    x = torch.randn(2, 6, 10, 4)
+    layer = AxialAttention(embed_dim=4, num_heads=2)
+    out, mask = layer(x)
+    assert out.shape == (2, 6, 10, 4)
