@@ -1,5 +1,5 @@
 import torch
-from jaeger.nnlib.pytorch.models import ClassificationHead, Embedding, JaegerModel, ReliabilityHead, RepresentationModel
+from jaeger.nnlib.pytorch.models import ClassificationHead, Embedding, JaegerModel, ProjectionHead, ReliabilityHead, RepresentationModel
 
 
 def test_embedding_translated_with_embedding_layer():
@@ -14,6 +14,37 @@ def test_embedding_translated_without_embedding_layer():
     x = torch.randn(2, 6, 50, 65)
     out = emb(x)
     assert out.shape == (2, 6, 50, 32)
+
+
+def test_embedding_with_positional_embeddings():
+    emb_pos = Embedding(
+        input_type="translated",
+        vocab_size=65,
+        embedding_size=32,
+        use_embedding_layer=True,
+        use_positional_embeddings=True,
+        positional_embedding_length=10000,
+    )
+    emb_no_pos = Embedding(
+        input_type="translated",
+        vocab_size=65,
+        embedding_size=32,
+        use_embedding_layer=True,
+        use_positional_embeddings=False,
+    )
+    x = torch.randint(0, 65, (2, 6, 50))
+    out_pos = emb_pos(x)
+    out_no_pos = emb_no_pos(x)
+    assert out_pos.shape == (2, 6, 50, 32)
+    assert out_no_pos.shape == (2, 6, 50, 32)
+    assert not torch.allclose(out_pos, out_no_pos)
+
+
+def test_projection_head_output_shape():
+    head = ProjectionHead(input_dim=64, projection_dim=128)
+    x = torch.randn(2, 64)
+    out = head(x)
+    assert out.shape == (2, 128)
 
 
 def test_classification_head_output_shape():

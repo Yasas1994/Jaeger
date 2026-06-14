@@ -54,10 +54,9 @@ class Embedding(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape depends on input_type; caller must pass correct shape
         if self.input_type == "translated":
-            if self.use_embedding_layer:
-                return self.embed(x)
-            else:
-                return self.embed(x)
+            x = self.embed(x)
+        if self.use_positional_embeddings:
+            x = self.positional(x)
         return x
 
 
