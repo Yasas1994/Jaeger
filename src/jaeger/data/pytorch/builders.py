@@ -8,7 +8,7 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from jaeger.data.pytorch.collate import pad_collate
 from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
-from jaeger.seqops.maps import CODON_ID
+from jaeger.seqops.maps import CODONS
 
 
 def build_datasets(
@@ -49,7 +49,7 @@ def build_datasets(
     )
     data_cfg = train_cfg.get(data_key, {})
 
-    codon_table = {c: i + 1 for i, c in enumerate(CODON_ID)}
+    codon_table = {c: i + 1 for i, c in enumerate(CODONS)}
 
     datasets: Dict[str, Dataset] = {}
     for split in ["train", "validation"]:

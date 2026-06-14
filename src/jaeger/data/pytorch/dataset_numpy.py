@@ -92,20 +92,26 @@ class NumpyRawDataset(Dataset):
     def __len__(self) -> int:
         return len(self.labels)
 
+    def _crop_pad_sequence(self, seq: np.ndarray) -> np.ndarray:
+        """Crop or pad a raw nucleotide sequence to ``crop_size``."""
+        seq = np.asarray(seq)
+        length = len(seq)
+        if length > self.crop_size:
+            start = random.randint(0, length - self.crop_size)
+            return seq[start : start + self.crop_size]
+        if length < self.crop_size:
+            pad = self.crop_size - length
+            return np.pad(seq, (0, pad), constant_values=4)
+        return seq
+
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         seq = self.seqs[idx]
         if self.shuffle:
             seq = seq[np.random.permutation(len(seq))]
+        seq = self._crop_pad_sequence(seq)
         if self.mutate:
             seq = apply_mutation(seq, self.mutation_rate)
         x = translate_to_codons(seq, self.codon_table)
-        length = x.shape[1]
-        if length > self.crop_size:
-            start = random.randint(0, length - self.crop_size)
-            x = x[:, start : start + self.crop_size]
-        elif length < self.crop_size:
-            pad = self.crop_size - length
-            x = torch.nn.functional.pad(x, (0, pad))
         mask = x != 0
         if self.shuffle_frames:
             x = shuffle_frames_fn(x)

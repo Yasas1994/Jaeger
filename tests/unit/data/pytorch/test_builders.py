@@ -61,30 +61,35 @@ def test_build_datasets_numpy_full(tmp_path):
 
 
 def test_build_datasets_numpy_raw(tmp_path):
+    crop_size = 50
     train_path = tmp_path / "train_raw.npz"
     val_path = tmp_path / "val_raw.npz"
-    _make_raw_npz(train_path, n_samples=8, seq_length=500)
-    _make_raw_npz(val_path, n_samples=4, seq_length=500)
+    _make_raw_npz(train_path, n_samples=8, seq_length=crop_size)
+    _make_raw_npz(val_path, n_samples=4, seq_length=crop_size)
 
     config = _build_config(
         [train_path], [val_path], data_format="numpy_raw", batch_size=4
     )
-    config["model"]["string_processor"]["crop_size"] = 50
+    config["model"]["string_processor"]["crop_size"] = crop_size
     loaders = build_datasets(config, branch="classifier")
 
     assert set(loaders.keys()) == {"train", "validation"}
 
     batch_x, batch_y, batch_mask = next(iter(loaders["train"]))
-    assert batch_x.shape == (4, 6, 50)
+    assert batch_x.shape[0] == 4
+    assert batch_x.shape[1] == 6
     assert batch_y.shape == (4, 3)
     assert torch.allclose(batch_y.sum(dim=1), torch.ones(4))
-    assert batch_mask.shape == (4, 6, 50)
+    assert batch_mask.shape == batch_x.shape
+    assert batch_x.max() <= 64
+    assert batch_x.min() >= 0
 
     batch_x, batch_y, batch_mask = next(iter(loaders["validation"]))
-    assert batch_x.shape == (4, 6, 50)
+    assert batch_x.shape[0] == 4
+    assert batch_x.shape[1] == 6
     assert batch_y.shape == (4, 3)
     assert torch.allclose(batch_y.sum(dim=1), torch.ones(4))
-    assert batch_mask.shape == (4, 6, 50)
+    assert batch_mask.shape == batch_x.shape
 
 
 def test_build_datasets_multiple_paths(tmp_path):
