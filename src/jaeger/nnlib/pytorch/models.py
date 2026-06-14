@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from jaeger.nnlib.pytorch.layers import (
     AxialAttention,
@@ -54,7 +55,14 @@ class Embedding(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape depends on input_type; caller must pass correct shape
         if self.input_type == "translated":
-            x = self.embed(x)
+            if self.use_embedding_layer:
+                x = self.embed(x)
+            else:
+                if not torch.is_floating_point(x):
+                    x = F.one_hot(x, num_classes=self.embed.in_features).to(
+                        self.embed.weight.dtype
+                    )
+                x = self.embed(x)
         if self.use_positional_embeddings:
             x = self.positional(x)
         return x
@@ -153,6 +161,47 @@ class RepresentationModel(nn.Module):
             else:
                 raise ValueError(f"Unknown layer type: {name}")
         self.pooler = self._build_pooler(pooling)
+        self.output_dim, self.nmd_dim = self._infer_dims()
+
+    def _infer_dims(self):
+        output_dim = None
+        for block in reversed(self.blocks):
+            dim = self._block_output_dim(block)
+            if dim is not None:
+                output_dim = dim
+                break
+
+        nmd_dim = None
+        for block in self.blocks:
+            dim = self._block_nmd_dim(block)
+            if dim is not None:
+                nmd_dim = dim
+                break
+        return output_dim, nmd_dim
+
+    @staticmethod
+    def _block_output_dim(block: nn.Module) -> Optional[int]:
+        if isinstance(block, MaskedConv1D):
+            return int(block.filters)
+        if isinstance(block, (MaskedBatchNorm, MaskedLayerNorm)):
+            return int(block.num_features)
+        if isinstance(block, (AxialAttention, CrossFrameAttention)):
+            return int(block.attn.embed_dim)
+        if isinstance(block, TransformerEncoder):
+            return int(block.encoder.layers[0].self_attn.embed_dim)
+        if isinstance(block, nn.Linear):
+            return int(block.out_features)
+        if isinstance(block, ResidualBlock):
+            return RepresentationModel._block_output_dim(block.layer)
+        return None
+
+    @staticmethod
+    def _block_nmd_dim(block: nn.Module) -> Optional[int]:
+        if isinstance(block, ResidualBlock):
+            return RepresentationModel._block_nmd_dim(block.layer)
+        if getattr(block, "return_nmd", False):
+            return RepresentationModel._block_output_dim(block)
+        return None
 
     def _build_pooler(self, pooling: str):
         if pooling == "average":
