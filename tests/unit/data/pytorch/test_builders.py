@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
+import torch
 
 from jaeger.data.pytorch.builders import build_datasets
+from jaeger.nnlib.pytorch.builder import ModelBuilder
 
 
 def _make_npz(path, n_samples, length=50, channels=None):
@@ -44,12 +46,12 @@ def test_build_datasets_numpy_full(tmp_path):
     batch_x, batch_y, batch_mask = next(iter(loaders["train"]))
     assert batch_x.shape == (4, 6, 50)
     assert batch_y.shape == (4, 3)
-    assert batch_mask.shape == (4, 50)
+    assert batch_mask.shape == (4, 6, 50)
 
     batch_x, batch_y, batch_mask = next(iter(loaders["validation"]))
     assert batch_x.shape == (4, 6, 50)
     assert batch_y.shape == (4, 3)
-    assert batch_mask.shape == (4, 50)
+    assert batch_mask.shape == (4, 6, 50)
 
 
 def test_build_datasets_multiple_paths(tmp_path):
@@ -67,7 +69,7 @@ def test_build_datasets_multiple_paths(tmp_path):
     batch_x, batch_y, batch_mask = next(iter(loaders["train"]))
     assert batch_x.shape == (8, 6, 50)
     assert batch_y.shape == (8, 3)
-    assert batch_mask.shape == (8, 50)
+    assert batch_mask.shape == (8, 6, 50)
 
 
 def test_build_datasets_unsupported_format(tmp_path):
@@ -79,3 +81,51 @@ def test_build_datasets_unsupported_format(tmp_path):
     config = _build_config([train_path], [val_path], data_format="csv")
     with pytest.raises(ValueError, match="Unsupported data_format"):
         build_datasets(config, branch="classifier")
+
+
+def test_build_datasets_model_forward(tmp_path):
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_npz(train_path, n_samples=8)
+    _make_npz(val_path, n_samples=4)
+
+    config = {
+        "model": {
+            "classifier_out_dim": 3,
+            "string_processor": {"data_format": "numpy_full"},
+            "embedding": {
+                "input_type": "translated",
+                "vocab_size": 65,
+                "embedding_size": 4,
+                "use_embedding_layer": True,
+            },
+            "representation_learner": {
+                "hidden_layers": [],
+                "pooling": "average",
+            },
+            "classifier": {
+                "input_shape": 4,
+                "hidden_layers": [{"name": "dense", "config": {"units": 3}}],
+            },
+        },
+        "training": {
+            "batch_size": 4,
+            "fragment_classifier_data": {
+                "train": [{"path": [str(train_path)]}],
+                "validation": [{"path": [str(val_path)]}],
+            },
+        },
+    }
+
+    loaders = build_datasets(config, branch="classifier")
+    batch_x, batch_y, batch_mask = next(iter(loaders["train"]))
+
+    models = ModelBuilder(config).build_fragment_classifier()
+    model = models["jaeger_model"]
+    model.eval()
+
+    with torch.no_grad():
+        outputs = model(batch_x.long(), batch_mask)
+
+    assert "prediction" in outputs
+    assert outputs["prediction"].shape == (4, 3)

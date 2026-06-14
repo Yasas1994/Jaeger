@@ -32,9 +32,14 @@ class NumpyFullDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.inputs[idx]
-        if x.dim() == 3:
+        if x.dim() == 2:
+            # (frames, length)
+            mask = x != 0
+        elif x.dim() == 3:
             # (frames, length, channels) -> mask over frames and length
             mask = (x != 0).any(dim=-1)
         else:
-            mask = torch.ones(x.shape[-1], dtype=torch.bool)
+            raise ValueError(
+                f"NumpyFullDataset expects 2-D or 3-D inputs, got rank {x.dim()}"
+            )
         return x, self.labels[idx], mask

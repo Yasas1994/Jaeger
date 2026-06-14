@@ -14,14 +14,14 @@ def test_numpy_full_dataset(tmp_path):
     x, y, mask = ds[0]
     assert x.shape == (6, 50)
     assert y.shape == (3,)
-    assert mask.shape == (50,)
+    assert mask.shape == (6, 50)
     assert mask.dtype == torch.bool
 
     loader = torch.utils.data.DataLoader(ds, batch_size=2)
     batch_x, batch_y, batch_mask = next(iter(loader))
     assert batch_x.shape == (2, 6, 50)
     assert batch_y.shape == (2, 3)
-    assert batch_mask.shape == (2, 50)
+    assert batch_mask.shape == (2, 6, 50)
 
 
 def test_numpy_full_dataset_3d_input(tmp_path):
