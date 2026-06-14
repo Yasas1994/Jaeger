@@ -1,6 +1,6 @@
 import torch
 import pytest
-from jaeger.nnlib.pytorch.layers import GeLU, MaskedConv1D
+from jaeger.nnlib.pytorch.layers import GeLU, MaskedBatchNorm, MaskedConv1D, MaskedLayerNorm
 
 
 def test_gelu_matches_torch_nn_gelu():
@@ -86,3 +86,22 @@ def test_masked_conv1d_state_dict_before_forward():
     state = layer.state_dict()
     assert "conv.weight" in state
     assert "conv.bias" in state
+
+
+def test_masked_batchnorm_output_shape_and_nmd():
+    x = torch.randn(2, 6, 10, 4)
+    mask = torch.ones(2, 6, 10, dtype=torch.bool)
+    mask[0, :, 5:] = False
+    layer = MaskedBatchNorm(num_features=4, return_nmd=True)
+    out, nmd = layer(x, mask)
+    assert out.shape == (2, 6, 10, 4)
+    assert nmd.shape == (2, 4)
+
+
+def test_masked_layer_norm_shape():
+    x = torch.randn(2, 6, 10, 4)
+    mask = torch.ones(2, 6, 10, dtype=torch.bool)
+    mask[0, :, 5:] = False
+    layer = MaskedLayerNorm(num_features=4)
+    out = layer(x, mask)
+    assert out.shape == (2, 6, 10, 4)

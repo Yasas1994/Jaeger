@@ -181,3 +181,98 @@ class MaskedConv1D(nn.Module):
             out_mask = out_mask.reshape(b, f, l_out)
 
         return out, out_mask
+
+
+class MaskedBatchNorm(nn.Module):
+    """Batch normalization that excludes masked positions from statistics.
+
+    Can optionally return normalized mean difference (nmd) vectors.
+    """
+
+    def __init__(
+        self,
+        num_features: int,
+        eps: float = 1e-5,
+        momentum: float = 0.9,
+        return_nmd: bool = False,
+    ):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        self.return_nmd = return_nmd
+
+        self.gamma = nn.Parameter(torch.ones(num_features))
+        self.beta = nn.Parameter(torch.zeros(num_features))
+        self.register_buffer("running_mean", torch.zeros(num_features))
+        self.register_buffer("running_var", torch.ones(num_features))
+
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        xf = x.to(torch.float32)
+        b, f, l, c = xf.shape
+
+        if mask is not None:
+            mask_f = mask.unsqueeze(-1).to(torch.float32)
+            masked_x = xf * mask_f
+            valid_count = mask_f.sum(dim=(0, 1, 2)) + self.eps
+            mean = masked_x.sum(dim=(0, 1, 2)) / valid_count
+            var = ((masked_x - mean) * mask_f).pow(2).sum(dim=(0, 1, 2)) / valid_count
+        else:
+            mean = xf.mean(dim=(0, 1, 2))
+            var = xf.var(dim=(0, 1, 2), unbiased=False)
+
+        if self.training:
+            self.running_mean = self.momentum * self.running_mean + (1 - self.momentum) * mean.detach()
+            self.running_var = self.momentum * self.running_var + (1 - self.momentum) * var.detach()
+            mean_use, var_use = mean, var
+        else:
+            mean_use, var_use = self.running_mean, self.running_var
+
+        mean_use = mean_use.view(1, 1, 1, -1)
+        var_use = var_use.view(1, 1, 1, -1)
+        normalized = (xf - mean_use) / torch.sqrt(var_use + self.eps)
+        out = normalized * self.gamma.view(1, 1, 1, -1) + self.beta.view(1, 1, 1, -1)
+        out = out.to(x.dtype)
+
+        if self.return_nmd:
+            if mask is not None:
+                per_ex_sum = masked_x.sum(dim=(1, 2))
+                per_ex_count = mask_f.sum(dim=(1, 2)) + self.eps
+                mean_channel = per_ex_sum / per_ex_count
+            else:
+                mean_channel = xf.mean(dim=(1, 2))
+            nmd = (mean_channel - mean).to(x.dtype)
+            return out, nmd
+
+        return out, None
+
+
+class MaskedLayerNorm(nn.Module):
+    """Layer normalization that excludes masked positions."""
+
+    def __init__(self, num_features: int, eps: float = 1e-3):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.gamma = nn.Parameter(torch.ones(num_features))
+        self.beta = nn.Parameter(torch.zeros(num_features))
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        xf = x.to(torch.float32)
+        if mask is not None:
+            mask_f = mask.unsqueeze(-1).to(torch.float32)
+            masked_x = xf * mask_f
+            count = mask_f.sum(dim=-1, keepdim=True) + self.eps
+            mean = masked_x.sum(dim=-1, keepdim=True) / count
+            var = ((masked_x - mean) * mask_f).pow(2).sum(dim=-1, keepdim=True) / count
+        else:
+            mean = xf.mean(dim=-1, keepdim=True)
+            var = xf.var(dim=-1, keepdim=True, unbiased=False)
+
+        normalized = (xf - mean) / torch.sqrt(var + self.eps)
+        out = normalized * self.gamma.view(1, 1, 1, -1) + self.beta.view(1, 1, 1, -1)
+        if mask is not None:
+            out = out * mask_f
+        return out.to(x.dtype)
