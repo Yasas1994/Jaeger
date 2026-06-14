@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
+from typing import Dict, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+
+from jaeger.data.pytorch.transforms import (
+    apply_mutation,
+    shuffle_frames as shuffle_frames_fn,
+    translate_to_codons,
+)
 
 
 class NumpyFullDataset(Dataset):
@@ -43,3 +51,54 @@ class NumpyFullDataset(Dataset):
                 f"NumpyFullDataset expects 2-D or 3-D inputs, got rank {x.dim()}"
             )
         return x, self.labels[idx], mask
+
+
+class NumpyRawDataset(Dataset):
+    """Loads raw int8 sequences and applies runtime preprocessing."""
+
+    def __init__(
+        self,
+        path: str | Path,
+        seq_key: str = "sequences",
+        label_key: str = "labels",
+        crop_size: int = 500,
+        num_classes: int = 3,
+        codon_table: Optional[Dict[str, int]] = None,
+        shuffle: bool = True,
+        mutate: bool = False,
+        mutation_rate: float = 0.1,
+        shuffle_frames: bool = False,
+    ):
+        data = np.load(path, allow_pickle=False)
+        self.seqs = data[seq_key]
+        self.labels = torch.from_numpy(data[label_key])
+        self.crop_size = crop_size
+        self.num_classes = num_classes
+        self.codon_table = codon_table
+        self.shuffle = shuffle
+        self.mutate = mutate
+        self.mutation_rate = mutation_rate
+        self.shuffle_frames = shuffle_frames
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        seq = self.seqs[idx]
+        if self.mutate:
+            seq = apply_mutation(seq, self.mutation_rate)
+        x = translate_to_codons(seq, self.codon_table)
+        length = x.shape[1]
+        if length > self.crop_size:
+            start = random.randint(0, length - self.crop_size)
+            x = x[:, start : start + self.crop_size]
+        elif length < self.crop_size:
+            pad = self.crop_size - length
+            x = torch.nn.functional.pad(x, (0, pad))
+        mask = x != 0
+        if self.shuffle_frames:
+            x = shuffle_frames_fn(x)
+        y = torch.nn.functional.one_hot(
+            self.labels[idx].long(), num_classes=self.num_classes
+        ).float()
+        return x, y, mask

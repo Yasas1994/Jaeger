@@ -7,7 +7,8 @@ from typing import Any, Dict
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from jaeger.data.pytorch.collate import pad_collate
-from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset
+from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
+from jaeger.seqops.maps import CODON_ID
 
 
 def build_datasets(
@@ -36,6 +37,10 @@ def build_datasets(
     train_cfg = config.get("training", {})
     string_cfg = model_cfg.get("string_processor", {})
     batch_size = train_cfg.get("batch_size", 32)
+    out_dim_key = (
+        "classifier_out_dim" if branch == "classifier" else "reliability_out_dim"
+    )
+    num_classes = model_cfg.get(out_dim_key, 3)
 
     data_key = (
         "fragment_classifier_data"
@@ -43,6 +48,8 @@ def build_datasets(
         else "fragment_reliability_data"
     )
     data_cfg = train_cfg.get(data_key, {})
+
+    codon_table = {c: i for i, c in enumerate(CODON_ID)}
 
     datasets: Dict[str, Dataset] = {}
     for split in ["train", "validation"]:
@@ -54,6 +61,25 @@ def build_datasets(
         data_format = string_cfg.get("data_format", "numpy_full")
         if data_format == "numpy_full":
             split_datasets: list[Dataset] = [NumpyFullDataset(path) for path in paths]
+            datasets[split] = (
+                split_datasets[0]
+                if len(split_datasets) == 1
+                else ConcatDataset(split_datasets)
+            )
+        elif data_format == "numpy_raw":
+            split_datasets = [
+                NumpyRawDataset(
+                    path,
+                    crop_size=string_cfg.get("crop_size", 500),
+                    num_classes=num_classes,
+                    codon_table=codon_table,
+                    shuffle=string_cfg.get("shuffle", True),
+                    mutate=string_cfg.get("mutate", False),
+                    mutation_rate=string_cfg.get("mutation_rate", 0.1),
+                    shuffle_frames=string_cfg.get("shuffle_frames", False),
+                )
+                for path in paths
+            ]
             datasets[split] = (
                 split_datasets[0]
                 if len(split_datasets) == 1
