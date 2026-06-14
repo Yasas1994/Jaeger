@@ -53,9 +53,7 @@ class MaskedConv1D(nn.Module):
         super().__init__()
         padding_norm = padding.lower()
         if padding_norm not in ("same", "valid"):
-            raise ValueError(
-                f"padding must be 'same' or 'valid', got {padding!r}"
-            )
+            raise ValueError(f"padding must be 'same' or 'valid', got {padding!r}")
 
         if kernel_initializer != "glorot_uniform":
             raise NotImplementedError(
@@ -119,9 +117,7 @@ class MaskedConv1D(nn.Module):
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         if x.ndim != 4:
-            raise ValueError(
-                f"Expected 4D input of shape (B, F, L, C), got {x.ndim}D"
-            )
+            raise ValueError(f"Expected 4D input of shape (B, F, L, C), got {x.ndim}D")
 
         b, f, length, c = x.shape
 
@@ -146,8 +142,10 @@ class MaskedConv1D(nn.Module):
         if mask is not None:
             x = x * mask.unsqueeze(-1).to(x.dtype)
 
-        # Merge batch and frame dims: (B*F, C, L)
-        x_2d = x.reshape(b * f, c, length)
+        # Merge batch and frame dims. The input layout is (B, F, L, C); Conv1d
+        # expects (N, C, L), so permute before reshaping to keep channels and
+        # length in the right order.
+        x_2d = x.permute(0, 1, 3, 2).reshape(b * f, c, length)
         if self.padding == "same":
             pad_total = self._resolve_padding(length)
             pad_left = pad_total // 2
@@ -156,30 +154,39 @@ class MaskedConv1D(nn.Module):
 
         out = self.conv(x_2d)
         _, _, length_out = out.shape
-        out = out.reshape(b, f, length_out, self.filters)
+        # Conv1d output is (B*F, C_out, L_out); restore to (B, F, L_out, C_out).
+        out = out.permute(0, 2, 1).reshape(b, f, length_out, self.filters)
 
         if self.activation is not None:
             out = self.activation(out)
 
         out_mask = None
         if mask is not None:
-            mask_f = mask.reshape(b * f, 1, length).to(x.dtype)
-            if self.padding == "same":
-                mask_f = F.pad(mask_f, (pad_left, pad_right))
-            with torch.no_grad():
-                kernel = torch.ones(
-                    (1, 1, self.kernel_size),
-                    dtype=mask_f.dtype,
-                    device=mask_f.device,
-                )
-                out_mask = F.conv1d(
-                    mask_f,
-                    kernel,
-                    stride=self.strides,
-                    dilation=self.dilation_rate,
-                )
-                out_mask = (out_mask >= self.kernel_size).squeeze(1)
-            out_mask = out_mask.reshape(b, f, length_out)
+            if self.padding == "same" and self.strides == 1:
+                # With stride-1 "same" padding, output positions map one-to-one
+                # to input positions, so the center of the kernel falls on a
+                # valid position exactly when the input mask is True. This
+                # avoids marking boundary positions as invalid because of the
+                # zero padding used to implement "same".
+                out_mask = mask[:, :, :length_out]
+            else:
+                mask_f = mask.reshape(b * f, 1, length).to(x.dtype)
+                if self.padding == "same":
+                    mask_f = F.pad(mask_f, (pad_left, pad_right))
+                with torch.no_grad():
+                    kernel = torch.ones(
+                        (1, 1, self.kernel_size),
+                        dtype=mask_f.dtype,
+                        device=mask_f.device,
+                    )
+                    out_mask = F.conv1d(
+                        mask_f,
+                        kernel,
+                        stride=self.strides,
+                        dilation=self.dilation_rate,
+                    )
+                    out_mask = (out_mask >= self.kernel_size).squeeze(1)
+                out_mask = out_mask.reshape(b, f, length_out)
 
         return out, out_mask
 
@@ -269,7 +276,9 @@ class MaskedLayerNorm(nn.Module):
         self.gamma = nn.Parameter(torch.ones(num_features))
         self.beta = nn.Parameter(torch.zeros(num_features))
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         xf = x.to(torch.float32)
         if mask is not None:
             mask_f = mask.unsqueeze(-1).to(torch.float32)
@@ -345,14 +354,19 @@ class AxialAttention(nn.Module):
 class MaskedGlobalAvgPooling(nn.Module):
     """Global average pooling over the sequence axis, respecting masks."""
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         # x: (B, F, L, D)
         if mask is not None:
             mask_f = mask.unsqueeze(-1).to(x.dtype)
             masked_x = x * mask_f
-            count = mask_f.sum(dim=2, keepdim=True).clamp(min=1.0)
-            pooled = masked_x.sum(dim=2, keepdim=True) / count
-            return pooled.mean(dim=(1, 2))
+            # Compute the global masked average in one step to match the
+            # TensorFlow GlobalAveragePooling2D behavior and reduce rounding
+            # differences from two-stage averaging.
+            count = mask_f.sum(dim=(1, 2), keepdim=True).clamp(min=1.0)
+            pooled = masked_x.sum(dim=(1, 2), keepdim=True) / count
+            return pooled.squeeze(dim=(1, 2))
         return x.mean(dim=(1, 2))
 
 
@@ -381,7 +395,10 @@ class ResidualBlock(nn.Module):
         self.layer = layer
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
-        if hasattr(self.layer, "forward") and "mask" in self.layer.forward.__code__.co_varnames:
+        if (
+            hasattr(self.layer, "forward")
+            and "mask" in self.layer.forward.__code__.co_varnames
+        ):
             out = self.layer(x, mask)
             if isinstance(out, tuple):
                 out, out_mask = out
@@ -392,7 +409,9 @@ class ResidualBlock(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, embed_dim: int, num_heads: int, num_layers: int = 1, dropout: float = 0.0):
+    def __init__(
+        self, embed_dim: int, num_heads: int, num_layers: int = 1, dropout: float = 0.0
+    ):
         super().__init__()
         layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
@@ -429,5 +448,3 @@ class CrossFrameAttention(nn.Module):
         out, _ = self.attn(x_t, x_t, x_t, key_padding_mask=key_mask, need_weights=False)
         out = self.norm(x_t + out).reshape(b, length, f, d).permute(0, 2, 1, 3)
         return out, mask
-
-
