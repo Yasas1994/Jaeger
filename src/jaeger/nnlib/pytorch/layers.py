@@ -371,7 +371,7 @@ class SinusoidalPositionEmbedding(nn.Module):
         )
         pe = torch.zeros(length, d, device=x.device)
         pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
         return x + pe.view(1, 1, length, d)
 
 
@@ -431,7 +431,7 @@ class CrossFrameAttention(nn.Module):
         return out, mask
 
 
-class Embedding(nn.Module):
+class InputEmbedding(nn.Module):
     """Minimal embedding stub for compatibility until Task 6 expands it."""
 
     def __init__(

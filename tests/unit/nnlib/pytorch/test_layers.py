@@ -4,8 +4,10 @@ from jaeger.nnlib.pytorch.layers import (
     CrossFrameAttention,
     GeLU,
     GatedFrameGlobalMaxPooling,
+    InputEmbedding,
     MaskedBatchNorm,
     MaskedConv1D,
+    MaskedGlobalAvgPooling,
     MaskedLayerNorm,
     ResidualBlock,
     SinusoidalPositionEmbedding,
@@ -250,9 +252,8 @@ def test_cross_frame_attention_shape():
 
 def test_representation_model_forward():
     from jaeger.nnlib.pytorch.models import RepresentationModel
-    from jaeger.nnlib.pytorch.layers import Embedding
 
-    embedding = Embedding(
+    embedding = InputEmbedding(
         input_type="translated",
         vocab_size=65,
         embedding_size=32,
@@ -273,3 +274,40 @@ def test_representation_model_forward():
     pooled, nmd = out
     assert pooled.shape == (2, 16)
     assert nmd.shape == (2, 16)
+
+
+def test_sinusoidal_position_embedding_odd_dim():
+    x = torch.randn(2, 6, 10, 5)
+    layer = SinusoidalPositionEmbedding()
+    out = layer(x)
+    assert out.shape == (2, 6, 10, 5)
+
+
+def test_masked_global_avg_pooling_shape():
+    x = torch.randn(2, 6, 10, 4)
+    layer = MaskedGlobalAvgPooling()
+    out = layer(x)
+    assert out.shape == (2, 4)
+
+
+def test_masked_global_avg_pooling_ignores_masked():
+    x = torch.zeros(1, 1, 4, 1)
+    x[0, 0, 0, 0] = 100.0
+    x[0, 0, 1, 0] = 0.0
+    x[0, 0, 2, 0] = 0.0
+    x[0, 0, 3, 0] = 0.0
+    mask = torch.ones(1, 1, 4, dtype=torch.bool)
+    mask[0, 0, 0] = False
+    layer = MaskedGlobalAvgPooling()
+    out = layer(x, mask)
+    assert torch.allclose(out, torch.zeros_like(out))
+
+
+def test_masked_global_avg_pooling_zero_frame():
+    x = torch.randn(2, 3, 5, 4)
+    mask = torch.ones(2, 3, 5, dtype=torch.bool)
+    mask[0, 0, :] = False
+    layer = MaskedGlobalAvgPooling()
+    out = layer(x, mask)
+    assert out.shape == (2, 4)
+    assert torch.isfinite(out).all()

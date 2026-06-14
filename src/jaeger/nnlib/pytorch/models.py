@@ -23,8 +23,6 @@ class RepresentationModel(nn.Module):
         self.embedding = embedding
         self.blocks = nn.ModuleList()
         self.return_nmd = False
-        self.output_dim = None
-        self.nmd_dim = None
         for cfg in hidden_layers:
             name = cfg["name"].lower()
             config = cfg.get("config", {})
@@ -44,6 +42,9 @@ class RepresentationModel(nn.Module):
                 inner = self.blocks.pop() if self.blocks else None
                 self.blocks.append(ResidualBlock(inner))
             elif name == "dense":
+                if "units" in config:
+                    config = dict(config)
+                    config["out_features"] = config.pop("units")
                 self.blocks.append(nn.Linear(**config))
             elif name == "activation":
                 self.blocks.append(GeLU() if config.get("activation") == "gelu" else nn.ReLU())
@@ -60,14 +61,20 @@ class RepresentationModel(nn.Module):
             return GatedFrameGlobalMaxPooling(return_gate=False)
         raise ValueError(f"Unknown pooling: {pooling}")
 
+    def _accepts_mask(self, block):
+        return "mask" in block.forward.__code__.co_varnames
+
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
         x = self.embedding(x)
         nmd = None
         for block in self.blocks:
-            if hasattr(block, "return_nmd") and block.return_nmd:
-                x, nmd = block(x, mask)
+            if self._accepts_mask(block):
+                if hasattr(block, "return_nmd") and block.return_nmd:
+                    x, nmd = block(x, mask)
+                else:
+                    x, mask = block(x, mask)
             else:
-                x, mask = block(x, mask)
+                x = block(x)
         pooled = self.pooler(x, mask)
         if nmd is not None:
             return pooled, nmd
