@@ -103,11 +103,22 @@ pattern = "mcp__mempalace__kg_invalidate"
 
 This allows read-only/search operations and keeps destructive operations behind manual approval.
 
-## 6. Autosave hooks
+## 6. Always save plans and decisions
+
+Create `AGENTS.md` in the project root with explicit MemPalace memory instructions. Kimi Code loads it as a project-level system prompt, so every session is reminded to:
+
+- Search the palace before answering questions about past plans or decisions.
+- Save every new or updated plan to the `jaeger/plans` room via `mcp__mempalace__add_drawer`.
+- Record decisions as knowledge-graph facts via `mcp__mempalace__kg_add`.
+- Write a session diary entry at the end of each session via `mcp__mempalace__diary_write`.
+
+See the current `AGENTS.md` in this repo for the exact wording.
+
+## 7. Autosave hooks
 
 MemPalace's autosave hooks are adapted to Kimi Code via a small shim because Kimi Code's hook JSON and transcript layout differ from Claude Code/Codex.
 
-### 6.1 Install the shim
+### 7.1 Install the shim
 
 Create `~/.kimi-code/hooks/mempalace-autosave.py` with the contents from the project plan or from the canonical version maintained in this repository (if committed). The shim:
 
@@ -124,7 +135,7 @@ Make it executable:
 chmod +x ~/.kimi-code/hooks/mempalace-autosave.py
 ```
 
-### 6.2 Register the hooks
+### 7.2 Register the hooks
 
 Append to `~/.kimi-code/config.toml`:
 
@@ -142,7 +153,7 @@ timeout = 60
 
 Adjust the absolute path to match your home directory.
 
-### 6.3 Verify hooks
+### 7.3 Verify hooks
 
 After a fresh Kimi Code session reaches ~15 user messages, check:
 
