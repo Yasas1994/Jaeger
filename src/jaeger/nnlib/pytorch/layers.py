@@ -1,3 +1,4 @@
+import math
 from typing import Callable, Optional, Tuple
 
 import torch
@@ -339,3 +340,118 @@ class AxialAttention(nn.Module):
         out = self.norm(x_2d + attn_out).reshape(b, f, seq_len, d)
         out_mask = mask
         return out, out_mask
+
+
+class MaskedGlobalAvgPooling(nn.Module):
+    """Global average pooling over the sequence axis, respecting masks."""
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # x: (B, F, L, D)
+        if mask is not None:
+            mask_f = mask.unsqueeze(-1).to(x.dtype)
+            masked_x = x * mask_f
+            count = mask_f.sum(dim=2, keepdim=True).clamp(min=1.0)
+            pooled = masked_x.sum(dim=2, keepdim=True) / count
+            return pooled.mean(dim=(1, 2))
+        return x.mean(dim=(1, 2))
+
+
+class SinusoidalPositionEmbedding(nn.Module):
+    def __init__(self, max_wavelength: int = 10000):
+        super().__init__()
+        self.max_wavelength = max_wavelength
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, F, L, D)
+        b, f, length, d = x.shape
+        position = torch.arange(length, device=x.device).unsqueeze(1).float()
+        div_term = torch.exp(
+            torch.arange(0, d, 2, device=x.device).float()
+            * (-math.log(self.max_wavelength) / d)
+        )
+        pe = torch.zeros(length, d, device=x.device)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        return x + pe.view(1, 1, length, d)
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, layer: nn.Module):
+        super().__init__()
+        self.layer = layer
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
+        if hasattr(self.layer, "forward") and "mask" in self.layer.forward.__code__.co_varnames:
+            out = self.layer(x, mask)
+            if isinstance(out, tuple):
+                out, out_mask = out
+                return out + x, out_mask
+            return out + x, mask
+        out = self.layer(x)
+        return out + x, mask
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int, num_layers: int = 1, dropout: float = 0.0):
+        super().__init__()
+        layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=embed_dim * 4,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
+        b, f, length, d = x.shape
+        x_2d = x.reshape(b * f, length, d)
+        key_mask = None
+        if mask is not None:
+            key_mask = ~mask.reshape(b * f, length)
+        out = self.encoder(x_2d, src_key_padding_mask=key_mask)
+        return out.reshape(b, f, length, d), mask
+
+
+class CrossFrameAttention(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
+        b, f, length, d = x.shape
+        # Treat frames as sequence: (B*L, F, D)
+        x_t = x.permute(0, 2, 1, 3).reshape(b * length, f, d)
+        key_mask = None
+        if mask is not None:
+            key_mask = ~mask.permute(0, 2, 1).reshape(b * length, f)
+        out, _ = self.attn(x_t, x_t, x_t, key_padding_mask=key_mask, need_weights=False)
+        out = self.norm(x_t + out).reshape(b, length, f, d).permute(0, 2, 1, 3)
+        return out, mask
+
+
+class Embedding(nn.Module):
+    """Minimal embedding stub for compatibility until Task 6 expands it."""
+
+    def __init__(
+        self,
+        input_type: str,
+        vocab_size: int,
+        embedding_size: int,
+        use_embedding_layer: bool = True,
+    ):
+        super().__init__()
+        self.input_type = input_type
+        self.vocab_size = vocab_size
+        self.embedding_size = embedding_size
+        self.use_embedding_layer = use_embedding_layer
+        if use_embedding_layer:
+            self.embed = nn.Embedding(vocab_size, embedding_size)
+        else:
+            self.project = nn.LazyLinear(embedding_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_embedding_layer:
+            return self.embed(x)
+        return self.project(x)
