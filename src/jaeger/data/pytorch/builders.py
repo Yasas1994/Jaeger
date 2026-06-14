@@ -49,7 +49,7 @@ def build_datasets(
     )
     data_cfg = train_cfg.get(data_key, {})
 
-    codon_table = {c: i for i, c in enumerate(CODON_ID)}
+    codon_table = {c: i + 1 for i, c in enumerate(CODON_ID)}
 
     datasets: Dict[str, Dataset] = {}
     for split in ["train", "validation"]:
@@ -86,7 +86,7 @@ def build_datasets(
                 else ConcatDataset(split_datasets)
             )
         else:
-            raise ValueError(f"Unsupported data_format in Task 11: {data_format}")
+            raise ValueError(f"Unsupported data_format: {data_format}")
 
     return {
         "train": DataLoader(

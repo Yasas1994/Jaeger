@@ -71,7 +71,8 @@ class NumpyRawDataset(Dataset):
     ):
         data = np.load(path, allow_pickle=False)
         self.seqs = data[seq_key]
-        self.labels = torch.from_numpy(data[label_key])
+        raw_labels = torch.from_numpy(data[label_key])
+        self.labels = self._normalize_labels(raw_labels, num_classes)
         self.crop_size = crop_size
         self.num_classes = num_classes
         self.codon_table = codon_table
@@ -80,11 +81,21 @@ class NumpyRawDataset(Dataset):
         self.mutation_rate = mutation_rate
         self.shuffle_frames = shuffle_frames
 
+    @staticmethod
+    def _normalize_labels(labels: torch.Tensor, num_classes: int) -> torch.Tensor:
+        """Convert class-index labels to one-hot; leave one-hot labels unchanged."""
+        if labels.dim() == 1 or (labels.dim() == 2 and labels.shape[1] == 1):
+            indices = labels.view(-1).long()
+            return torch.nn.functional.one_hot(indices, num_classes=num_classes).float()
+        return labels.float()
+
     def __len__(self) -> int:
         return len(self.labels)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         seq = self.seqs[idx]
+        if self.shuffle:
+            seq = seq[np.random.permutation(len(seq))]
         if self.mutate:
             seq = apply_mutation(seq, self.mutation_rate)
         x = translate_to_codons(seq, self.codon_table)
@@ -98,7 +109,4 @@ class NumpyRawDataset(Dataset):
         mask = x != 0
         if self.shuffle_frames:
             x = shuffle_frames_fn(x)
-        y = torch.nn.functional.one_hot(
-            self.labels[idx].long(), num_classes=self.num_classes
-        ).float()
-        return x, y, mask
+        return x, self.labels[idx], mask

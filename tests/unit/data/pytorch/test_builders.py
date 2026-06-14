@@ -17,6 +17,12 @@ def _make_npz(path, n_samples, length=50, channels=None):
     np.savez(path, translated=data, label=labels)
 
 
+def _make_raw_npz(path, n_samples, seq_length=500):
+    seqs = np.random.randint(0, 4, size=(n_samples, seq_length)).astype(np.int8)
+    labels = np.eye(3, dtype=np.float32)[np.random.randint(0, 3, size=n_samples)]
+    np.savez(path, sequences=seqs, labels=labels)
+
+
 def _build_config(train_paths, val_paths, data_format="numpy_full", batch_size=4):
     return {
         "model": {
@@ -51,6 +57,33 @@ def test_build_datasets_numpy_full(tmp_path):
     batch_x, batch_y, batch_mask = next(iter(loaders["validation"]))
     assert batch_x.shape == (4, 6, 50)
     assert batch_y.shape == (4, 3)
+    assert batch_mask.shape == (4, 6, 50)
+
+
+def test_build_datasets_numpy_raw(tmp_path):
+    train_path = tmp_path / "train_raw.npz"
+    val_path = tmp_path / "val_raw.npz"
+    _make_raw_npz(train_path, n_samples=8, seq_length=500)
+    _make_raw_npz(val_path, n_samples=4, seq_length=500)
+
+    config = _build_config(
+        [train_path], [val_path], data_format="numpy_raw", batch_size=4
+    )
+    config["model"]["string_processor"]["crop_size"] = 50
+    loaders = build_datasets(config, branch="classifier")
+
+    assert set(loaders.keys()) == {"train", "validation"}
+
+    batch_x, batch_y, batch_mask = next(iter(loaders["train"]))
+    assert batch_x.shape == (4, 6, 50)
+    assert batch_y.shape == (4, 3)
+    assert torch.allclose(batch_y.sum(dim=1), torch.ones(4))
+    assert batch_mask.shape == (4, 6, 50)
+
+    batch_x, batch_y, batch_mask = next(iter(loaders["validation"]))
+    assert batch_x.shape == (4, 6, 50)
+    assert batch_y.shape == (4, 3)
+    assert torch.allclose(batch_y.sum(dim=1), torch.ones(4))
     assert batch_mask.shape == (4, 6, 50)
 
 

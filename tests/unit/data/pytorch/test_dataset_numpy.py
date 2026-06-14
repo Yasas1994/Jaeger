@@ -46,7 +46,7 @@ def test_numpy_raw_dataset(tmp_path):
     path = tmp_path / "raw.npz"
     np.savez(path, sequences=seqs, labels=labels)
 
-    codon_table = {c: i for i, c in enumerate(CODON_ID)}
+    codon_table = {c: i + 1 for i, c in enumerate(CODON_ID)}
     ds = NumpyRawDataset(
         path,
         seq_key="sequences",
@@ -59,5 +59,29 @@ def test_numpy_raw_dataset(tmp_path):
     assert x.shape == (6, 50)
     assert mask.shape == (6, 50)
     assert y.shape == (3,)
+    assert mask.dtype == torch.bool
+    assert y.dtype == torch.float32
+
+
+def test_numpy_raw_dataset_one_hot_labels(tmp_path):
+    seqs = np.random.randint(0, 4, size=(10, 500)).astype(np.int8)
+    labels = np.eye(3, dtype=np.float32)[np.random.randint(0, 3, size=10)]
+    path = tmp_path / "raw_onehot.npz"
+    np.savez(path, sequences=seqs, labels=labels)
+
+    codon_table = {c: i + 1 for i, c in enumerate(CODON_ID)}
+    ds = NumpyRawDataset(
+        path,
+        seq_key="sequences",
+        label_key="labels",
+        crop_size=50,
+        num_classes=3,
+        codon_table=codon_table,
+    )
+    x, y, mask = ds[0]
+    assert x.shape == (6, 50)
+    assert mask.shape == (6, 50)
+    assert y.shape == (3,)
+    assert torch.allclose(y, torch.tensor(labels[0]))
     assert mask.dtype == torch.bool
     assert y.dtype == torch.float32

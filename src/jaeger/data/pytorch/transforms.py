@@ -23,10 +23,10 @@ def translate_to_codons(seq: np.ndarray, codon_table: Dict[str, int]) -> torch.T
     frames = []
     for offset in range(3):
         codons = [seq_str[i : i + 3] for i in range(offset, len(seq_str) - 2, 3)]
-        indices = [codon_table.get(c, 0) for c in codons]
+        indices = [codon_table.get(c, 1) for c in codons]
         rev = _reverse_complement(seq_str)
         rev_codons = [rev[i : i + 3] for i in range(offset, len(rev) - 2, 3)]
-        rev_indices = [codon_table.get(c, 0) for c in rev_codons]
+        rev_indices = [codon_table.get(c, 1) for c in rev_codons]
         frames.append(torch.tensor(indices, dtype=torch.long))
         frames.append(torch.tensor(rev_indices, dtype=torch.long))
     return torch.stack(frames)
