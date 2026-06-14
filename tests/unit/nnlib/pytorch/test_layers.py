@@ -4,7 +4,6 @@ from jaeger.nnlib.pytorch.layers import (
     CrossFrameAttention,
     GeLU,
     GatedFrameGlobalMaxPooling,
-    InputEmbedding,
     MaskedBatchNorm,
     MaskedConv1D,
     MaskedGlobalAvgPooling,
@@ -251,9 +250,9 @@ def test_cross_frame_attention_shape():
 
 
 def test_representation_model_forward():
-    from jaeger.nnlib.pytorch.models import RepresentationModel
+    from jaeger.nnlib.pytorch.models import Embedding, RepresentationModel
 
-    embedding = InputEmbedding(
+    embedding = Embedding(
         input_type="translated",
         vocab_size=65,
         embedding_size=32,

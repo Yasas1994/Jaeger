@@ -431,27 +431,3 @@ class CrossFrameAttention(nn.Module):
         return out, mask
 
 
-class InputEmbedding(nn.Module):
-    """Minimal embedding stub for compatibility until Task 6 expands it."""
-
-    def __init__(
-        self,
-        input_type: str,
-        vocab_size: int,
-        embedding_size: int,
-        use_embedding_layer: bool = True,
-    ):
-        super().__init__()
-        self.input_type = input_type
-        self.vocab_size = vocab_size
-        self.embedding_size = embedding_size
-        self.use_embedding_layer = use_embedding_layer
-        if use_embedding_layer:
-            self.embed = nn.Embedding(vocab_size, embedding_size)
-        else:
-            self.project = nn.LazyLinear(embedding_size)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.use_embedding_layer:
-            return self.embed(x)
-        return self.project(x)

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -15,6 +15,107 @@ from jaeger.nnlib.pytorch.layers import (
     ResidualBlock,
     TransformerEncoder,
 )
+
+
+class Embedding(nn.Module):
+    """Translates DNA into 6-frame codon embeddings or nucleotide one-hot."""
+
+    def __init__(
+        self,
+        input_type: str,
+        vocab_size: Optional[int],
+        embedding_size: int,
+        use_embedding_layer: bool,
+        use_positional_embeddings: bool = False,
+        positional_embedding_length: Optional[int] = None,
+    ):
+        super().__init__()
+        self.input_type = input_type
+        self.use_embedding_layer = use_embedding_layer
+        self.use_positional_embeddings = use_positional_embeddings
+
+        if input_type == "translated":
+            if use_embedding_layer:
+                self.embed = nn.Embedding(vocab_size, embedding_size, padding_idx=0)
+                nn.init.orthogonal_(self.embed.weight)
+            else:
+                self.embed = nn.Linear(vocab_size, embedding_size, bias=False)
+                nn.init.orthogonal_(self.embed.weight)
+        elif input_type == "nucleotide":
+            self.embed = None
+        else:
+            raise ValueError(f"Invalid input_type: {input_type}")
+
+        if use_positional_embeddings:
+            from jaeger.nnlib.pytorch.layers import SinusoidalPositionEmbedding
+
+            self.positional = SinusoidalPositionEmbedding(positional_embedding_length)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x shape depends on input_type; caller must pass correct shape
+        if self.input_type == "translated":
+            if self.use_embedding_layer:
+                return self.embed(x)
+            else:
+                return self.embed(x)
+        return x
+
+
+class ClassificationHead(nn.Module):
+    """Dense head for class prediction."""
+
+    def __init__(self, input_dim: int, num_classes: int, hidden_units: List[int], dropout: float = 0.0):
+        super().__init__()
+        layers = []
+        prev = input_dim
+        for units in hidden_units:
+            layers.append(nn.Linear(prev, units))
+            layers.append(nn.LayerNorm(units))
+            layers.append(GeLU())
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            prev = units
+        layers.append(nn.Linear(prev, num_classes))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class ReliabilityHead(nn.Module):
+    """Dense head for confidence estimation."""
+
+    def __init__(self, input_dim: int, num_classes: int, hidden_units: List[int], dropout: float = 0.0):
+        super().__init__()
+        layers = []
+        prev = input_dim
+        for units in hidden_units:
+            layers.append(nn.Linear(prev, units))
+            layers.append(nn.LayerNorm(units))
+            layers.append(GeLU())
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            prev = units
+        layers.append(nn.Linear(prev, num_classes))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class ProjectionHead(nn.Module):
+    """Projection head for ArcFace self-supervised pretraining."""
+
+    def __init__(self, input_dim: int, projection_dim: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, projection_dim),
+            nn.LayerNorm(projection_dim),
+            GeLU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 
 class RepresentationModel(nn.Module):
@@ -79,3 +180,39 @@ class RepresentationModel(nn.Module):
         if nmd is not None:
             return pooled, nmd
         return pooled
+
+
+class JaegerModel(nn.Module):
+    """Combined model exposing all outputs for inference."""
+
+    def __init__(
+        self,
+        rep_model: nn.Module,
+        classification_head: nn.Module,
+        reliability_head: Optional[nn.Module] = None,
+    ):
+        super().__init__()
+        self.rep_model = rep_model
+        self.classification_head = classification_head
+        self.reliability_head = reliability_head
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        outputs = self.rep_model(x, mask)
+        if isinstance(outputs, tuple):
+            embedding = outputs[0]
+            nmd = outputs[1] if len(outputs) > 1 else None
+            gate = outputs[2] if len(outputs) > 2 else None
+        else:
+            embedding = outputs
+            nmd = None
+            gate = None
+
+        prediction = self.classification_head(embedding)
+        result: Dict[str, torch.Tensor] = {"prediction": prediction, "embedding": embedding}
+        if nmd is not None:
+            result["nmd"] = nmd
+        if gate is not None:
+            result["gate"] = gate
+        if self.reliability_head is not None and nmd is not None:
+            result["reliability"] = self.reliability_head(nmd)
+        return result
