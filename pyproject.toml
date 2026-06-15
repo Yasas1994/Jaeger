@@ -44,6 +44,7 @@ dependencies = [
     "requests >= 2.0",
     "rich >= 13.0",
     "scipy >= 1.10",
+    "torchinfo >=1.8.0",
     "pyfastx >= 2",
     "ruptures >= 1.1.9",
     "scikit-learn >= 1.6.0",
