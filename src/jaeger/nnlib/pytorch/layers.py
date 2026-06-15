@@ -1,5 +1,5 @@
 import math
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -505,3 +505,117 @@ class CrossFrameAttention(nn.Module):
         out, _ = self.attn(x_t, x_t, x_t, key_padding_mask=key_mask, need_weights=False)
         out = self.norm(x_t + out).reshape(b, length, f, d).permute(0, 2, 1, 3)
         return out, mask
+
+
+# ---------------------------------------------------------------------------
+# Shape helpers for native PyTorch layer pipelines
+# ---------------------------------------------------------------------------
+class Permute(nn.Module):
+    """Permute tensor dimensions."""
+
+    def __init__(self, dims: List[int]):
+        super().__init__()
+        self.dims = dims
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x.permute(*self.dims)
+
+
+class Flatten(nn.Module):
+    """Flatten contiguous dimensions, defaulting to all dims after batch."""
+
+    def __init__(self, start_dim: int = 1, end_dim: int = -1):
+        super().__init__()
+        self.start_dim = start_dim
+        self.end_dim = end_dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.flatten(x, start_dim=self.start_dim, end_dim=self.end_dim)
+
+
+class SqueezeLast(nn.Module):
+    """Squeeze the last dimension if it is size 1."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[-1] == 1:
+            return x.squeeze(-1)
+        return x
+
+
+# ---------------------------------------------------------------------------
+# Native PyTorch layer registry
+# ---------------------------------------------------------------------------
+def _build_native_layer(name: str, config: Dict[str, Any]) -> nn.Module:
+    """Build a native ``torch.nn`` module from a config dict.
+
+    The registry maps Keras-style layer names to PyTorch constructors.
+    All constructor arguments are passed through ``config``.
+    """
+    config = config or {}
+    name = name.lower()
+
+    registry: Dict[str, Callable[..., nn.Module]] = {
+        # Linear / dense
+        "linear": nn.Linear,
+        "dense": nn.Linear,
+        # Convolutions
+        "conv1d": nn.Conv1d,
+        "conv2d": nn.Conv2d,
+        # Normalization
+        "batchnorm1d": nn.BatchNorm1d,
+        "batchnorm2d": nn.BatchNorm2d,
+        "layernorm": nn.LayerNorm,
+        # Pooling
+        "adaptive_avg_pool1d": nn.AdaptiveAvgPool1d,
+        "adaptive_max_pool1d": nn.AdaptiveMaxPool1d,
+        "avg_pool1d": nn.AvgPool1d,
+        "max_pool1d": nn.MaxPool1d,
+        # Regularization
+        "dropout": nn.Dropout,
+        "dropout1d": nn.Dropout1d,
+        "dropout2d": nn.Dropout2d,
+        # Activations
+        "relu": nn.ReLU,
+        "gelu": nn.GELU,
+        "sigmoid": nn.Sigmoid,
+        "softmax": nn.Softmax,
+        "tanh": nn.Tanh,
+        # Shape helpers
+        "permute": Permute,
+        "flatten": Flatten,
+        "squeeze_last": SqueezeLast,
+    }
+
+    if name not in registry:
+        raise ValueError(
+            f"Unknown native layer: {name!r}. "
+            f"Supported layers: {sorted(registry.keys())}"
+        )
+
+    return registry[name](**config)
+
+
+class NativeSequential(nn.Module):
+    """Sequential container for native PyTorch layers.
+
+    Accepts an optional mask argument for compatibility with Jaeger's masked
+    layer pipeline; the mask is returned unchanged. Shape-helper layers
+    (``permute``, ``flatten``, ``squeeze_last``) can be interleaved with
+    native ``torch.nn`` modules.
+    """
+
+    def __init__(self, layers: List[Dict[str, Any]]):
+        super().__init__()
+        modules: List[nn.Module] = []
+        for layer_cfg in layers:
+            name = layer_cfg.get("name")
+            config = layer_cfg.get("config", {})
+            modules.append(_build_native_layer(name, config))
+        self.layers = nn.ModuleList(modules)
+
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        for layer in self.layers:
+            x = layer(x)
+        return x, mask

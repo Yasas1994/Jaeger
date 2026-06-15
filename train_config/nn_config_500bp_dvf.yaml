@@ -1,10 +1,16 @@
+# 500 bp DeepVirFinder-style siamese Conv1d baseline for Jaeger.
+# Trains on integer-encoded nucleotide NPZ files (2 strands) and one-hots
+# A,T,G,C to 4 channels inside the model. N and padding map to all-zero.
+#
+# Update model.base_dir and training.data_dir to point to your own dataset.
+
 model:
-  name: jaeger_500bp_axial_npz
-  experiment: 500bp_axial_npz
+  name: jaeger_500bp_dvf_baseline
+  experiment: 500bp_dvf_baseline
   seed: 42
   classifier_out_dim: 3
   reliability_out_dim: 0
-  base_dir: /home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format
+  base_dir: /path/to/base_dir
   class_label_map:
     - class: chromosome
       label: 0
@@ -14,27 +20,28 @@ model:
       label: 2
   activation: gelu
   mode: training
+  model_type: siamese
+
   embedding:
-    use_embedding_layer: true
-    input_type: translated
+    use_embedding_layer: false
+    input_type: nucleotide
     strands: 2
-    frames: 6
+    frames: null
     length: null
     input_shape:
-      - 6
+      - 2
       - null
-    embedding_size: 64
-    embedding_regularizer: l2
-    embedding_regularizer_w: 1.0e-05
+    vocab_size: 6              # integer tokens 0..5 (pad, A, T, G, C, N)
+    onehot_dim: 4              # A,T,G,C only; N and padding -> all-zero
+    embedding_size: 4          # no projection since onehot_dim == embedding_size
+
   string_processor:
     data_format: numpy_full
-    seq_onehot: false
-    codon: CODON
-    codon_id: CODON_ID
+    input_key: nucleotide
     crop_size: 500
     buffer_size: 5000
-    shuffle: true
-    reshuffle_each_iteration: true
+    shuffle: false
+    reshuffle_each_iteration: false
     mutate: false
     mutation_rate: 0.1
     shuffle_frames: false
@@ -47,66 +54,43 @@ model:
       - 0
       - 1
       - 2
+
   representation_learner:
-    hidden_layers:
-      - name: masked_conv1d
+    branch_layers:
+      - name: permute
         config:
-          filters: 32
+          dims: [0, 2, 1]            # (B, L, 4) -> (B, 4, L)
+      - name: conv1d
+        config:
+          in_channels: 4
+          out_channels: 32
           kernel_size: 7
-          strides: 1
-          dilation_rate: 1
-          use_bias: true
-          activation: null
-          kernel_regularizer: l2
-          kernel_regularizer_w: 1.0e-05
-      - name: masked_batchnorm
+      - name: relu
+      - name: adaptive_max_pool1d
         config:
-          return_nmd: false
-      - name: activation
-        config:
-          activation: gelu
-      - name: residual_block
-        config:
-          use_1x1conv: false
-          block_size: 2
-          filters: 32
-          kernel_size: 3
-          use_bias: true
-          kernel_regularizer: l2
-          kernel_regularizer_w: 1.0e-05
-      - name: masked_batchnorm
-        config:
-          return_nmd: false
-      - name: activation
-        config:
-          activation: gelu
-      - name: axial_attention
-        config:
-          embed_dim: 32
-          num_heads: 4
-          feed_forward_dim: 128
-          dropout_rate: 0.1
-          num_blocks: 1
-      - name: masked_batchnorm
-        config:
-          return_nmd: false
-    pooling: average
-  classifier:
-    input_shape: 32
-    hidden_layers:
+          output_size: 1
+      - name: squeeze_last
       - name: dropout
         config:
-          rate: 0.3
-      - name: dense
+          p: 0.1
+      - name: linear
         config:
-          units: 3
-          activation: null
-          dtype: float32
-          use_bias: true
-          kernel_regularizer: l2
-          kernel_regularizer_w: 0.01
+          in_features: 32
+          out_features: 64
+      - name: relu
+      - name: dropout
+        config:
+          p: 0.1
+
+  classifier:
+    hidden_layers:
+      - name: linear
+        config:
+          in_features: 64
+          out_features: 3
+
 training:
-  data_dir: /home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format
+  data_dir: /path/to/data_dir
   experiment_root: experiments/experiment_{{ model.experiment }}_{{ model.seed }}
   classifier_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier"
   reliability_dir: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability"
@@ -151,7 +135,7 @@ training:
           restore_best_weights: true
       - name: ModelCheckpoint
         params:
-          filepath: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5"
+          filepath: '{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier/epoch:{epoch:02d}-loss:{val_loss:.2f}.weights.h5'
           monitor: val_loss
           mode: min
           save_weights_only: true
@@ -166,11 +150,11 @@ training:
       - name: TerminateOnNaN
       - name: CSVLogger
         params:
-          filename: "{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier/training.log"
-          separator: ","
+          filename: '{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier/training.log'
+          separator: ','
           append: true
   model_saving:
-    path: "{{ model.base_dir }}/{{ training.experiment_root }}/model"
+    path: '{{ model.base_dir }}/{{ training.experiment_root }}/model'
     save_weights: true
     save_exec_graph: true
   fragment_classifier_data:
@@ -180,7 +164,7 @@ training:
           - virus
           - plasmid
         path:
-          - "{{ training.data_dir }}/train_shuffled_full.npz"
+          - "{{ training.data_dir }}/train_nucleotide.npz"
         label:
           - 0
           - 1
@@ -191,7 +175,7 @@ training:
           - virus
           - plasmid
         path:
-          - "{{ training.data_dir }}/val_shuffled_full.npz"
+          - "{{ training.data_dir }}/val_nucleotide.npz"
         label:
           - 0
           - 1

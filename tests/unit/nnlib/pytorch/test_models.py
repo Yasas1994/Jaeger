@@ -1,3 +1,4 @@
+import pytest
 import torch
 from jaeger.nnlib.pytorch.models import (
     ClassificationHead,
@@ -6,6 +7,7 @@ from jaeger.nnlib.pytorch.models import (
     ProjectionHead,
     ReliabilityHead,
     RepresentationModel,
+    SiameseModel,
 )
 
 
@@ -116,3 +118,72 @@ def test_jaeger_model_forward():
     assert out["embedding"].shape == (2, 16)
     assert out["nmd"].shape == (2, 16)
     assert out["reliability"].shape == (2, 1)
+
+
+def test_embedding_nucleotide_onehot_dim_4():
+    """Padding and N must map to an all-zero one-hot vector."""
+    emb = Embedding(
+        input_type="nucleotide",
+        vocab_size=6,
+        embedding_size=4,
+        use_embedding_layer=False,
+        onehot_dim=4,
+    )
+    # tokens: pad=0, A=1, T=2, G=3, C=4, N=5
+    x = torch.arange(6).view(6, 1)
+    out = emb(x)
+    assert out.shape == (6, 1, 4)
+    assert torch.allclose(out[0], torch.zeros(4))   # padding
+    assert torch.allclose(out[5], torch.zeros(4))   # N
+    assert torch.allclose(out[1], torch.tensor([1.0, 0.0, 0.0, 0.0]))
+    assert torch.allclose(out[4], torch.tensor([0.0, 0.0, 0.0, 1.0]))
+
+
+def test_embedding_nucleotide_default_onehot_dim_excludes_padding():
+    """Without onehot_dim, default to vocab_size-1 and keep padding zero."""
+    emb = Embedding(
+        input_type="nucleotide",
+        vocab_size=6,
+        embedding_size=5,
+        use_embedding_layer=False,
+    )
+    x = torch.arange(6).view(6, 1)
+    out = emb(x)
+    assert out.shape == (6, 1, 5)
+    assert torch.allclose(out[0], torch.zeros(5))
+
+
+def test_siamese_model_forward_shape():
+    """SiameseModel averages two branch outputs."""
+    embedding = Embedding(
+        input_type="nucleotide",
+        vocab_size=6,
+        embedding_size=4,
+        use_embedding_layer=False,
+        onehot_dim=4,
+    )
+    branch_layers = [
+        {"name": "permute", "config": {"dims": [0, 2, 1]}},
+        {"name": "conv1d", "config": {"in_channels": 4, "out_channels": 8, "kernel_size": 3}},
+        {"name": "relu"},
+        {"name": "adaptive_max_pool1d", "config": {"output_size": 1}},
+        {"name": "squeeze_last"},
+        {"name": "linear", "config": {"in_features": 8, "out_features": 16}},
+    ]
+    model = SiameseModel(embedding=embedding, branch_layers=branch_layers)
+    x = torch.randint(0, 6, (2, 2, 20))
+    out = model(x)
+    assert out.shape == (2, 16)
+
+
+def test_siamese_model_branch_must_end_with_linear():
+    """SiameseModel needs a final linear layer to infer output_dim."""
+    embedding = Embedding(
+        input_type="nucleotide",
+        vocab_size=6,
+        embedding_size=4,
+        use_embedding_layer=False,
+        onehot_dim=4,
+    )
+    with pytest.raises(ValueError, match="linear layer"):
+        SiameseModel(embedding=embedding, branch_layers=[{"name": "relu"}])

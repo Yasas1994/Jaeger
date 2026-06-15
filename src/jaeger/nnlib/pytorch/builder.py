@@ -9,6 +9,7 @@ from jaeger.nnlib.pytorch.models import (
     JaegerModel,
     ReliabilityHead,
     RepresentationModel,
+    SiameseModel,
 )
 
 
@@ -99,14 +100,26 @@ class ModelBuilder:
             vocab_size=_resolve_vocab_size(embedding_cfg, string_cfg),
             embedding_size=embedding_cfg.get("embedding_size", 4),
             use_embedding_layer=embedding_cfg.get("use_embedding_layer", False),
+            onehot_dim=embedding_cfg.get("onehot_dim"),
         )
 
         rep_cfg = self.model_cfg.get("representation_learner", {})
-        rep_model = RepresentationModel(
-            embedding=embedding,
-            hidden_layers=rep_cfg.get("hidden_layers", []),
-            pooling=rep_cfg.get("pooling", "average"),
+        is_siamese = (
+            self.model_cfg.get("model_type") == "siamese"
+            or "branch_layers" in rep_cfg
         )
+        if is_siamese:
+            rep_model = SiameseModel(
+                embedding=embedding,
+                branch_layers=rep_cfg.get("branch_layers", []),
+                pooling=rep_cfg.get("pooling"),
+            )
+        else:
+            rep_model = RepresentationModel(
+                embedding=embedding,
+                hidden_layers=rep_cfg.get("hidden_layers", []),
+                pooling=rep_cfg.get("pooling", "average"),
+            )
         models["rep_model"] = rep_model
 
         cls_cfg = self.model_cfg["classifier"]

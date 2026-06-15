@@ -98,3 +98,55 @@ def test_builder_mask_propagation():
     assert out_all.shape == (2, 3)
     assert not torch.allclose(out_all[0], out_masked[0], atol=1e-6)
     assert torch.allclose(out_all[1], out_masked[1])
+
+
+def _dvf_config():
+    return {
+        "model": {
+            "name": "dvf_test",
+            "classifier_out_dim": 3,
+            "reliability_out_dim": 0,
+            "model_type": "siamese",
+            "embedding": {
+                "input_type": "nucleotide",
+                "use_embedding_layer": False,
+                "vocab_size": 6,
+                "onehot_dim": 4,
+                "embedding_size": 4,
+            },
+            "string_processor": {"input_key": "nucleotide"},
+            "representation_learner": {
+                "branch_layers": [
+                    {"name": "permute", "config": {"dims": [0, 2, 1]}},
+                    {
+                        "name": "conv1d",
+                        "config": {
+                            "in_channels": 4,
+                            "out_channels": 8,
+                            "kernel_size": 3,
+                        },
+                    },
+                    {"name": "relu"},
+                    {"name": "adaptive_max_pool1d", "config": {"output_size": 1}},
+                    {"name": "squeeze_last"},
+                    {"name": "linear", "config": {"in_features": 8, "out_features": 16}},
+                ]
+            },
+            "classifier": {
+                "hidden_layers": [
+                    {"name": "linear", "config": {"in_features": 16, "out_features": 3}}
+                ]
+            },
+        },
+        "training": {"batch_size": 2, "optimizer": "adam", "optimizer_params": {}},
+    }
+
+
+def test_builder_siamese_dvf():
+    builder = ModelBuilder(_dvf_config())
+    models = builder.build_fragment_classifier()
+    x = torch.randint(0, 6, (2, 2, 20))
+    mask = torch.ones(2, 2, 20, dtype=torch.bool)
+    out = models["jaeger_model"](x, mask)
+    assert out["prediction"].shape == (2, 3)
+    assert out["embedding"].shape == (2, 16)

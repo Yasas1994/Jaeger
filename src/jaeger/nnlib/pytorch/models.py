@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -29,6 +29,7 @@ class Embedding(nn.Module):
         use_embedding_layer: bool,
         use_positional_embeddings: bool = False,
         positional_embedding_length: Optional[int] = None,
+        onehot_dim: Optional[int] = None,
     ):
         super().__init__()
         self.input_type = input_type
@@ -36,6 +37,7 @@ class Embedding(nn.Module):
         self.embedding_size = embedding_size
         self.use_embedding_layer = use_embedding_layer
         self.use_positional_embeddings = use_positional_embeddings
+        self.onehot_dim = onehot_dim
 
         if input_type == "translated":
             if use_embedding_layer:
@@ -47,12 +49,28 @@ class Embedding(nn.Module):
         elif input_type == "nucleotide":
             # Nucleotide input can be provided as a float one-hot tensor or as
             # integer indices. Integer indices are one-hot encoded and then
-            # optionally projected to ``embedding_size``.
+            # optionally projected to ``embedding_size``. Padding (token 0) is
+            # always mapped to an all-zero vector.
+            effective_onehot_dim = (
+                onehot_dim if onehot_dim is not None else (vocab_size - 1)
+            )
+            self.effective_onehot_dim = effective_onehot_dim
             if use_embedding_layer:
                 self.embed = None
+            elif effective_onehot_dim == embedding_size:
+                self.embed = None
             else:
-                self.embed = nn.Linear(vocab_size, embedding_size, bias=False)
+                self.embed = nn.Linear(effective_onehot_dim, embedding_size, bias=False)
                 nn.init.orthogonal_(self.embed.weight)
+
+            # Mapping matrix from integer tokens to one-hot vectors. Row 0
+            # (padding) is all-zero; token i maps to channel i-1 when it fits.
+            mapping = torch.zeros(vocab_size, effective_onehot_dim)
+            for token in range(1, vocab_size):
+                channel = token - 1
+                if channel < effective_onehot_dim:
+                    mapping[token, channel] = 1.0
+            self.register_buffer("_nucleotide_onehot_mapping", mapping)
         else:
             raise ValueError(f"Invalid input_type: {input_type}")
 
@@ -74,9 +92,9 @@ class Embedding(nn.Module):
                 x = self.embed(x)
         elif self.input_type == "nucleotide":
             if not torch.is_floating_point(x):
-                x = F.one_hot(x, num_classes=self.vocab_size).to(
-                    torch.float32
-                )
+                x = F.embedding(
+                    x, self._nucleotide_onehot_mapping.to(x.device)
+                ).to(torch.float32)
             if self.embed is not None:
                 x = self.embed(x)
         if self.use_positional_embeddings:
@@ -318,6 +336,58 @@ class RepresentationModel(nn.Module):
         if nmd is not None:
             return pooled, nmd
         return pooled
+
+
+class SiameseModel(nn.Module):
+    """Siamese representation model with two identical native-layer branches.
+
+    The input is expected to be a Jaeger nucleotide tensor of shape
+    ``(B, 2, L, D)`` (two strands after the embedding layer). Each strand is
+    processed by the same branch network and the resulting feature vectors are
+    averaged.
+    """
+
+    def __init__(
+        self,
+        embedding: nn.Module,
+        branch_layers: List[Dict[str, Any]],
+        pooling: Optional[str] = None,
+    ):
+        super().__init__()
+        from jaeger.nnlib.pytorch.layers import NativeSequential
+
+        self.embedding = embedding
+        self.branch = NativeSequential(branch_layers)
+        self.output_dim = self._infer_branch_output_dim()
+        self.nmd_dim = self.output_dim
+
+    def _infer_branch_output_dim(self) -> int:
+        """Return the output dimension of the last Linear layer, if known."""
+        for layer in reversed(self.branch.layers):
+            if isinstance(layer, nn.Linear):
+                return int(layer.out_features)
+        raise ValueError(
+            "SiameseModel branch_layers must end with a linear layer "
+            "so the output dimension can be inferred."
+        )
+
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        x = self.embedding(x)  # (B, 2, L, D)
+        x0 = x[:, 0]  # (B, L, D)
+        x1 = x[:, 1]  # (B, L, D)
+
+        # Optional: zero padded positions before the branch.
+        if mask is not None:
+            mask0 = mask[:, 0].unsqueeze(-1).to(x.dtype)
+            mask1 = mask[:, 1].unsqueeze(-1).to(x.dtype)
+            x0 = x0 * mask0
+            x1 = x1 * mask1
+
+        f0, _ = self.branch(x0)
+        f1, _ = self.branch(x1)
+        return (f0 + f1) * 0.5
 
 
 class JaegerModel(nn.Module):
