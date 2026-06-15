@@ -166,13 +166,8 @@ def test_train_fragment_core_only_classification_head(tmp_path):
     )
 
 
-def test_train_fragment_core_logs_model_summary(tmp_path, monkeypatch, caplog):
+def test_train_fragment_core_logs_model_summary(tmp_path, caplog, propagate_jaeger_logger):
     """``train_fragment_core`` should log a Keras-style model summary."""
-    from jaeger.commands import train as train_module
-
-    # The jaeger logger disables propagation; re-enable it so caplog can capture
-    # the summary emitted by ``_print_model_summary``.
-    monkeypatch.setattr(train_module.logger, "propagate", True)
 
     train_path = tmp_path / "train.npz"
     val_path = tmp_path / "val.npz"

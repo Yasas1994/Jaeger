@@ -57,7 +57,9 @@ def test_model_summary_returns_non_empty_string(dummy_input):
     assert len(text) > 0
 
 
-def test_model_summary_warns_when_torchinfo_missing(monkeypatch, caplog, dummy_input):
+def test_model_summary_warns_when_torchinfo_missing(
+    monkeypatch, caplog, dummy_input, propagate_jaeger_logger
+):
     import jaeger.nnlib.pytorch.summary as summary_mod
 
     monkeypatch.setattr(summary_mod, "torchinfo", None)
@@ -68,7 +70,9 @@ def test_model_summary_warns_when_torchinfo_missing(monkeypatch, caplog, dummy_i
     assert "torchinfo is not installed" in caplog.text
 
 
-def test_model_summary_warns_when_torchinfo_raises(monkeypatch, caplog, dummy_input):
+def test_model_summary_warns_when_torchinfo_raises(
+    monkeypatch, caplog, dummy_input, propagate_jaeger_logger
+):
     import jaeger.nnlib.pytorch.summary as summary_mod
 
     def _broken_summary(*args, **kwargs):

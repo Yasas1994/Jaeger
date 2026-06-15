@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+
+@pytest.fixture
+def propagate_jaeger_logger(monkeypatch):
+    """Re-enable propagation on the ``jaeger`` logger so caplog can capture."""
+    logger = logging.getLogger("jaeger")
+    monkeypatch.setattr(logger, "propagate", True)
 
 
 @pytest.fixture
