@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import click
 import numpy as np
+import pytest
 import yaml
 
 from jaeger.commands.train import train_fragment_core
@@ -218,3 +220,121 @@ def test_train_fragment_core_respects_config_steps(tmp_path, monkeypatch):
 
     assert captured["train_steps"] == 2
     assert captured["validation_steps"] == 1
+
+
+def test_train_fragment_core_refuses_overwrite_without_force_or_resume(tmp_path):
+    """``train_fragment_core`` should stop if checkpoints exist and neither
+    ``--force`` nor ``--from_last_checkpoint`` is given."""
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_raw_npz(train_path, n_samples=8, seq_length=seq_length)
+    _make_raw_npz(val_path, n_samples=4, seq_length=seq_length)
+
+    config_path = tmp_path / "config.yaml"
+    config = _build_config(tmp_path, train_path, val_path)
+    config_path.write_text(yaml.safe_dump(config))
+
+    classifier_dir = tmp_path / "checkpoints" / "classifier"
+    classifier_dir.mkdir(parents=True, exist_ok=True)
+    (classifier_dir / "checkpoint_epoch_1.pt").write_bytes(b"")
+
+    with pytest.raises(click.ClickException):
+        train_fragment_core(
+            config=str(config_path),
+            mixed_precision=False,
+            from_last_checkpoint=False,
+            force=False,
+            only_classification_head=False,
+            only_reliability_head=False,
+            only_heads=False,
+            only_save=False,
+            save_model=False,
+            self_supervised_pretraining=False,
+            xla=False,
+            meta=None,
+        )
+
+
+def test_train_fragment_core_force_overwrites_existing_checkpoints(tmp_path):
+    """``--force`` should remove existing checkpoints and train."""
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_raw_npz(train_path, n_samples=8, seq_length=seq_length)
+    _make_raw_npz(val_path, n_samples=4, seq_length=seq_length)
+
+    config_path = tmp_path / "config.yaml"
+    config = _build_config(tmp_path, train_path, val_path)
+    config_path.write_text(yaml.safe_dump(config))
+
+    classifier_dir = tmp_path / "checkpoints" / "classifier"
+    classifier_dir.mkdir(parents=True, exist_ok=True)
+    (classifier_dir / "checkpoint_epoch_1.pt").write_bytes(b"")
+
+    train_fragment_core(
+        config=str(config_path),
+        mixed_precision=False,
+        from_last_checkpoint=False,
+        force=True,
+        only_classification_head=False,
+        only_reliability_head=False,
+        only_heads=False,
+        only_save=False,
+        save_model=False,
+        self_supervised_pretraining=False,
+        xla=False,
+        meta=None,
+    )
+
+    # Directory was removed and a fresh checkpoint was written.
+    assert len(list(classifier_dir.glob("checkpoint_epoch_*.pt"))) == 1
+
+
+def test_train_fragment_core_resume_from_last_checkpoint(tmp_path):
+    """``--from_last_checkpoint`` should load the latest checkpoint and train."""
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_raw_npz(train_path, n_samples=8, seq_length=seq_length)
+    _make_raw_npz(val_path, n_samples=4, seq_length=seq_length)
+
+    config_path = tmp_path / "config.yaml"
+    config = _build_config(tmp_path, train_path, val_path)
+    config_path.write_text(yaml.safe_dump(config))
+
+    # First training run creates a checkpoint.
+    train_fragment_core(
+        config=str(config_path),
+        mixed_precision=False,
+        from_last_checkpoint=False,
+        force=False,
+        only_classification_head=False,
+        only_reliability_head=False,
+        only_heads=False,
+        only_save=False,
+        save_model=False,
+        self_supervised_pretraining=False,
+        xla=False,
+        meta=None,
+    )
+
+    checkpoints = list((tmp_path / "checkpoints" / "classifier").glob("*.pt"))
+    assert len(checkpoints) == 1
+
+    # Second run with from_last_checkpoint should not raise and should load
+    # the existing checkpoint before training.
+    train_fragment_core(
+        config=str(config_path),
+        mixed_precision=False,
+        from_last_checkpoint=True,
+        force=False,
+        only_classification_head=False,
+        only_reliability_head=False,
+        only_heads=False,
+        only_save=False,
+        save_model=False,
+        self_supervised_pretraining=False,
+        xla=False,
+        meta=None,
+    )
+
+    checkpoints = list((tmp_path / "checkpoints" / "classifier").glob("*.pt"))
+    assert len(checkpoints) >= 1

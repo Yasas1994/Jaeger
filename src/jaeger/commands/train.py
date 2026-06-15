@@ -199,6 +199,32 @@ def _find_latest_checkpoint(directory: Path) -> Optional[Path]:
     return checkpoints[-1] if checkpoints else None
 
 
+def _has_checkpoints(directory: Path) -> bool:
+    """Return True if *directory* exists and contains any ``.pt`` files."""
+    if not directory.exists():
+        return False
+    return any(directory.glob("*.pt"))
+
+
+def _guard_against_overwrite(
+    directory: Path,
+    force: bool,
+    from_last_checkpoint: bool,
+    branch_name: str,
+) -> None:
+    """Raise an error if existing checkpoints would be overwritten.
+
+    Existing checkpoints are allowed when resuming via ``from_last_checkpoint``
+    or when explicitly overwriting via ``force``.
+    """
+    if force or from_last_checkpoint or not _has_checkpoints(directory):
+        return
+    raise click.ClickException(
+        f"{branch_name} checkpoint directory already exists: {directory}. "
+        "Use --force to overwrite or --from_last_checkpoint to resume training."
+    )
+
+
 def _save_model_checkpoint(
     model: nn.Module,
     save_dir: Path,
@@ -402,6 +428,12 @@ def train_fragment_core(**kwargs):
             if kwargs.get("only_save", False):
                 logger.info("Skipping classifier training (--only_save)")
             else:
+                _guard_against_overwrite(
+                    classifier_dir,
+                    force=kwargs.get("force", False),
+                    from_last_checkpoint=kwargs.get("from_last_checkpoint", False),
+                    branch_name="Classifier",
+                )
                 trainer = Trainer(
                     model=model,
                     train_loader=classifier_loaders["train"],
@@ -438,6 +470,12 @@ def train_fragment_core(**kwargs):
                 reliability_loaders = None
 
             if reliability_loaders is not None and not kwargs.get("only_save", False):
+                _guard_against_overwrite(
+                    reliability_dir,
+                    force=kwargs.get("force", False),
+                    from_last_checkpoint=kwargs.get("from_last_checkpoint", False),
+                    branch_name="Reliability",
+                )
                 rel_pipeline = _ReliabilityPipeline(
                     rep_model, models["reliability_head"]
                 )
