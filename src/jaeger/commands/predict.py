@@ -1,75 +1,161 @@
-import traceback
+"""PyTorch-based ``jaeger predict`` command."""
+
+from __future__ import annotations
+
 import sys
-import psutil
 import time
-from importlib.resources import files
+import traceback
 from importlib.metadata import version
 from pathlib import Path
-import tensorflow as tf
 
-from jaeger.nnlib.inference import InferModel, TFLiteInferModel, ONNXEngine
-from jaeger.seqops.io import fragment_generator
-from jaeger.utils.gpu import get_device_name
-from jaeger.utils.termini import scan_for_terminal_repeats
-from jaeger.utils.fs import validate_fasta_entries
-from jaeger.utils.misc import json_to_dict, AvailableModels, get_model_id
+import numpy as np
+import torch
+
+from jaeger.inference.pytorch.runner import PyTorchInferenceRunner
+from jaeger.postprocess.collect import pred_to_dict, write_output
+from jaeger.seqops.io import fragment_generator, validate_fasta_entries
+from jaeger.seqops.maps import CODON_ID, CODONS
 from jaeger.utils.logging import description, get_logger
+from jaeger.utils.misc import load_model_config
+from jaeger.utils.termini import scan_for_terminal_repeats
 
-# from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
 GB_BYTES = 1024**3
 
 
+def _resolve_codon_value(value):
+    """Resolve a codon table configuration value to a list."""
+    if isinstance(value, str):
+        if value == "CODONS":
+            return CODONS
+        if value == "CODON_ID":
+            return CODON_ID
+        raise ValueError(f"Unsupported codon table name: {value!r}")
+    return value
+
+
+def _build_codon_table(codon_cfg, codon_id_cfg):
+    """Build a codon -> integer ID lookup from config values."""
+    codons = _resolve_codon_value(codon_cfg)
+    codon_ids = _resolve_codon_value(codon_id_cfg)
+    return dict(zip(codons, codon_ids))
+
+
+def _translate_fragment(seq: str, codon_table: dict, crop_size: int) -> torch.Tensor:
+    """Translate a DNA fragment into a ``(6, L)`` codon index tensor.
+
+    The six reading frames are produced using the same offset/striding logic as
+    the training-time raw sequence processor.
+    """
+    seq = seq.upper()[:crop_size]
+    comp = {"A": "T", "T": "A", "G": "C", "C": "G", "N": "N"}
+    rev = "".join(comp.get(base, "N") for base in reversed(seq))
+
+    def _codon_ids(s: str):
+        return [codon_table.get(s[i : i + 3], -1) for i in range(len(s) - 2)]
+
+    forward = _codon_ids(seq)
+    reverse = _codon_ids(rev)
+
+    frames = [
+        forward[offset::3] for offset in range(3)
+    ] + [reverse[offset::3] for offset in range(3)]
+
+    target_len = max(0, len(seq) // 3 - 1)
+    frames = [f[:target_len] + [-1] * (target_len - len(f)) for f in frames]
+
+    arr = np.array(frames, dtype=np.int64) + 1  # 0 is reserved for padding/masking
+    return torch.from_numpy(arr)
+
+
+def _aggregate_predictions(outputs: dict) -> dict:
+    """Average each tensor in ``outputs`` over the batch dimension."""
+    return {k: v.mean(dim=0) for k, v in outputs.items()}
+
+
+def _append_outputs(container: dict, outputs: dict):
+    """Append CPU numpy arrays from a runner output dict to a container."""
+    for k, v in outputs.items():
+        container.setdefault(k, []).append(v.cpu().numpy())
+
+
+def _concat_outputs(container: dict) -> dict:
+    """Concatenate lists of numpy arrays per output key."""
+    return {k: np.concatenate(vs, axis=0) for k, vs in container.items()}
+
+
+def _build_class_map(config: dict) -> dict:
+    """Build a class_map compatible with ``jaeger.postprocess.collect``."""
+    class_label_map = config.get("model", {}).get("class_label_map", [])
+    classes = [entry["class"] for entry in class_label_map]
+    indices = [entry["label"] for entry in class_label_map]
+    return {"num_classes": len(classes), "class": classes, "index": indices}
+
+
 def run_core(**kwargs):
-    current_process = psutil.Process()
+    """Run the PyTorch Jaeger inference pipeline."""
+    try:
+        import psutil
 
-    USER_MODEL_PATH = kwargs.get("model_path")
-    CONFIG_PATH = kwargs.get("config") or files("jaeger.data") / "config.json"
+        current_process = psutil.Process()
+    except Exception:
+        current_process = None
 
-    if not USER_MODEL_PATH:
-        # Use default model from config
-        model_name = kwargs.get("model")
-        model_id = get_model_id(model_name)
+    model_path = kwargs.get("model_path")
+    config_path = kwargs.get("config")
+    checkpoint_path = kwargs.get("checkpoint")
 
-        model_paths = json_to_dict(CONFIG_PATH).get("model_paths")
-        info = AvailableModels(path=model_paths).info
-
-        model_info = info[model_name]
+    if model_path:
+        model_path = Path(model_path)
+        config_file = None
+        for name in ("config.yaml", "config.yml", "config.json"):
+            candidate = model_path / name
+            if candidate.exists():
+                config_file = candidate
+                break
+        if config_file is None:
+            raise FileNotFoundError(f"No config file found in {model_path}")
+        config = load_model_config(config_file)
+        checkpoint_path = model_path / "model.pt"
+        model_name = config.get("model", {}).get("name", model_path.name)
+    elif config_path and checkpoint_path:
+        config = load_model_config(Path(config_path))
+        checkpoint_path = Path(checkpoint_path)
+        model_name = config.get("model", {}).get("name", "jaeger_pytorch")
     else:
-        # Use provided model path
-        info = AvailableModels(path=USER_MODEL_PATH).info
-        model_paths = USER_MODEL_PATH
-        model_name = next(iter(info))
-        model_id = get_model_id(model_name)
-        model_info = info[model_name]
+        raise NotImplementedError(
+            "Default TensorFlow model loading is not supported in PyTorch mode. "
+            "Please provide --model_path (with config.yaml and model.pt) or both "
+            "--config and --checkpoint."
+        )
 
-    MEMORY_LIMIT = 1024 * kwargs.get("mem", 4)
-    THREADS = kwargs.get("workers")
-    input_file_path = Path(kwargs.get("input"))
-    input_file = input_file_path.name
+    input_file_path = Path(kwargs["input"])
     file_base = input_file_path.stem
-    # INPUT_FILE_MASKED = input_file_path.with_name(file_base + "_masked" + input_file_path.suffix)
-
-    OUTPUT_DIR = Path(kwargs.get("output")) / model_id
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    # CHUNKS_DIR = OUTPUT_DIR / "chunks"
-    # MAKSED_DIR = OUTPUT_DIR / "masked"
+    model_id = model_name.replace(" ", "_")
+    output_dir = Path(kwargs["output"]) / model_id
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = Path(f"{file_base}_jaeger.log")
-    logger = get_logger(OUTPUT_DIR, log_file, level=kwargs.get("verbose"))
+    logger = get_logger(output_dir, log_file, level=kwargs.get("verbose", 1))
     logger.info(
-        description(version("jaeger-bio")) + "\n{:-^80}".format("validating parameters")
+        description(version("jaeger-bio"))
+        + "\n{:-^80}".format("validating parameters")
     )
-    logger.debug(info)
-    logger.debug(model_info)
+    logger.debug(config)
+
+    fsize = kwargs.get("fsize", 2000)
+    stride = kwargs.get("stride", 2000)
+    threads = kwargs.get("workers", 4)
+    batch_size = kwargs.get("batch", 96)
+
     try:
-        num = validate_fasta_entries(str(input_file_path), min_len=kwargs.get("fsize"))
+        num = validate_fasta_entries(str(input_file_path), min_len=fsize)
     except Exception as e:
         logger.error(e)
         logger.debug(traceback.format_exc())
         sys.exit(1)
 
-    output_table_path = OUTPUT_DIR / f"{file_base}.tsv"
-    output_phage_table_path = OUTPUT_DIR / f"{file_base}_phages.tsv"
+    output_table_path = output_dir / f"{file_base}.tsv"
+    output_phage_table_path = output_dir / f"{file_base}_phages.tsv"
 
     if output_table_path.exists() and not kwargs.get("overwrite"):
         logger.error(
@@ -77,368 +163,276 @@ def run_core(**kwargs):
         )
         sys.exit(1)
 
-    if not model_info["graph"].exists():
-        logger.error(f"could not find model graph. please check {model_paths}")
-        sys.exit(1)
-    tf.config.threading.set_inter_op_parallelism_threads(THREADS)
-    tf.config.threading.set_intra_op_parallelism_threads(THREADS)
-    tf.config.set_soft_device_placement(True)
-    gpus = tf.config.list_physical_devices("GPU")
-    mode = None
-
-    if kwargs.get("cpu"):
-        mode = "CPU"
-        tf.config.set_visible_devices([], "GPU")
-        logger.info("CPU only mode selected")
-    elif gpus:
-        mode = "GPU"
-        tf.config.set_visible_devices([gpus[kwargs.get("physicalid")]], "GPU")
-
-        # Set mixed precision policy if requested
-        precision = kwargs.get("precision", "fp32")
-        if precision == "fp16":
-            tf.keras.mixed_precision.set_global_policy("mixed_float16")
-            logger.info("GPU precision: mixed_float16 (FP16 compute, FP32 variables)")
-        elif precision == "bf16":
-            tf.keras.mixed_precision.set_global_policy("mixed_bfloat16")
-            logger.info("GPU precision: mixed_bfloat16 (BF16 compute, FP32 variables)")
-        else:
-            logger.info("GPU precision: float32 (FP32)")
-
-        try:
-            tf.config.set_logical_device_configuration(
-                gpus[kwargs.get("physicalid")],
-                [
-                    tf.config.LogicalDeviceConfiguration(
-                        memory_limit=MEMORY_LIMIT, experimental_device_ordinal=10
-                    )
-                ],
+    for opt in ("quantized", "xla", "onnx", "int8"):
+        if kwargs.get(opt):
+            logger.warning(
+                f"--{opt} is not supported by the PyTorch inference path and will be ignored."
             )
-        except Exception as e:
-            logger.error(f"an error {e} occurred during virtual device initialization ")
-            logger.debug(traceback.format_exc())
-    else:
-        mode = "CPU"
+    precision = kwargs.get("precision", "fp32")
+    if precision and precision != "fp32":
         logger.warning(
-            "could not find a GPU on the system. For optimal performance run Jaeger on a GPU."
+            f"--precision {precision} is not supported and will be ignored."
         )
 
-    logger.info(f"tensorflow: {version('tensorflow')}")
-    logger.info(f"input file: {input_file}")
+    if kwargs.get("cpu") or not torch.cuda.is_available():
+        device = torch.device("cpu")
+        mode = "CPU"
+        if not kwargs.get("cpu") and not torch.cuda.is_available():
+            logger.warning(
+                "could not find a GPU on the system. "
+                "For optimal performance run Jaeger on a GPU."
+            )
+    else:
+        device = torch.device("cuda")
+        mode = "GPU"
+
+    logger.info(f"pytorch: {version('torch')}")
+    logger.info(f"input file: {input_file_path.name}")
     logger.info(f"log file: {log_file.name}")
-    logger.info(f"outpath: {OUTPUT_DIR.resolve()}")
-    logger.info(f"fragment size: {kwargs.get('fsize')}")
-    logger.info(f"stride: {kwargs.get('stride')}")
-    logger.info(f"batch size: {kwargs.get('batch')}")
+    logger.info(f"outpath: {output_dir.resolve()}")
+    logger.info(f"fragment size: {fsize}")
+    logger.info(f"stride: {stride}")
+    logger.info(f"batch size: {batch_size}")
     logger.info(f"mode: {mode}")
     logger.info(f"model: {model_id}")
-    logger.info(f"avail mem: {psutil.virtual_memory().available / (GB_BYTES):.2f}GB")
-    logger.info(
-        f"intra threads: {tf.config.threading.get_intra_op_parallelism_threads()}"
+
+    if current_process is not None:
+        logger.info(
+            f"avail mem: {psutil.virtual_memory().available / GB_BYTES:.2f}GB"
+        )
+        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
+        logger.info(
+            f"wall time(s) : {time.time() - current_process.create_time():.2f}"
+        )
+        logger.info(
+            f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB "
+            f"({current_process.memory_percent():.2f}%)"
+        )
+
+    torch.set_num_threads(threads)
+
+    runner = PyTorchInferenceRunner(
+        config, checkpoint_path=checkpoint_path, device=device
     )
-    logger.info(
-        f"inter threads: {tf.config.threading.get_inter_op_parallelism_threads()}"
-    )
-    logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
-    logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
-    logger.info(
-        f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
-    )
-
-    device = tf.config.list_logical_devices(mode)
-    device_names = [get_device_name(i) for i in device]
-    logger.debug(f"{device}, {device_names}")
-    if len(device) > 1:
-        logger.info(f"Using MirroredStrategy {device_names}")
-        strategy = tf.distribute.MirroredStrategy(device_names)
-    else:
-        logger.info(f"Using OneDeviceStrategy {device_names}")
-        strategy = tf.distribute.OneDeviceStrategy(device_names[0])
-    # # 1. Split the input FASTA
-    # chunk_files = split_fasta_with_pyfastx(input_file_path, CHUNKS_DIR, chunks=16)
-    # # Or: chunk_files = split_fasta_with_pyfastx(input_fasta, chunks_dir, chunks=10)
-
-    # # 2. Run TRF on chunks in parallel
-    # masked_files = run_batch(chunk_files, out_dir=MAKSED_DIR, n_threads=16)
-
-    # # 3. Merge all masked files into one
-    # merge_masked_files(masked_files, INPUT_FILE_MASKED)
-
-    # # 4. Cleanup temporary directories
-    # shutil.rmtree(CHUNKS_DIR)
-    # shutil.rmtree(MAKSED_DIR)
+    class_map = _build_class_map(config)
 
     term_repeats = scan_for_terminal_repeats(
-        # file_path=str(INPUT_FILE_MASKED),
         file_path=str(input_file_path),
         num=num,
-        workers=THREADS,
-        fsize=kwargs.get("fsize"),
+        workers=threads,
+        fsize=fsize,
     )
 
-    # Select inference engine based on options
-    quantized_mode = kwargs.get("quantized")
-    use_xla = kwargs.get("xla", False)
-    use_onnx = kwargs.get("onnx", False)
-    use_onnx_int8 = kwargs.get("int8", False)
-
-    if quantized_mode:
-        # Look for quantized model in the same directory as the original model
-        graph_dir = Path(model_info["graph"])
-        quantized_dir = graph_dir.parent / f"{model_name}_{quantized_mode}"
-        tflite_path = quantized_dir / f"{model_name}_{quantized_mode}.tflite"
-
-        if not tflite_path.exists():
-            logger.error(
-                f"Quantized model not found at {tflite_path}. "
-                f"Run 'jaeger utils quantize -m {model_name} -o {graph_dir.parent} --mode {quantized_mode}' first."
-            )
-            sys.exit(1)
-
-        logger.info(f"Using quantized model: {tflite_path}")
-        model_info_tflite = model_info.copy()
-        model_info_tflite["tflite"] = tflite_path
-        model = TFLiteInferModel(model_info_tflite)
-    elif use_onnx:
-        # Look for ONNX model (FP32 or INT8)
-        graph_dir = Path(model_info["graph"])
-        if use_onnx_int8:
-            onnx_dir = graph_dir.parent / f"{model_name}_onnx_int8"
-            onnx_path = onnx_dir / f"{model_name}_int8.onnx"
-            if not onnx_path.exists():
-                logger.error(
-                    f"INT8 ONNX model not found at {onnx_path}. "
-                    f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx --int8' first."
-                )
-                sys.exit(1)
-            logger.info(f"Using INT8 ONNX model: {onnx_path}")
-        else:
-            onnx_dir = graph_dir.parent / f"{model_name}_onnx"
-            onnx_path = onnx_dir / f"{model_name}.onnx"
-
-            if not onnx_path.exists():
-                logger.error(
-                    f"ONNX model not found at {onnx_path}. "
-                    f"Run 'jaeger utils convert-graph -m {model_name} -o {graph_dir.parent} --mode onnx' first."
-                )
-                sys.exit(1)
-
-            logger.info(f"Using ONNX model: {onnx_path}")
-
-        model_info_onnx = model_info.copy()
-        model_info_onnx["onnx"] = onnx_path
-
-        model = ONNXEngine(model_info_onnx)
-    else:
-        if use_xla:
-            logger.info(
-                "Using XLA-compiled inference (first batch may be slow due to compilation)"
-            )
-        model = InferModel(model_info, use_xla=use_xla)
-
-    string_processor_config = model.string_processor_config
-    input_dataset = tf.data.Dataset.from_generator(
-        lambda: fragment_generator(
-            # str(INPUT_FILE_MASKED),
-            file_path=str(input_file_path),
-            no_progress=False,
-            fragsize=kwargs.get("fsize"),
-            stride=kwargs.get("stride"),
-            num=num,
-        ),
-        output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
+    sp_config = config.get("model", {}).get("string_processor", {})
+    crop_size = sp_config.get("crop_size", fsize)
+    codon_table = _build_codon_table(
+        sp_config.get("codon", CODONS), sp_config.get("codon_id", CODON_ID)
     )
 
-    from jaeger.seqops.encode import process_string_inference
+    meta = {
+        "headers": [],
+        "index": [],
+        "contig_end": [],
+        "window_idx": [],
+        "length": [],
+        "c_count": [],
+        "g_count": [],
+        "a_count": [],
+        "t_count": [],
+        "gc_skew": [],
+    }
+    inputs: list[torch.Tensor] = []
+    outputs_container: dict = {}
 
-    # from icecream import ic
-    # ic(string_processor_config)
-    idataset = (
-        input_dataset.map(
-            process_string_inference(
-                codons=string_processor_config.get("codon"),
-                codon_num=string_processor_config.get("codon_id"),
-                codon_depth=string_processor_config.get("codon_depth"),
-                ngram_width=string_processor_config.get("ngram_width"),
-                seq_onehot=string_processor_config.get("seq_onehot"),
-                crop_size=string_processor_config.get("crop_size"),
-                input_type=string_processor_config.get("input_type"),
-                masking=string_processor_config.get("masking"),
-                mutate=string_processor_config.get("mutate"),
-                mutation_rate=string_processor_config.get("mutation_rate"),
-                shuffle=string_processor_config.get("shuffle"),
-            ),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-        .batch(kwargs.get("batch"), num_parallel_calls=tf.data.AUTOTUNE)
-        .prefetch(25)
-    )
+    for frag_str in fragment_generator(
+        file_path=str(input_file_path),
+        fragsize=fsize,
+        stride=stride,
+        num=num,
+        no_progress=True,
+    ):
+        parts = frag_str.split(",")
+        seq = parts[0]
+        meta["headers"].append(parts[1])
+        meta["index"].append(int(parts[2]))
+        meta["contig_end"].append(int(parts[3]))
+        meta["window_idx"].append(int(parts[4]))
+        meta["length"].append(int(parts[5]))
+        meta["g_count"].append(float(parts[6]))
+        meta["c_count"].append(float(parts[7]))
+        meta["a_count"].append(float(parts[8]))
+        meta["t_count"].append(float(parts[9]))
+        meta["gc_skew"].append(float(parts[10]))
 
-    with strategy.scope():
-        try:
-            logger.info("starting model inference")
-            y_pred = model.predict(idataset, no_progress=True)
-        except Exception as e:
-            logger.debug(traceback.format_exc())
-            logger.error(
-                f"an error {e} occured during inference on {'|'.join(device_names)}! check {log_file} for traceback."
-            )
-            sys.exit(1)
+        inputs.append(_translate_fragment(seq, codon_table, crop_size))
+        if len(inputs) >= batch_size:
+            batch_x = torch.stack(inputs)
+            out = runner.predict(batch_x, batch_size=batch_size)
+            _append_outputs(outputs_container, out)
+            inputs.clear()
 
-        from jaeger.postprocess.collect import pred_to_dict, write_output
+    if inputs:
+        batch_x = torch.stack(inputs)
+        out = runner.predict(batch_x, batch_size=batch_size)
+        _append_outputs(outputs_container, out)
+        inputs.clear()
 
-        if kwargs.get("getalllabels"):
-            pass
+    if not outputs_container:
+        logger.error("no fragments were generated for inference")
+        sys.exit(1)
+
+    y_pred = _concat_outputs(outputs_container)
+    y_pred["meta_0"] = np.array(meta["headers"], dtype=str)
+    y_pred["meta_1"] = np.array(meta["index"], dtype=np.int32)
+    y_pred["meta_2"] = np.array(meta["contig_end"], dtype=np.int32)
+    y_pred["meta_3"] = np.array(meta["window_idx"], dtype=np.int32)
+    y_pred["meta_4"] = np.array(meta["length"], dtype=np.int32)
+    y_pred["meta_5"] = np.array(meta["c_count"], dtype=np.float32)
+    y_pred["meta_6"] = np.array(meta["g_count"], dtype=np.float32)
+    y_pred["meta_7"] = np.array(meta["a_count"], dtype=np.float32)
+    y_pred["meta_8"] = np.array(meta["t_count"], dtype=np.float32)
+    y_pred["meta_9"] = np.array(meta["gc_skew"], dtype=np.float32)
+
+    try:
         data, data_full = pred_to_dict(
             y_pred,
-            class_map=model.class_map,
-            fsize=kwargs.get("fsize"),
+            class_map=class_map,
+            fsize=fsize,
             term_repeats=term_repeats,
         )
-        # print(len(data['headers']))
         num_written = write_output(
             data,
-            labels=model.class_map.get("class"),
-            indices=model.class_map.get("index"),
+            labels=class_map["class"],
+            indices=class_map["index"],
             output_table_path=output_table_path,
             output_phage_table_path=output_phage_table_path,
             reliability_cutoff=kwargs.get("rc", 0.5),
             phage_score=kwargs.get("pc", 1),
         )
-
         logger.info(f"processed {num_written}/{num} sequences")
+    except Exception as e:
+        logger.error(f"an error {e} occurred during postprocessing")
+        logger.debug(traceback.format_exc())
+        sys.exit(1)
 
-        # --- Prophage extraction ---
-        if kwargs.get("prophage"):
-            from jaeger.postprocess.prophages import (
-                logits_to_df_v2,
-                plot_scores,
-                plot_scores_linear,
-                prophage_report,
-                segment,
-            )
-
-            try:
-                if logits_df := logits_to_df_v2(
-                    class_map=model.class_map,
-                    cmdline_kwargs=kwargs,
-                    headers=data_full["headers"],
-                    predictions=data_full["predictions"],
-                    lengths=data_full["lengths"],
-                    gc_skews=data_full["gc_skews"],
-                    gcs=data_full["gcs"],
-                ):
-                    logger.info("identifying prophages")
-                    pro_dir = OUTPUT_DIR / f"{file_base}_prophages"
-                    plots_dir = pro_dir / "plots"
-                    for d in [pro_dir, plots_dir]:
-                        d.mkdir(parents=True, exist_ok=True)
-
-                    phage_cord = segment(
-                        logits_df,
-                        outdir=plots_dir,
-                        cutoff_length=kwargs.get("lc"),
-                        sensitivity=kwargs.get("sensitivity"),
-                        identifier="phage",
-                    )
-                    plot_type = kwargs.get("plot_type", "circular")
-                    if plot_type in ("circular", "both"):
-                        plot_scores(
-                            logits_df,
-                            config={
-                                "all_labels": {
-                                    i: c
-                                    for i, c in enumerate(
-                                        model.class_map.get("class", [])
-                                    )
-                                }
-                            },
-                            model=model_name,
-                            fsize=kwargs.get("fsize"),
-                            infile_base=file_base,
-                            outdir=plots_dir,
-                            phage_cordinates=phage_cord,
-                        )
-                    if plot_type in ("linear", "both"):
-                        plot_scores_linear(
-                            logits_df,
-                            config={
-                                "all_labels": {
-                                    i: c
-                                    for i, c in enumerate(
-                                        model.class_map.get("class", [])
-                                    )
-                                }
-                            },
-                            model=model_name,
-                            fsize=kwargs.get("fsize"),
-                            infile_base=file_base,
-                            outdir=plots_dir,
-                            phage_cordinates=phage_cord,
-                        )
-                    prophage_report(
-                        fsize=kwargs.get("fsize"),
-                        filehandle=str(input_file_path),
-                        prophage_cordinates=phage_cord,
-                        outdir=pro_dir,
-                    )
-                else:
-                    logger.info("no prophage regions found")
-            except Exception as e:
-                logger.error(
-                    f"an error {e} occurred during the prophage prediction step"
-                )
-                logger.debug(traceback.format_exc())
-
-        # --- Write phage sequences to FASTA ---
-        if kwargs.get("getsequences"):
-            from jaeger.postprocess.collect import write_fasta_from_results
-
-            output_fasta_file = f"{file_base}_phages_jaeger.fasta"
-            output_fasta_file_path = OUTPUT_DIR / output_fasta_file
-            write_fasta_from_results(
-                input_fasta=input_file_path,
-                output_tsv=output_phage_table_path,
-                output_fasta=output_fasta_file_path,
-            )
-            logger.info(f"{output_fasta_file} created")
-
-        # --- Write window-wise scores + metadata to NPZ ---
-        if kwargs.get("window_scores"):
-            import numpy as np
-
-            output_scores = f"{file_base}_window_scores.npz"
-            output_scores_path = OUTPUT_DIR / output_scores
-            logger.info(
-                f"writing window-wise scores and metadata to {output_scores_path}"
-            )
-            np.savez(
-                output_scores_path,
-                headers=data_full["headers"],
-                lengths=data_full["lengths"],
-                predictions=np.array(data_full["predictions"], dtype=object),
-                gc_skews=np.array(data_full["gc_skews"], dtype=object),
-                gcs=np.array(data_full["gcs"], dtype=object),
-            )
-            logger.info(f"{output_scores} created")
-
-        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
-        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
-        logger.info(
-            f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
+    if kwargs.get("prophage"):
+        from jaeger.postprocess.prophages import (
+            logits_to_df_v2,
+            plot_scores,
+            plot_scores_linear,
+            prophage_report,
+            segment,
         )
-        import numpy as np
 
-        if "embedding" in y_pred:
-            np.savez(
-                OUTPUT_DIR / f"{file_base}_embedding.npz",
-                embedding=y_pred["embedding"],
-                headers=y_pred["meta_0"],
+        try:
+            if logits_df := logits_to_df_v2(
+                class_map=class_map,
+                cmdline_kwargs=kwargs,
+                headers=data_full["headers"],
+                predictions=data_full["predictions"],
+                lengths=data_full["lengths"],
+                gc_skews=data_full["gc_skews"],
+                gcs=data_full["gcs"],
+            ):
+                logger.info("identifying prophages")
+                pro_dir = output_dir / f"{file_base}_prophages"
+                plots_dir = pro_dir / "plots"
+                for d in [pro_dir, plots_dir]:
+                    d.mkdir(parents=True, exist_ok=True)
+
+                phage_cord = segment(
+                    logits_df,
+                    outdir=plots_dir,
+                    cutoff_length=kwargs.get("lc", 500_000),
+                    sensitivity=kwargs.get("sensitivity", 1.5),
+                    identifier="phage",
+                )
+                plot_type = kwargs.get("plot_type", "circular")
+                config_labels = {
+                    i: c for i, c in enumerate(class_map.get("class", []))
+                }
+                if plot_type in ("circular", "both"):
+                    plot_scores(
+                        logits_df,
+                        config={"all_labels": config_labels},
+                        model=model_name,
+                        fsize=fsize,
+                        infile_base=file_base,
+                        outdir=plots_dir,
+                        phage_cordinates=phage_cord,
+                    )
+                if plot_type in ("linear", "both"):
+                    plot_scores_linear(
+                        logits_df,
+                        config={"all_labels": config_labels},
+                        model=model_name,
+                        fsize=fsize,
+                        infile_base=file_base,
+                        outdir=plots_dir,
+                        phage_cordinates=phage_cord,
+                    )
+                prophage_report(
+                    fsize=fsize,
+                    filehandle=str(input_file_path),
+                    prophage_cordinates=phage_cord,
+                    outdir=pro_dir,
+                )
+            else:
+                logger.info("no prophage regions found")
+        except Exception as e:
+            logger.error(
+                f"an error {e} occurred during the prophage prediction step"
             )
-        if "nmd" in y_pred:
-            np.savez(
-                OUTPUT_DIR / f"{file_base}_nmd.npz",
-                embedding=y_pred["nmd"],
-                headers=y_pred["meta_0"],
+            logger.debug(traceback.format_exc())
+
+    if kwargs.get("getsequences"):
+        from jaeger.postprocess.collect import write_fasta_from_results
+
+        output_fasta_file_path = output_dir / f"{file_base}_phages_jaeger.fasta"
+        if output_phage_table_path.exists():
+            write_fasta_from_results(
+                input_fasta=str(input_file_path),
+                output_tsv=str(output_phage_table_path),
+                output_fasta=str(output_fasta_file_path),
             )
-        # INPUT_FILE_MASKED.unlink()
+            logger.info(f"{output_fasta_file_path.name} created")
+        else:
+            logger.info("no phage sequences to write")
+
+    if kwargs.get("window_scores"):
+        output_scores_path = output_dir / f"{file_base}_window_scores.npz"
+        logger.info(
+            f"writing window-wise scores and metadata to {output_scores_path}"
+        )
+        np.savez(
+            output_scores_path,
+            headers=data_full["headers"],
+            lengths=data_full["lengths"],
+            predictions=np.array(data_full["predictions"], dtype=object),
+            gc_skews=np.array(data_full["gc_skews"], dtype=object),
+            gcs=np.array(data_full["gcs"], dtype=object),
+        )
+        logger.info(f"{output_scores_path.name} created")
+
+    if current_process is not None:
+        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
+        logger.info(
+            f"wall time(s) : {time.time() - current_process.create_time():.2f}"
+        )
+        logger.info(
+            f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB "
+            f"({current_process.memory_percent():.2f}%)"
+        )
+
+    if "embedding" in y_pred:
+        np.savez(
+            output_dir / f"{file_base}_embedding.npz",
+            embedding=y_pred["embedding"],
+            headers=y_pred["meta_0"],
+        )
+    if "nmd" in y_pred:
+        np.savez(
+            output_dir / f"{file_base}_nmd.npz",
+            embedding=y_pred["nmd"],
+            headers=y_pred["meta_0"],
+        )
