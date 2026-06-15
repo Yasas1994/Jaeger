@@ -181,18 +181,15 @@ class ModelBuilder:
         raise ValueError(f"Unknown train_branch: {train_branch}")
 
     def get_metrics(self, branch: str = "classifier") -> Dict[str, Any]:
-        from jaeger.nnlib.pytorch.metrics import PrecisionForClass, RecallForClass
+        from jaeger.nnlib.pytorch.metrics import build_metrics
 
-        metrics = {}
         out_dim = (
             self.classifier_out_dim
             if branch == "classifier"
             else self.reliability_out_dim
         )
-        for cls in range(out_dim):
-            metrics[f"precision_class_{cls}"] = PrecisionForClass(class_id=cls)
-            metrics[f"recall_class_{cls}"] = RecallForClass(class_id=cls)
-        return metrics
+        metrics_cfg = self.train_cfg.get(f"metrics_{branch}", [])
+        return build_metrics(metrics_cfg, out_dim)
 
     def _get_optimizer(self, name: str) -> torch.optim.Optimizer:
         """Resolve a PyTorch optimizer class by case-insensitive name."""
