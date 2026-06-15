@@ -110,6 +110,47 @@ def test_build_datasets_multiple_paths(tmp_path):
     assert batch_mask.shape == (8, 6, 50)
 
 
+def _make_nucleotide_npz(path, n_samples, length=50):
+    # One-hot nucleotide tensor: (N, 2 strands, length, 4 bases)
+    data = np.eye(4, dtype=np.float32)[
+        np.random.randint(0, 4, size=(n_samples, 2, length))
+    ].astype(np.float32)
+    labels = np.eye(3, dtype=np.float32)[np.random.randint(0, 3, size=n_samples)]
+    np.savez(path, nucleotide=data, label=labels)
+
+
+def test_build_datasets_numpy_full_nucleotide(tmp_path):
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_nucleotide_npz(train_path, n_samples=8)
+    _make_nucleotide_npz(val_path, n_samples=4)
+
+    config = _build_config([train_path], [val_path], batch_size=4)
+    config["model"]["embedding"] = {"input_type": "nucleotide"}
+    loaders = build_datasets(config, branch="classifier")
+
+    batch_x, batch_y, batch_mask = next(iter(loaders["train"]))
+    assert batch_x.shape == (4, 2, 50, 4)
+    assert batch_y.shape == (4, 3)
+    assert batch_mask.shape == (4, 2, 50)
+
+
+def test_build_datasets_numpy_full_input_key_override(tmp_path):
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_nucleotide_npz(train_path, n_samples=8)
+    _make_nucleotide_npz(val_path, n_samples=4)
+
+    config = _build_config([train_path], [val_path], batch_size=4)
+    # Even though embedding says translated, the explicit input_key wins.
+    config["model"]["embedding"] = {"input_type": "translated"}
+    config["model"]["string_processor"]["input_key"] = "nucleotide"
+    loaders = build_datasets(config, branch="classifier")
+
+    batch_x, _, _ = next(iter(loaders["train"]))
+    assert batch_x.shape == (4, 2, 50, 4)
+
+
 def test_build_datasets_unsupported_format(tmp_path):
     train_path = tmp_path / "train.npz"
     val_path = tmp_path / "val.npz"

@@ -1,4 +1,5 @@
 import torch
+from rich.progress import Progress
 
 from jaeger.training.pytorch.engine import evaluate, train_one_epoch
 
@@ -46,4 +47,35 @@ def test_evaluate():
     loss_fn = torch.nn.CrossEntropyLoss()
     metrics = {}
     history = evaluate(model, loader, loss_fn, torch.device("cpu"), metrics=metrics)
+    assert "loss" in history
+
+
+def test_train_one_epoch_with_progress():
+    model = _make_dummy_classifier()
+    loader = _make_dummy_loader()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    with Progress(transient=True) as progress:
+        task_id = progress.add_task("train", total=len(loader))
+        history = train_one_epoch(
+            model,
+            loader,
+            loss_fn,
+            optimizer,
+            torch.device("cpu"),
+            progress=progress,
+            task_id=task_id,
+        )
+    assert "loss" in history
+
+
+def test_evaluate_with_progress():
+    model = _make_dummy_classifier()
+    loader = _make_dummy_loader()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    with Progress(transient=True) as progress:
+        task_id = progress.add_task("val", total=len(loader))
+        history = evaluate(
+            model, loader, loss_fn, torch.device("cpu"), progress=progress, task_id=task_id
+        )
     assert "loss" in history

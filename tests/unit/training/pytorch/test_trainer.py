@@ -61,3 +61,29 @@ def test_trainer_fit():
         assert "val_loss" in history[0]
         assert (Path(tmpdir) / "history.json").exists()
         assert len(list(Path(tmpdir).glob("checkpoint_epoch_*.pt"))) == 2
+
+
+def test_trainer_fit_with_progress_bar():
+    model = _make_dummy_model()
+    train_loader = _make_dummy_data()
+    val_loader = _make_dummy_data()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            epochs=1,
+            device=torch.device("cpu"),
+            checkpoint_dir=tmpdir,
+            history_path=Path(tmpdir) / "history.json",
+            progress_bar=True,
+        )
+        history = trainer.fit()
+        assert len(history) == 1
+        assert "train_loss" in history[0]
+        assert "val_loss" in history[0]

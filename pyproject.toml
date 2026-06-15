@@ -76,6 +76,7 @@ legacy = [
 test = [
     "pytest >=8.0",
     "pytest-mock >=3.14",
+    "numba>=0.59",
 ]
 onnx = [
     "onnxruntime-gpu >=1.26",
@@ -86,4 +87,7 @@ onnx = [
 taxonomy = [
     "taxopy",
     "faiss-cpu",
+]
+numba = [
+    "numba>=0.59",
 ]

@@ -1,5 +1,5 @@
 import math
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -48,7 +48,10 @@ class MaskedConv1D(nn.Module):
         use_bias: bool = True,
         kernel_initializer: str = "glorot_uniform",
         bias_initializer: str = "zeros",
-        kernel_regularizer: Optional[float] = None,
+        kernel_regularizer: Optional[str] = None,
+        kernel_regularizer_w: float = 0.0,
+        bias_regularizer: Optional[str] = None,
+        **kwargs,
     ):
         super().__init__()
         padding_norm = padding.lower()
@@ -65,10 +68,12 @@ class MaskedConv1D(nn.Module):
                 f"bias_initializer {bias_initializer!r} is not supported; "
                 "only 'zeros' is implemented."
             )
-        if kernel_regularizer is not None:
-            raise NotImplementedError(
-                f"kernel_regularizer {kernel_regularizer!r} is not supported."
-            )
+
+        # Regularizers are accepted for Keras config compatibility but are not
+        # implemented at the layer level; use optimizer weight_decay instead.
+        self.kernel_regularizer = kernel_regularizer
+        self.kernel_regularizer_w = kernel_regularizer_w
+        self.bias_regularizer = bias_regularizer
 
         self.filters = filters
         self.kernel_size = kernel_size
@@ -322,17 +327,38 @@ class GatedFrameGlobalMaxPooling(nn.Module):
 
 
 class AxialAttention(nn.Module):
-    """Axial attention over the sequence axis."""
+    """Axial attention over the sequence axis.
 
-    def __init__(self, embed_dim: int, num_heads: int, dropout: float = 0.0):
+    Supports Keras-style configs with ``feed_forward_dim`` (defaults to
+    ``4 * embed_dim``), ``num_blocks`` (defaults to 1), and ``dropout_rate``.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        dropout: float = 0.0,
+        feed_forward_dim: Optional[int] = None,
+        num_blocks: int = 1,
+        dropout_rate: Optional[float] = None,
+    ):
         super().__init__()
-        self.attn = nn.MultiheadAttention(
-            embed_dim=embed_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.norm = nn.LayerNorm(embed_dim)
+        self.embed_dim = embed_dim
+        dropout = dropout_rate if dropout_rate is not None else dropout
+        feed_forward_dim = feed_forward_dim or embed_dim * 4
+        layers = []
+        for _ in range(num_blocks):
+            layers.append(
+                nn.TransformerEncoderLayer(
+                    d_model=embed_dim,
+                    nhead=num_heads,
+                    dim_feedforward=feed_forward_dim,
+                    dropout=dropout,
+                    batch_first=True,
+                    norm_first=False,
+                )
+            )
+        self.blocks = nn.ModuleList(layers)
 
     def forward(
         self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
@@ -343,12 +369,10 @@ class AxialAttention(nn.Module):
         key_padding_mask = None
         if mask is not None:
             key_padding_mask = ~mask.reshape(b * f, seq_len)
-        attn_out, _ = self.attn(
-            x_2d, x_2d, x_2d, key_padding_mask=key_padding_mask, need_weights=False
-        )
-        out = self.norm(x_2d + attn_out).reshape(b, f, seq_len, d)
-        out_mask = mask
-        return out, out_mask
+        out = x_2d
+        for block in self.blocks:
+            out = block(out, src_key_padding_mask=key_padding_mask)
+        return out.reshape(b, f, seq_len, d), mask
 
 
 class MaskedGlobalAvgPooling(nn.Module):
@@ -390,22 +414,55 @@ class SinusoidalPositionEmbedding(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, layer: nn.Module):
+    """Residual wrapper around a layer or a small stack of MaskedConv1D layers.
+
+    For Keras-style configs, ``config`` may contain ``block_size``,
+    ``filters``, ``kernel_size``, ``use_bias``, and regularizer keys to build
+    a stack of ``MaskedConv1D`` layers. If ``layer`` is provided directly,
+    it is wrapped as before.
+    """
+
+    def __init__(self, layer: Optional[nn.Module] = None, config: Optional[dict] = None):
         super().__init__()
-        self.layer = layer
+        if layer is not None:
+            self.layer = layer
+        elif config is not None:
+            cfg = dict(config)
+            block_size = cfg.pop("block_size", 1)
+            cfg.setdefault("padding", "same")
+            cfg.setdefault("activation", None)
+            layers: List[nn.Module] = []
+            for _ in range(block_size):
+                layers.append(MaskedConv1D(**cfg))
+            self.layer = nn.ModuleList(layers)
+        else:
+            raise ValueError("ResidualBlock requires either ``layer`` or ``config``.")
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
-        if (
-            hasattr(self.layer, "forward")
-            and "mask" in self.layer.forward.__code__.co_varnames
-        ):
-            out = self.layer(x, mask)
+        residual = x
+        out = x
+        out_mask = mask
+        if isinstance(self.layer, nn.ModuleList):
+            for layer in self.layer:
+                out, out_mask = layer(out, out_mask)
+        elif "mask" in self.layer.forward.__code__.co_varnames:
+            out = self.layer(out, mask)
             if isinstance(out, tuple):
                 out, out_mask = out
-                return out + x, out_mask
-            return out + x, mask
-        out = self.layer(x)
-        return out + x, mask
+        else:
+            out = self.layer(out)
+
+        # If dimensions differ, project the residual with a 1x1 conv.
+        if out.shape[-1] != residual.shape[-1]:
+            proj = nn.Conv1d(
+                residual.shape[-1], out.shape[-1], kernel_size=1, bias=False
+            ).to(out.device)
+            residual = proj(
+                residual.permute(0, 1, 3, 2).reshape(-1, residual.shape[-1], residual.shape[2])
+            )
+            residual = residual.permute(0, 2, 1).reshape_as(out)
+
+        return out + residual, out_mask
 
 
 class TransformerEncoder(nn.Module):

@@ -34,18 +34,21 @@ class NumpyFullDataset(Dataset):
         data = np.load(path, allow_pickle=False)
         self.inputs = torch.from_numpy(data[input_key])
         self.labels = torch.from_numpy(data[label_key])
+        self.pad_int = int(data.get("pad_int", 0))
 
     def __len__(self) -> int:
         return len(self.labels)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.inputs[idx]
+        if not torch.is_floating_point(x):
+            x = x.long()
         if x.dim() == 2:
-            # (frames, length)
-            mask = x != 0
+            # (frames, length) integer indices
+            mask = x != self.pad_int
         elif x.dim() == 3:
-            # (frames, length, channels) -> mask over frames and length
-            mask = (x != 0).any(dim=-1)
+            # (frames, length, channels) one-hot tensor
+            mask = (x != self.pad_int).any(dim=-1)
         else:
             raise ValueError(
                 f"NumpyFullDataset expects 2-D or 3-D inputs, got rank {x.dim()}"

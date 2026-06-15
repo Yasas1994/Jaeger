@@ -15,6 +15,8 @@ def train_one_epoch(
     forward_key: str = "prediction",
     label_key: str = "label",
     branch: str = "classifier",
+    progress: Optional[Any] = None,
+    task_id: Optional[Any] = None,
 ) -> Dict[str, float]:
     """Train for one epoch and return averaged loss and metrics."""
     model.train()
@@ -51,6 +53,10 @@ def train_one_epoch(
         total_loss += loss.item() * batch_size
         total_samples += batch_size
 
+        if progress is not None and task_id is not None:
+            progress.advance(task_id, 1)
+            progress.update(task_id, description=f"loss={loss.item():.4f}")
+
         if metrics:
             for metric in metrics.values():
                 if hasattr(metric, "update"):
@@ -76,6 +82,8 @@ def evaluate(
     metrics: Optional[Dict[str, Any]] = None,
     forward_key: str = "prediction",
     branch: str = "classifier",
+    progress: Optional[Any] = None,
+    task_id: Optional[Any] = None,
 ) -> Dict[str, float]:
     """Evaluate and return averaged loss and metrics."""
     model.eval()
@@ -99,6 +107,10 @@ def evaluate(
             batch_size = y.size(0)
             total_loss += loss.item() * batch_size
             total_samples += batch_size
+
+            if progress is not None and task_id is not None:
+                progress.advance(task_id, 1)
+                progress.update(task_id, description=f"loss={loss.item():.4f}")
 
             if metrics:
                 for metric in metrics.values():

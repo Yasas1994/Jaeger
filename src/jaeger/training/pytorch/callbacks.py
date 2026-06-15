@@ -90,24 +90,31 @@ class ModelCheckpoint:
         if improved:
             self.best_value = current
             if self.save_best_only:
-                self._save(trainer, epoch)
+                self._save(trainer, epoch, logs)
                 if self.verbose:
                     print(
                         f"Epoch {epoch}: {self.monitor} improved to {current:.4f}; saving model"
                     )
         elif not self.save_best_only:
-            self._save(trainer, epoch)
+            self._save(trainer, epoch, logs)
 
-    def _save(self, trainer, epoch: int):
-        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+    def _save(self, trainer, epoch: int, logs: Optional[Dict[str, float]] = None):
+        logs = dict(logs or {})
+        # ``epoch`` is passed explicitly so templates without it still work.
+        logs.setdefault("epoch", epoch)
+        formatted = str(self.filepath).format(**logs)
+        path = Path(formatted)
+        path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
                 "epoch": epoch,
                 "model_state_dict": trainer.model.state_dict(),
                 "optimizer_state_dict": trainer.optimizer.state_dict(),
             },
-            self.filepath,
+            path,
         )
+        if self.verbose:
+            print(f"Epoch {epoch}: saved checkpoint to {path}")
 
     def on_train_end(self, trainer):
         pass

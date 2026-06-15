@@ -32,6 +32,8 @@ class Embedding(nn.Module):
     ):
         super().__init__()
         self.input_type = input_type
+        self.vocab_size = vocab_size
+        self.embedding_size = embedding_size
         self.use_embedding_layer = use_embedding_layer
         self.use_positional_embeddings = use_positional_embeddings
 
@@ -43,7 +45,14 @@ class Embedding(nn.Module):
                 self.embed = nn.Linear(vocab_size, embedding_size, bias=False)
                 nn.init.orthogonal_(self.embed.weight)
         elif input_type == "nucleotide":
-            self.embed = None
+            # Nucleotide input can be provided as a float one-hot tensor or as
+            # integer indices. Integer indices are one-hot encoded and then
+            # optionally projected to ``embedding_size``.
+            if use_embedding_layer:
+                self.embed = None
+            else:
+                self.embed = nn.Linear(vocab_size, embedding_size, bias=False)
+                nn.init.orthogonal_(self.embed.weight)
         else:
             raise ValueError(f"Invalid input_type: {input_type}")
 
@@ -62,6 +71,13 @@ class Embedding(nn.Module):
                     x = F.one_hot(x, num_classes=self.embed.in_features).to(
                         self.embed.weight.dtype
                     )
+                x = self.embed(x)
+        elif self.input_type == "nucleotide":
+            if not torch.is_floating_point(x):
+                x = F.one_hot(x, num_classes=self.vocab_size).to(
+                    torch.float32
+                )
+            if self.embed is not None:
                 x = self.embed(x)
         if self.use_positional_embeddings:
             x = self.positional(x)
@@ -145,29 +161,64 @@ class RepresentationModel(nn.Module):
         self.embedding = embedding
         self.blocks = nn.ModuleList()
         self.return_nmd = False
+        current_dim = self._embedding_output_dim(embedding)
         for cfg in hidden_layers:
             name = cfg["name"].lower()
             config = cfg.get("config", {})
             if name == "masked_conv1d":
-                self.blocks.append(MaskedConv1D(**config))
+                block = MaskedConv1D(**config)
+                current_dim = block.filters
+                self.blocks.append(block)
             elif name == "masked_batchnorm":
-                self.blocks.append(MaskedBatchNorm(**config))
+                config = dict(config)
+                config.setdefault("num_features", current_dim)
+                block = MaskedBatchNorm(**config)
+                current_dim = block.num_features
+                self.blocks.append(block)
             elif name == "masked_layer_norm":
-                self.blocks.append(MaskedLayerNorm(**config))
+                config = dict(config)
+                config.setdefault("num_features", current_dim)
+                block = MaskedLayerNorm(**config)
+                current_dim = block.num_features
+                self.blocks.append(block)
             elif name == "axial_attention":
-                self.blocks.append(AxialAttention(**config))
+                config = dict(config)
+                config.setdefault("embed_dim", current_dim)
+                block = AxialAttention(**config)
+                current_dim = block.embed_dim
+                self.blocks.append(block)
             elif name == "cross_frame_attention":
-                self.blocks.append(CrossFrameAttention(**config))
+                config = dict(config)
+                config.setdefault("embed_dim", current_dim)
+                block = CrossFrameAttention(**config)
+                current_dim = block.embed_dim
+                self.blocks.append(block)
             elif name == "transformer_encoder":
-                self.blocks.append(TransformerEncoder(**config))
+                config = dict(config)
+                config.setdefault("embed_dim", current_dim)
+                block = TransformerEncoder(**config)
+                current_dim = self._block_output_dim(block)
+                self.blocks.append(block)
             elif name == "residual_block":
-                inner = self.blocks.pop(-1) if self.blocks else None
-                self.blocks.append(ResidualBlock(inner))
+                # Config-driven residual block: ``config`` defines the internal
+                # stack (e.g. ``block_size`` MaskedConv1D layers). If an older
+                # style config passes the previous layer directly, wrap it.
+                if "layer" in config:
+                    block = ResidualBlock(layer=config["layer"])
+                else:
+                    cfg_copy = dict(config)
+                    cfg_copy.setdefault("filters", current_dim)
+                    block = ResidualBlock(config=cfg_copy)
+                    current_dim = cfg_copy.get("filters", current_dim)
+                self.blocks.append(block)
             elif name == "dense":
+                config = dict(config)
                 if "units" in config:
-                    config = dict(config)
                     config["out_features"] = config.pop("units")
-                self.blocks.append(nn.Linear(**config))
+                config.setdefault("in_features", current_dim)
+                block = nn.Linear(**config)
+                current_dim = block.out_features
+                self.blocks.append(block)
             elif name == "activation":
                 self.blocks.append(
                     GeLU() if config.get("activation") == "gelu" else nn.ReLU()
@@ -178,6 +229,17 @@ class RepresentationModel(nn.Module):
                 raise ValueError(f"Unknown layer type: {name}")
         self.pooler = self._build_pooler(pooling)
         self.output_dim, self.nmd_dim = self._infer_dims()
+
+    @staticmethod
+    def _embedding_output_dim(embedding: nn.Module) -> int:
+        if isinstance(embedding, Embedding):
+            return int(embedding.embedding_size)
+        if hasattr(embedding, "embed") and embedding.embed is not None:
+            if hasattr(embedding.embed, "embedding_dim"):
+                return int(embedding.embed.embedding_dim)
+            if hasattr(embedding.embed, "out_features"):
+                return int(embedding.embed.out_features)
+        return 4
 
     def _infer_dims(self):
         output_dim = None
@@ -203,7 +265,7 @@ class RepresentationModel(nn.Module):
         if isinstance(block, (MaskedBatchNorm, MaskedLayerNorm)):
             return int(block.num_features)
         if isinstance(block, (AxialAttention, CrossFrameAttention)):
-            return int(block.attn.embed_dim)
+            return int(block.embed_dim)
         if isinstance(block, TransformerEncoder):
             return int(block.encoder.layers[0].self_attn.embed_dim)
         if isinstance(block, nn.Linear):

@@ -60,8 +60,16 @@ def build_datasets(
             raise ValueError(f"No paths found for {branch}/{split}")
 
         data_format = string_cfg.get("data_format", "numpy_full")
+        input_key = string_cfg.get(
+            "input_key",
+            "nucleotide"
+            if model_cfg.get("embedding", {}).get("input_type") == "nucleotide"
+            else "translated",
+        )
         if data_format == "numpy_full":
-            split_datasets: list[Dataset] = [NumpyFullDataset(path) for path in paths]
+            split_datasets: list[Dataset] = [
+                NumpyFullDataset(path, input_key=input_key) for path in paths
+            ]
             datasets[split] = (
                 split_datasets[0]
                 if len(split_datasets) == 1

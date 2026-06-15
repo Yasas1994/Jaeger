@@ -4,9 +4,29 @@ from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.nn as nn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    ProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.text import Text
 from torch.utils.data import DataLoader
 
 from jaeger.training.pytorch.engine import evaluate, train_one_epoch
+
+
+class _SpeedMsColumn(ProgressColumn):
+    """Rich column showing average milliseconds per batch."""
+
+    def render(self, task):
+        if task.completed == 0:
+            return Text("? ms/batch")
+        ms = task.elapsed / task.completed * 1000
+        return Text(f"{ms:.1f} ms/batch")
 
 
 class Trainer:
@@ -26,6 +46,7 @@ class Trainer:
         checkpoint_dir: Optional[str] = None,
         history_path: Optional[str] = None,
         branch: str = "classifier",
+        progress_bar: bool = False,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -39,6 +60,7 @@ class Trainer:
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self.history_path = Path(history_path) if history_path else None
         self.branch = branch
+        self.progress_bar = progress_bar
         self.history: List[Dict[str, float]] = []
         self.should_stop = False
 
@@ -53,23 +75,62 @@ class Trainer:
                 if hasattr(callback, "on_epoch_begin"):
                     callback.on_epoch_begin(self, epoch)
 
-            train_metrics = train_one_epoch(
-                self.model,
-                self.train_loader,
-                self.loss_fn,
-                self.optimizer,
-                self.device,
-                metrics=self.metrics,
-                branch=self.branch,
-            )
-            val_metrics = evaluate(
-                self.model,
-                self.val_loader,
-                self.loss_fn,
-                self.device,
-                metrics=self.metrics,
-                branch=self.branch,
-            )
+            if self.progress_bar:
+                with Progress(
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    MofNCompleteColumn(),
+                    TimeElapsedColumn(),
+                    TimeRemainingColumn(),
+                    _SpeedMsColumn(),
+                ) as progress:
+                    train_task = progress.add_task(
+                        f"train epoch {epoch}/{self.epochs}",
+                        total=self._loader_length(self.train_loader),
+                    )
+                    val_task = progress.add_task(
+                        f"val epoch {epoch}/{self.epochs}",
+                        total=self._loader_length(self.val_loader),
+                    )
+                    train_metrics = train_one_epoch(
+                        self.model,
+                        self.train_loader,
+                        self.loss_fn,
+                        self.optimizer,
+                        self.device,
+                        metrics=self.metrics,
+                        branch=self.branch,
+                        progress=progress,
+                        task_id=train_task,
+                    )
+                    val_metrics = evaluate(
+                        self.model,
+                        self.val_loader,
+                        self.loss_fn,
+                        self.device,
+                        metrics=self.metrics,
+                        branch=self.branch,
+                        progress=progress,
+                        task_id=val_task,
+                    )
+            else:
+                train_metrics = train_one_epoch(
+                    self.model,
+                    self.train_loader,
+                    self.loss_fn,
+                    self.optimizer,
+                    self.device,
+                    metrics=self.metrics,
+                    branch=self.branch,
+                )
+                val_metrics = evaluate(
+                    self.model,
+                    self.val_loader,
+                    self.loss_fn,
+                    self.device,
+                    metrics=self.metrics,
+                    branch=self.branch,
+                )
 
             epoch_log = {"epoch": epoch}
             for k, v in train_metrics.items():
@@ -95,6 +156,13 @@ class Trainer:
                 callback.on_train_end(self)
 
         return self.history
+
+    @staticmethod
+    def _loader_length(loader: DataLoader) -> Optional[int]:
+        try:
+            return len(loader)
+        except TypeError:
+            return None
 
     def _save_checkpoint(self, epoch: int):
         if self.checkpoint_dir is None:

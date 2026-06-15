@@ -66,11 +66,31 @@ def _initialize_lazy_layers(
     model_cfg = config.get("model", {})
     embedding_cfg = model_cfg.get("embedding", {})
     sp_cfg = model_cfg.get("string_processor", {})
-    frames = int(embedding_cfg.get("frames", 6))
+    input_type = embedding_cfg.get("input_type", "translated")
+    input_shape = embedding_cfg.get("input_shape")
     crop_size = int(sp_cfg.get("crop_size", 500))
     device = next(models["jaeger_classifier"].parameters()).device
-    dummy = torch.zeros((1, frames, crop_size), dtype=torch.long, device=device)
-    mask = torch.ones((1, frames, crop_size), dtype=torch.bool, device=device)
+
+    # Use a short dummy length; lazy layers only need to infer channel dims.
+    length = 64 if input_type == "nucleotide" else max(1, crop_size // 3 - 1)
+
+    if input_shape is not None and len(input_shape) == 3:
+        # One-hot input, e.g. [2, null, 4] or [6, null, vocab_size].
+        frames = int(input_shape[0])
+        channels = int(input_shape[2])
+        dummy = torch.zeros((1, frames, length, channels), dtype=torch.float32, device=device)
+    else:
+        # Integer-index input, e.g. [2, null] or [6, null].
+        frames = int(input_shape[0]) if input_shape else (
+            2 if input_type == "nucleotide" else 6
+        )
+        dummy = torch.zeros((1, frames, length), dtype=torch.long, device=device)
+
+    mask = torch.ones(
+        dummy.shape[:-1] if dummy.dim() == 4 else dummy.shape,
+        dtype=torch.bool,
+        device=device,
+    )
     with torch.no_grad():
         models["jaeger_classifier"](dummy, mask)
 
@@ -118,47 +138,44 @@ def _callback_path_from_config(
     return None
 
 
+_SUPPORTED_CALLBACKS = {"EarlyStopping", "ModelCheckpoint"}
+
+
 def _build_callbacks(train_cfg: Dict[str, Any]) -> List[Any]:
     """Build PyTorch callbacks from the training config."""
     callbacks: List[Any] = []
     callbacks_cfg = train_cfg.get("callbacks", {}).get("classifier", [])
 
-    # EarlyStopping
-    early_params = _callback_path_from_config(callbacks_cfg, "EarlyStopping")
-    patience = train_cfg.get("patience")
-    if early_params is not None and patience is None:
-        patience = early_params.get("patience")
-    if patience is not None:
-        callbacks.append(
-            EarlyStopping(
-                monitor=(early_params or {}).get("monitor", "val_loss")
-                or train_cfg.get("early_stopping_monitor", "val_loss"),
-                patience=int(patience),
-                mode=(early_params or {}).get("mode", "min")
-                or train_cfg.get("early_stopping_mode", "min"),
-                restore_best_weights=(early_params or {}).get(
-                    "restore_best_weights", True
-                ),
-            )
-        )
-
-    # ModelCheckpoint
-    checkpoint_params = _callback_path_from_config(callbacks_cfg, "ModelCheckpoint")
-    checkpoint_path = train_cfg.get("checkpoint_path")
-    if checkpoint_params is not None and checkpoint_path is None:
-        checkpoint_path = checkpoint_params.get("filepath")
-    if checkpoint_path is not None:
-        callbacks.append(
-            ModelCheckpoint(
-                filepath=checkpoint_path,
-                monitor=(checkpoint_params or {}).get("monitor", "val_loss")
-                or train_cfg.get("checkpoint_monitor", "val_loss"),
-                mode=(checkpoint_params or {}).get("mode", "min")
-                or train_cfg.get("checkpoint_mode", "min"),
-                save_best_only=(checkpoint_params or {}).get("save_best_only", True),
-                verbose=int((checkpoint_params or {}).get("verbose", 1) or 0),
-            )
-        )
+    for entry in callbacks_cfg:
+        name = entry.get("name")
+        params = entry.get("params") or {}
+        if name == "EarlyStopping":
+            patience = params.get("patience") or train_cfg.get("patience")
+            if patience is not None:
+                callbacks.append(
+                    EarlyStopping(
+                        monitor=params.get("monitor", "val_loss"),
+                        patience=int(patience),
+                        mode=params.get("mode", "min"),
+                        restore_best_weights=params.get("restore_best_weights", True),
+                    )
+                )
+        elif name == "ModelCheckpoint":
+            checkpoint_path = params.get("filepath") or train_cfg.get("checkpoint_path")
+            if checkpoint_path is not None:
+                callbacks.append(
+                    ModelCheckpoint(
+                        filepath=checkpoint_path,
+                        monitor=params.get("monitor", "val_loss"),
+                        mode=params.get("mode", "min"),
+                        save_best_only=params.get("save_best_only", True),
+                        verbose=int(params.get("verbose", 1) or 0),
+                    )
+                )
+        elif name in _SUPPORTED_CALLBACKS:
+            continue
+        else:
+            logger.warning("Ignoring unsupported callback: %s", name)
 
     return callbacks
 
@@ -332,8 +349,17 @@ def train_fragment_core(**kwargs):
             opt_params = train_cfg.get("optimizer_params", {}) or {}
             train_cfg["optimizer_params"] = _normalize_optimizer_params(opt_params)
 
+            class_weights = train_cfg.get("classifier_class_weights")
+            if class_weights is not None:
+                weight_tensor = torch.zeros(builder.classifier_out_dim)
+                for idx, w in class_weights.items():
+                    weight_tensor[int(idx)] = float(w)
+                class_weights = weight_tensor.to(device)
+
             model, optimizer, loss_fn = builder.compile_model(
-                models, train_branch="classifier"
+                models,
+                train_branch="classifier",
+                class_weights=class_weights,
             )
 
             checkpoint_path = None
@@ -366,6 +392,7 @@ def train_fragment_core(**kwargs):
                     checkpoint_dir=str(classifier_dir),
                     history_path=str(classifier_dir / "history.json"),
                     branch="classifier",
+                    progress_bar=kwargs.get("progress_bar", False),
                 )
                 trainer.fit()
 
@@ -422,6 +449,7 @@ def train_fragment_core(**kwargs):
                     checkpoint_dir=str(reliability_dir),
                     history_path=str(reliability_dir / "history.json"),
                     branch="reliability",
+                    progress_bar=kwargs.get("progress_bar", False),
                 )
                 rel_trainer.fit()
 

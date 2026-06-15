@@ -145,3 +145,31 @@ def test_train_fragment_core_only_classification_head(tmp_path):
         xla=False,
         meta=None,
     )
+
+
+def test_train_fragment_core_progress_bar(tmp_path):
+    """``train_fragment_core`` should support the ``--progress-bar`` path."""
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_raw_npz(train_path, n_samples=8, seq_length=seq_length)
+    _make_raw_npz(val_path, n_samples=4, seq_length=seq_length)
+
+    config_path = tmp_path / "config.yaml"
+    config = _build_config(tmp_path, train_path, val_path)
+    config_path.write_text(yaml.safe_dump(config))
+
+    train_fragment_core(
+        config=str(config_path),
+        mixed_precision=False,
+        from_last_checkpoint=False,
+        force=False,
+        only_classification_head=False,
+        only_reliability_head=False,
+        only_heads=False,
+        only_save=False,
+        save_model=False,
+        self_supervised_pretraining=False,
+        xla=False,
+        meta=None,
+        progress_bar=True,
+    )
