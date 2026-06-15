@@ -131,3 +131,53 @@ def test_evaluate_profile_returns_timings():
     assert "time_forward_ms" in history
     assert "time_metrics_ms" in history
     assert "time_backward_ms" not in history
+
+
+class _CounterClassifier(DummyClassifier):
+    """Classifier that counts forward calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.forward_count = 0
+
+    def forward(self, x, mask=None):
+        self.forward_count += 1
+        return super().forward(x, mask)
+
+
+def test_train_one_epoch_respects_train_steps():
+    """train_one_epoch should stop after train_steps batches."""
+    model = _CounterClassifier()
+    loader = _make_dummy_loader(n=20)  # 5 batches of 4
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    history = train_one_epoch(
+        model, loader, loss_fn, optimizer, torch.device("cpu"), train_steps=2
+    )
+    assert "loss" in history
+    assert model.forward_count == 2
+
+
+def test_train_one_epoch_negative_train_steps_runs_all():
+    """Negative train_steps should run through the whole dataloader."""
+    model = _CounterClassifier()
+    loader = _make_dummy_loader(n=20)  # 5 batches
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    history = train_one_epoch(
+        model, loader, loss_fn, optimizer, torch.device("cpu"), train_steps=-1
+    )
+    assert "loss" in history
+    assert model.forward_count == 5
+
+
+def test_evaluate_respects_validation_steps():
+    """evaluate should stop after validation_steps batches."""
+    model = _CounterClassifier()
+    loader = _make_dummy_loader(n=20)  # 5 batches of 4
+    loss_fn = torch.nn.CrossEntropyLoss()
+    history = evaluate(
+        model, loader, loss_fn, torch.device("cpu"), validation_steps=2
+    )
+    assert "loss" in history
+    assert model.forward_count == 2

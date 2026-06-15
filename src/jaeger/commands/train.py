@@ -59,6 +59,17 @@ def _count_parameters(model: nn.Module) -> Tuple[int, int]:
     return total, trainable
 
 
+def _resolve_steps(value: Optional[int]) -> Optional[int]:
+    """Convert a config step count to a value understood by the engine.
+
+    ``None`` or negative values mean "run until the dataloader is exhausted".
+    Zero or positive values limit the loop to that many batches.
+    """
+    if value is None or value < 0:
+        return None
+    return int(value)
+
+
 def _initialize_lazy_layers(
     models: Dict[str, nn.Module], config: Dict[str, Any]
 ) -> None:
@@ -383,6 +394,10 @@ def train_fragment_core(**kwargs):
 
             callbacks = _build_callbacks(train_cfg)
             epochs = int(train_cfg.get("classifier_epochs", 1))
+            train_steps = _resolve_steps(train_cfg.get("classifier_train_steps"))
+            validation_steps = _resolve_steps(
+                train_cfg.get("classifier_validation_steps")
+            )
 
             if kwargs.get("only_save", False):
                 logger.info("Skipping classifier training (--only_save)")
@@ -402,6 +417,8 @@ def train_fragment_core(**kwargs):
                     branch="classifier",
                     progress_bar=kwargs.get("progress_bar", False),
                     profile=kwargs.get("profile", False),
+                    train_steps=train_steps,
+                    validation_steps=validation_steps,
                 )
                 trainer.fit()
 
@@ -444,6 +461,12 @@ def train_fragment_core(**kwargs):
 
                 rel_callbacks = _build_callbacks(train_cfg)
                 rel_epochs = int(train_cfg.get("reliability_epochs", 1))
+                rel_train_steps = _resolve_steps(
+                    train_cfg.get("reliability_train_steps")
+                )
+                rel_validation_steps = _resolve_steps(
+                    train_cfg.get("reliability_validation_steps")
+                )
 
                 rel_trainer = Trainer(
                     model=rel_pipeline,
@@ -460,6 +483,8 @@ def train_fragment_core(**kwargs):
                     branch="reliability",
                     progress_bar=kwargs.get("progress_bar", False),
                     profile=kwargs.get("profile", False),
+                    train_steps=rel_train_steps,
+                    validation_steps=rel_validation_steps,
                 )
                 rel_trainer.fit()
 

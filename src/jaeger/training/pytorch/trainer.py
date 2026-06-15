@@ -48,6 +48,8 @@ class Trainer:
         branch: str = "classifier",
         progress_bar: bool = False,
         profile: bool = False,
+        train_steps: Optional[int] = None,
+        validation_steps: Optional[int] = None,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -63,6 +65,8 @@ class Trainer:
         self.branch = branch
         self.progress_bar = progress_bar
         self.profile = profile
+        self.train_steps = train_steps
+        self.validation_steps = validation_steps
         self.history: List[Dict[str, float]] = []
         self.should_stop = False
 
@@ -77,6 +81,17 @@ class Trainer:
                 if hasattr(callback, "on_epoch_begin"):
                     callback.on_epoch_begin(self, epoch)
 
+            train_total = (
+                self.train_steps
+                if self.train_steps is not None
+                else self._loader_length(self.train_loader)
+            )
+            val_total = (
+                self.validation_steps
+                if self.validation_steps is not None
+                else self._loader_length(self.val_loader)
+            )
+
             if self.progress_bar:
                 with Progress(
                     TextColumn("[progress.description]{task.description}"),
@@ -88,11 +103,11 @@ class Trainer:
                 ) as progress:
                     train_task = progress.add_task(
                         f"train epoch {epoch}/{self.epochs}",
-                        total=self._loader_length(self.train_loader),
+                        total=train_total,
                     )
                     val_task = progress.add_task(
                         f"val epoch {epoch}/{self.epochs}",
-                        total=self._loader_length(self.val_loader),
+                        total=val_total,
                     )
                     train_metrics = train_one_epoch(
                         self.model,
@@ -105,6 +120,7 @@ class Trainer:
                         progress=progress,
                         task_id=train_task,
                         profile=self.profile,
+                        train_steps=self.train_steps,
                     )
                     val_metrics = evaluate(
                         self.model,
@@ -116,6 +132,7 @@ class Trainer:
                         progress=progress,
                         task_id=val_task,
                         profile=self.profile,
+                        validation_steps=self.validation_steps,
                     )
             else:
                 train_metrics = train_one_epoch(
@@ -127,6 +144,7 @@ class Trainer:
                     metrics=self.metrics,
                     branch=self.branch,
                     profile=self.profile,
+                    train_steps=self.train_steps,
                 )
                 val_metrics = evaluate(
                     self.model,
@@ -136,6 +154,7 @@ class Trainer:
                     metrics=self.metrics,
                     branch=self.branch,
                     profile=self.profile,
+                    validation_steps=self.validation_steps,
                 )
 
             epoch_log = {"epoch": epoch}

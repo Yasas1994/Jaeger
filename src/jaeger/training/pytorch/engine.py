@@ -26,11 +26,16 @@ def train_one_epoch(
     progress: Optional[Any] = None,
     task_id: Optional[Any] = None,
     profile: bool = False,
+    train_steps: Optional[int] = None,
 ) -> Dict[str, float]:
     """Train for one epoch and return averaged loss and metrics.
 
     When ``profile=True``, per-section timings are included in the progress
     bar description and returned under keys prefixed with ``time_``.
+
+    If ``train_steps`` is a non-negative integer, training stops after that
+    many batches even if the dataloader has more data. Negative values or
+    ``None`` mean iterate until the dataloader is exhausted.
     """
     model.train()
     total_loss = 0.0
@@ -50,7 +55,9 @@ def train_one_epoch(
                 m.reset()
 
     data_start = time.perf_counter()
-    for batch in dataloader:
+    for batch_idx, batch in enumerate(dataloader):
+        if train_steps is not None and train_steps >= 0 and batch_idx >= train_steps:
+            break
         data_time = time.perf_counter() - data_start
         timing["data"] += data_time
 
@@ -153,11 +160,16 @@ def evaluate(
     progress: Optional[Any] = None,
     task_id: Optional[Any] = None,
     profile: bool = False,
+    validation_steps: Optional[int] = None,
 ) -> Dict[str, float]:
     """Evaluate and return averaged loss and metrics.
 
     When ``profile=True``, per-section timings are included in the progress
     bar description and returned under keys prefixed with ``time_``.
+
+    If ``validation_steps`` is a non-negative integer, evaluation stops after
+    that many batches even if the dataloader has more data. Negative values or
+    ``None`` mean iterate until the dataloader is exhausted.
     """
     model.eval()
     total_loss = 0.0
@@ -172,7 +184,13 @@ def evaluate(
 
     with torch.no_grad():
         data_start = time.perf_counter()
-        for batch in dataloader:
+        for batch_idx, batch in enumerate(dataloader):
+            if (
+                validation_steps is not None
+                and validation_steps >= 0
+                and batch_idx >= validation_steps
+            ):
+                break
             data_time = time.perf_counter() - data_start
             timing["data"] += data_time
 

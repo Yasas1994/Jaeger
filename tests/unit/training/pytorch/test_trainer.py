@@ -87,3 +87,43 @@ def test_trainer_fit_with_progress_bar():
         assert len(history) == 1
         assert "train_loss" in history[0]
         assert "val_loss" in history[0]
+
+
+class _CounterModel(_DummyClassifier):
+    """Model that counts forward calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.forward_count = 0
+
+    def forward(self, x, mask=None):
+        self.forward_count += 1
+        return super().forward(x, mask)
+
+
+def test_trainer_respects_train_and_validation_steps():
+    """Trainer should pass train_steps/validation_steps to the engine loops."""
+    model = _CounterModel()
+    train_loader = _make_dummy_data(n=20)  # 5 batches
+    val_loader = _make_dummy_data(n=12)  # 3 batches
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            epochs=2,
+            device=torch.device("cpu"),
+            checkpoint_dir=tmpdir,
+            history_path=Path(tmpdir) / "history.json",
+            train_steps=2,
+            validation_steps=1,
+        )
+        history = trainer.fit()
+        assert len(history) == 2
+        # Each epoch runs train_steps + validation_steps forward passes.
+        assert model.forward_count == 2 * (2 + 1)

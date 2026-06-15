@@ -173,3 +173,48 @@ def test_train_fragment_core_progress_bar(tmp_path):
         meta=None,
         progress_bar=True,
     )
+
+
+def test_train_fragment_core_respects_config_steps(tmp_path, monkeypatch):
+    """``train_fragment_core`` should pass config train/validation steps to Trainer."""
+    from jaeger.training.pytorch import trainer as trainer_module
+
+    captured = {}
+
+    original_fit = trainer_module.Trainer.fit
+
+    def _capturing_fit(self):
+        captured["train_steps"] = self.train_steps
+        captured["validation_steps"] = self.validation_steps
+        return original_fit(self)
+
+    monkeypatch.setattr(trainer_module.Trainer, "fit", _capturing_fit)
+
+    train_path = tmp_path / "train.npz"
+    val_path = tmp_path / "val.npz"
+    _make_raw_npz(train_path, n_samples=8, seq_length=seq_length)
+    _make_raw_npz(val_path, n_samples=4, seq_length=seq_length)
+
+    config_path = tmp_path / "config.yaml"
+    config = _build_config(tmp_path, train_path, val_path)
+    config["training"]["classifier_train_steps"] = 2
+    config["training"]["classifier_validation_steps"] = 1
+    config_path.write_text(yaml.safe_dump(config))
+
+    train_fragment_core(
+        config=str(config_path),
+        mixed_precision=False,
+        from_last_checkpoint=False,
+        force=False,
+        only_classification_head=False,
+        only_reliability_head=False,
+        only_heads=False,
+        only_save=False,
+        save_model=False,
+        self_supervised_pretraining=False,
+        xla=False,
+        meta=None,
+    )
+
+    assert captured["train_steps"] == 2
+    assert captured["validation_steps"] == 1
