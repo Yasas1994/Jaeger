@@ -6,9 +6,9 @@ from typing import Any, Dict
 
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
-from jaeger.data.pytorch.collate import pad_collate
-from jaeger.data.pytorch.dataset_csv import CSVDataset
-from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
+from jaeger.dataops.pytorch.collate import pad_collate
+from jaeger.dataops.pytorch.dataset_csv import CSVDataset
+from jaeger.dataops.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
 from jaeger.seqops.maps import CODONS
 
 

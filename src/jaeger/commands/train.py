@@ -22,7 +22,7 @@ import click
 import torch
 import torch.nn as nn
 
-from jaeger.data.pytorch.builders import build_datasets
+from jaeger.dataops.pytorch.builders import build_datasets
 from jaeger.nnlib.pytorch.builder import ModelBuilder
 from jaeger.training.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from jaeger.training.pytorch.distributed import (

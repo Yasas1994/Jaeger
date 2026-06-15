@@ -1,7 +1,7 @@
 import numpy as np
 import torch
-from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
-from jaeger.data.pytorch.transforms import dna_to_indices, translate_to_codons
+from jaeger.dataops.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
+from jaeger.dataops.pytorch.transforms import dna_to_indices, translate_to_codons
 from jaeger.seqops.maps import CODONS
 
 

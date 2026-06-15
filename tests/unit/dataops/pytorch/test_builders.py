@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from jaeger.data.pytorch.builders import build_datasets
+from jaeger.dataops.pytorch.builders import build_datasets
 from jaeger.nnlib.pytorch.builder import ModelBuilder
 
 

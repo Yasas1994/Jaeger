@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Migrated the training and inference backend from TensorFlow to PyTorch.
   - New `jaeger.nnlib.pytorch` modules provide model building, layers, losses, metrics, and conversion utilities.
   - New `jaeger.training.pytorch` trainer, callbacks, and distributed helpers support multi-GPU and mixed-precision training.
-  - New `jaeger.data.pytorch` CSV/NumPy dataset builders and collators feed variable-length sequences to PyTorch models.
+  - New `jaeger.dataops.pytorch` CSV/NumPy dataset builders and collators feed variable-length sequences to PyTorch models.
   - `jaeger train` now runs the PyTorch training path by default.
   - `jaeger predict` now uses the PyTorch inference runner; legacy TensorFlow SavedModel support is retained only for deprecated models.
 

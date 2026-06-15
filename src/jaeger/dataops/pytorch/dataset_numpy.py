@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from jaeger.data.pytorch.transforms import (
+from jaeger.dataops.pytorch.transforms import (
     apply_mutation,
     shuffle_frames as shuffle_frames_fn,
     translate_to_codons,

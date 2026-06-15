@@ -1,6 +1,6 @@
 import csv
 
-from jaeger.data.pytorch.dataset_csv import CSVDataset
+from jaeger.dataops.pytorch.dataset_csv import CSVDataset
 from jaeger.seqops.maps import CODONS
 
 

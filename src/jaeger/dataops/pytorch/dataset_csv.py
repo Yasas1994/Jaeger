@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from jaeger.data.pytorch.transforms import dna_to_indices, translate_to_codons
+from jaeger.dataops.pytorch.transforms import dna_to_indices, translate_to_codons
 
 
 class CSVDataset(Dataset):
@@ -58,7 +58,7 @@ class CSVDataset(Dataset):
         label, seq = self.rows[idx]
         seq_indices = dna_to_indices(seq)
         if self.mutate:
-            from jaeger.data.pytorch.transforms import apply_mutation
+            from jaeger.dataops.pytorch.transforms import apply_mutation
 
             seq_indices = apply_mutation(seq_indices, self.mutation_rate)
 
@@ -77,7 +77,7 @@ class CSVDataset(Dataset):
         mask = x != 0
 
         if self.shuffle_frames:
-            from jaeger.data.pytorch.transforms import shuffle_frames
+            from jaeger.dataops.pytorch.transforms import shuffle_frames
 
             x = shuffle_frames(x)
 

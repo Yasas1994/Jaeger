@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from jaeger.data.pytorch.builders import build_datasets
-from jaeger.data.pytorch.collate import pad_collate
-from jaeger.data.pytorch.dataset_csv import CSVDataset
-from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
+from jaeger.dataops.pytorch.builders import build_datasets
+from jaeger.dataops.pytorch.collate import pad_collate
+from jaeger.dataops.pytorch.dataset_csv import CSVDataset
+from jaeger.dataops.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
 
 __all__ = [
     "build_datasets",

@@ -83,8 +83,8 @@ jaeger health
 | `src/jaeger/cli.py` | Click CLI definition, PyTorch/legacy model routing, and TF import suppression for legacy workflows |
 | `src/jaeger/commands/` | Command implementations: `predict`, `predict_legacy`, `train`, `tune`, `health`, `quantize`, `convert_graph`, `taxonomy`, `downloads`, `test`, plus `utils*.py` |
 | `src/jaeger/nnlib/` | Neural-network library: `v1/` and `v2/` layers, losses, metrics, inference, conversion, builder |
-| `src/jaeger/dataops/` | Data operations: `convert.py`, `dataset.py`, `ood.py`, `split.py` |
-| `src/jaeger/data/` | Bundled data (`config.json`), TFRecord helpers, dataset loaders |
+| `src/jaeger/dataops/` | Data operations: `convert.py`, `dataset.py`, `ood.py`, `split.py`, and the `pytorch/` dataset loaders/builders |
+| `src/jaeger/data/` | Bundled data (`config.json`), model artifacts, and test fixtures |
 | `src/jaeger/seqops/` | Sequence operations: encode, maps, stats, synthetic, transform, validate, io |
 | `src/jaeger/postprocess/` | Post-processing: `collect.py`, `helpers.py`, `prophages.py` |
 | `src/jaeger/preprocess/` | Preprocessing maps/converters (`v1/`, `v2/`) |

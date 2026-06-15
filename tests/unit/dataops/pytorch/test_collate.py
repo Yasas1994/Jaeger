@@ -1,6 +1,6 @@
 import torch
 
-from jaeger.data.pytorch.collate import pad_collate
+from jaeger.dataops.pytorch.collate import pad_collate
 
 
 def test_pad_collate_variable_length_2d():
