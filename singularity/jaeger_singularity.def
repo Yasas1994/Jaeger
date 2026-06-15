@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: tensorflow/tensorflow:2.15.0-gpu  # Build upon the latest TensorFlow GPU-enabled base image
+From: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime  # PyTorch GPU-enabled base image
 
 %post
     # Update and install system dependencies
@@ -9,17 +9,17 @@ From: tensorflow/tensorflow:2.15.0-gpu  # Build upon the latest TensorFlow GPU-e
         python3-pip \
         && rm -rf /var/lib/apt/lists/*
 
-    # Install Jaeger and other dependencies
-    pip install --root-user-action=ignore --no-cache-dir "jaeger-bio==1.26.2"  # install jaeger without tensorflow support
+    # Install Jaeger with PyTorch/GPU extras
+    pip install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu]"
 
 %environment
-    # Set environment variables for TensorFlow GPU usage
-    export TF_FORCE_GPU_ALLOW_GROWTH=true
-    export NVIDIA_VISIBLE_DEVICES=all  # Makes all GPUs visible to the container
-    export NVIDIA_DRIVER_CAPABILITIES=compute,utility  # Required for GPU support in TensorFlow
+    # Make all GPUs visible to the container
+    export NVIDIA_VISIBLE_DEVICES=all
+    # Required for GPU support in PyTorch
+    export NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 
 %labels
     Author: "Yasas Wijesekara"
-    Version: "1.4"
-    Description: "Apptainer container with Jaeger and TensorFlow GPU support"
+    Version: "1.5"
+    Description: "Apptainer container with Jaeger and PyTorch GPU support"

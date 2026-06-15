@@ -63,3 +63,4 @@ kimi-export-*.md
 # Local/test train configs
 train_config/nn_config_500bp_*_test.yaml
 train_config/nn_config_500bp_*_zeus_v2.yaml
+train_config/nn_config_500bp_dvf.yaml

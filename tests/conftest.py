@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-import os
+import logging
 import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
-import tensorflow as tf
 
-# Keep TF reasonably quiet during tests.
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+
+@pytest.fixture
+def propagate_jaeger_logger(monkeypatch):
+    """Re-enable propagation on the ``jaeger`` logger so caplog can capture."""
+    logger = logging.getLogger("jaeger")
+    monkeypatch.setattr(logger, "propagate", True)
 
 
 @pytest.fixture

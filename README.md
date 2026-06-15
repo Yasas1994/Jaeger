@@ -20,7 +20,9 @@ Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequence
 
 
 
-Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
+Jaeger is a tool that utilizes homology-free deep learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
+
+> ⚡ **Jaeger v1.27+ uses PyTorch as its default training and inference backend.** Legacy TensorFlow SavedModels are still supported via `jaeger predict-legacy` but are deprecated.
 
 > 📚 **For detailed installation instructions, usage guides, and troubleshooting, please visit the [documentation](https://jaeger.readthedocs.io/en/latest/installation.html).**
 
@@ -81,6 +83,8 @@ jaeger health
 
 
 ##### option 3 : Installing from PyPI (recommended)
+
+The PyPI package installs the PyTorch backend by default.
 
 ```bash
 # create a conda environment and activate

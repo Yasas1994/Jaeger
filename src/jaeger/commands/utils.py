@@ -554,18 +554,21 @@ def optimize_data_core(
     output_path: str,
     format: str,
     crop_size: int = 500,
+    stride: int = 0,
     num_classes: int = 3,
     num_workers: int | None = None,
-    use_embedding_layer: bool = True,
+    one_hot: bool = False,
+    pad_int: int = 0,
+    codon_map: str = "CODON_ID",
     max_length: int = 5000,
+    compress: str = "fast",
 ):
-    """Convert Jaeger CSV training data to an optimized format.
+    """Convert Jaeger CSV training data to an optimized NPZ format.
 
-    Supports four output formats:
-        - tfrecord: Preprocessed tensors in TFRecord format
-        - numpy_raw: int8 sequences + TF preprocessing at train time
-        - numpy_full: Fully preprocessed, fastest loading
-        - numpy_raw_variable: Variable-length int8 sequences
+    Produces variable-length padded outputs for the requested representation:
+        - nucleotide: 2-strand nucleotide indices/one-hot
+        - translated: 6-frame codon indices/one-hot
+        - both:       store both nucleotide and translated arrays
 
     Parameters
     ----------
@@ -574,41 +577,45 @@ def optimize_data_core(
     output_path : str
         Path to output file.
     format : str
-        One of: tfrecord, numpy_raw, numpy_full, numpy_raw_variable.
+        One of: nucleotide, translated, both.
     crop_size : int
-        Sequence crop size (default: 500).
+        Maximum sequence length to process (default: 500).
+    stride : int
+        Sliding-window step in nucleotides. 0 means one crop per sequence.
     num_classes : int
         Number of classes (default: 3).
     num_workers : int | None
-        Number of parallel workers for CPU-bound formats.
+        Number of parallel workers for CPU-bound conversion.
         Defaults to all CPUs.
-    use_embedding_layer : bool
-        For tfrecord: use embedding layer (int indices) vs one-hot.
+    one_hot : bool
+        Output float one-hot tensors instead of integer indices.
+    pad_int : int
+        Integer value used for padding and stored as ``pad_int`` in the NPZ.
+    codon_map : str
+        Name of a length-64 codon map in ``jaeger.seqops.maps``.
     max_length : int
-        For numpy_raw_variable: maximum sequence length.
+        Deprecated; kept for compatibility but ignored.
+    compress : str
+        NPZ compression level: fast (zlib 1), default (zlib 6), or none.
     """
     format = format.lower()
-    valid_formats = [
-        "tfrecord",
-        "numpy_raw",
-        "numpy_full",
-        "numpy_raw_variable",
-    ]
+    valid_formats = ["nucleotide", "translated", "both"]
     if format not in valid_formats:
         raise ValueError(
             f"Invalid format: {format}. Choose from: {', '.join(valid_formats)}"
         )
-
-    print(f"Converting {input_path} -> {output_path}")
-    print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
 
     convert_dataset(
         input_path=input_path,
         output_path=output_path,
         format=format,
         crop_size=crop_size,
+        stride=stride,
         num_classes=num_classes,
         num_workers=num_workers,
-        use_embedding_layer=use_embedding_layer,
+        one_hot=one_hot,
+        pad_int=pad_int,
+        codon_map=codon_map,
         max_length=max_length,
+        compress=compress,
     )

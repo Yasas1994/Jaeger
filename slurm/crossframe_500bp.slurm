@@ -9,16 +9,12 @@
 #SBATCH --output=/mnt/beegfs/bioinf/wijesekara/jaeger/logs/crossframe_%j.log
 #SBATCH --error=/mnt/beegfs/bioinf/wijesekara/jaeger/logs/crossframe_%j.err
 
-echo "=== Jaeger 500bp crossframe training (mixed precision + XLA) ==="
+echo "=== Jaeger 500bp crossframe training (PyTorch) ==="
 echo "Running on: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "Started at: $(date)"
 
-export TF_FORCE_GPU_ALLOW_GROWTH=true
 export CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES
-
-# Enable XLA for faster training
-export TF_XLA_FLAGS="--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
 
 # Job-specific install directory to avoid conflicts
 INSTALL_DIR=/mnt/beegfs/bioinf/wijesekara/jaeger/.local_${SLURM_JOB_ID}_crossframe
@@ -37,6 +33,6 @@ apptainer exec --nv \
   --bind /mnt/beegfs/bioinf/wijesekara/jaeger/experiments:/data/experiments \
   --bind $INSTALL_DIR:/home/wijesekara/.local \
   /mnt/beegfs/bioinf/wijesekara/jaeger/jaeger_dev.sif \
-  bash -c "cd /jaeger && pip install --target=/home/wijesekara/.local/lib/python3.12/site-packages --no-deps -e . && jaeger train -c /jaeger/train_config/nn_config_500bp_crossframe_zeus.yaml --force --mixed_precision"
+  bash -c "cd /jaeger && pip install --target=/home/wijesekara/.local/lib/python3.12/site-packages --no-deps -e . && jaeger train -c /jaeger/train_config/nn_config_500bp_crossframe_zeus.yaml --force"
 
 echo "Finished at: $(date)"

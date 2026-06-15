@@ -14,7 +14,7 @@ includes = ["src/jaeger/**/*.py", "src/jaeger/**/*.json", "src/jaeger/**/*.h5", 
 
 [project]
 name = "jaeger-bio"
-version = "1.26.4"
+version = "1.27.1"
 description = "A quick and precise pipeline for detecting phages in sequence assemblies."
 readme = "README.md"
 authors = [
@@ -44,6 +44,7 @@ dependencies = [
     "requests >= 2.0",
     "rich >= 13.0",
     "scipy >= 1.10",
+    "torchinfo >=1.8.0",
     "pyfastx >= 2",
     "ruptures >= 1.1.9",
     "scikit-learn >= 1.6.0",
@@ -61,15 +62,22 @@ jaeger = "jaeger.cli:main"
 Homepage = "https://github.com/Yasas1994/Jaeger"
 
 [project.optional-dependencies]
-darwin-arm = [
-    "tensorflow >=2.21, <2.22",
-    "tensorflow-metal",
-]
 gpu = [
-    "tensorflow[and-cuda] >=2.21, <2.22",
+    "torch >=2.0, <3.0",
 ]
 cpu = [
+    "torch >=2.0, <3.0",
+]
+darwin-arm = [
+    "torch >=2.0, <3.0",
+]
+legacy = [
     "tensorflow >=2.21, <2.22",
+]
+test = [
+    "pytest >=8.0",
+    "pytest-mock >=3.14",
+    "numba>=0.59",
 ]
 onnx = [
     "onnxruntime-gpu >=1.26",
@@ -77,11 +85,10 @@ onnx = [
     "sympy >=1.13",
     "onnx >=1.16",
 ]
-test = [
-    "pytest >=8.0",
-    "pytest-mock >=3.14",
-]
 taxonomy = [
     "taxopy",
     "faiss-cpu",
+]
+numba = [
+    "numba>=0.59",
 ]

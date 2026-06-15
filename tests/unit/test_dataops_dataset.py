@@ -20,9 +20,7 @@ class TestReadSequences:
     def test_read_csv(self, tmp_path: Path):
         csv = tmp_path / "in.csv"
         csv.write_text("0,ATGCATGC,seq1\n1,GCTAGCTA,seq2\n")
-        records = dataset.read_sequences(
-            csv, intype="CSV", seq_col=1, class_col=0
-        )
+        records = dataset.read_sequences(csv, intype="CSV", seq_col=1, class_col=0)
         assert len(records) == 2
         assert records[0][1] == "ATGCATGC"
 

@@ -1,22 +1,44 @@
 """Dataset format converters.
 
-Converts CSV training data to optimized formats:
-- ``tfrecord`` — TensorFlow TFRecord with preprocessed tensors.
-- ``numpy_raw`` — int8 DNA sequences (fast loading, runtime preprocessing).
-- ``numpy_full`` — fully preprocessed tensors (fastest loading, no augmentations).
-- ``numpy_raw_variable`` — variable-length int8 sequences.
+Converts CSV training data to optimized, variable-length padded NPZ formats:
+- ``nucleotide``   - 2-strand nucleotide indices or one-hot tensors.
+- ``translated``   - 6-frame codon indices or one-hot tensors.
+- ``both``         - store both nucleotide and translated arrays.
 
-The ``numpy_full`` converter uses Numba JIT when available for ~5× speedup.
+Integer outputs reserve ``pad_int`` (default 0) for padding. One-hot outputs use
+all-zero vectors for padding and for ambiguous bases (N).
 """
 
 from __future__ import annotations
 
+import multiprocessing
 import time
 from functools import partial
-from multiprocessing import Pool, cpu_count
-from pathlib import Path
+from multiprocessing import cpu_count
+from typing import Dict, List, Tuple
 
 import numpy as np
+import psutil
+
+
+def _save_npz(output_path: str, data: Dict[str, np.ndarray], compress: str):
+    """Save arrays to NPZ with the requested compression level."""
+    if compress == "default":
+        np.savez_compressed(output_path, **data)
+    elif compress == "none":
+        np.savez(output_path, **data)
+    else:  # fast
+        import io
+        import zipfile
+
+        with zipfile.ZipFile(
+            output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1
+        ) as zf:
+            for key, arr in data.items():
+                buf = io.BytesIO()
+                np.save(buf, arr)
+                zf.writestr(f"{key}.npy", buf.getvalue())
+
 
 # ---------------------------------------------------------------------------
 # Numba availability
@@ -38,218 +60,141 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# TFRecord helpers
+# Lookup tables for Numba kernels
 # ---------------------------------------------------------------------------
-def _int64_feature(value):
-    """Returns an int64_list from a bool / enum / int / uint."""
-    import tensorflow as tf
-
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
-
-
-def _float_feature(value):
-    """Returns a float_list from a float / double."""
-    import tensorflow as tf
-
-    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
-
-
-def _serialize_tfrecord_embedding(translated, label):
-    """Serialize a single example for embedding layer (int32 indices)."""
-    import tensorflow as tf
-
-    translated_flat = tf.reshape(translated, [-1])
-    feature = {
-        "translated": _int64_feature(translated_flat.numpy().tolist()),
-        "label": _float_feature(label.numpy().flatten().tolist()),
-    }
-    return tf.train.Example(
-        features=tf.train.Features(feature=feature)
-    ).SerializeToString()
+def _build_ascii_to_base_idx() -> np.ndarray:
+    """Return a (256,) int8 array mapping ASCII bytes to A/T/G/C/N indices."""
+    table = np.full(256, 4, dtype=np.int8)
+    table[ord("A")] = 0
+    table[ord("T")] = 1
+    table[ord("G")] = 2
+    table[ord("C")] = 3
+    table[ord("a")] = 0
+    table[ord("t")] = 1
+    table[ord("g")] = 2
+    table[ord("c")] = 3
+    return table
 
 
-def _serialize_tfrecord_onehot(translated, label):
-    """Serialize a single example for one-hot encoded input (float32)."""
-    import tensorflow as tf
-
-    translated_flat = tf.reshape(translated, [-1])
-    feature = {
-        "translated": _float_feature(translated_flat.numpy().flatten().tolist()),
-        "label": _float_feature(label.numpy().flatten().tolist()),
-    }
-    return tf.train.Example(
-        features=tf.train.Features(feature=feature)
-    ).SerializeToString()
+def _build_complement_lut() -> np.ndarray:
+    """Return a (5,) int8 array mapping A<->T, G<->C, N->N."""
+    return np.array([1, 0, 3, 2, 4], dtype=np.int8)
 
 
-def _convert_to_tfrecord(
-    csv_path, output_path, total, preprocess_fn, use_embedding_layer
-):
-    """Convert CSV to TFRecord with preprocessed tensors."""
-    import tensorflow as tf
+def _build_codon_lut(codon_map: np.ndarray) -> np.ndarray:
+    """Return a flat (125,) int32 lookup table for 3-base combinations.
 
-    serialize_fn = (
-        _serialize_tfrecord_embedding
-        if use_embedding_layer
-        else _serialize_tfrecord_onehot
-    )
+    Index = base0 * 25 + base1 * 5 + base2 where each base is 0..4.
+    Unknown codons map to -1.
+    """
+    from jaeger.seqops.maps import CODONS
 
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    codon_to_id = {c: i for i, c in enumerate(CODONS)}
+    lut = np.full(125, -1, dtype=np.int32)
+    bases = ["A", "T", "G", "C", "N"]
+    for i in range(5):
+        for j in range(5):
+            for k in range(5):
+                codon = bases[i] + bases[j] + bases[k]
+                cid = codon_to_id.get(codon, -1)
+                if 0 <= cid < len(codon_map):
+                    lut[i * 25 + j * 5 + k] = int(codon_map[cid])
+    return lut
 
-    with tf.io.TFRecordWriter(output_path) as writer:
-        start = time.time()
-        with open(csv_path) as f:
-            for i, line in enumerate(f):
-                outputs, label = preprocess_fn(line.strip().encode())
-                translated = outputs["translated"]
-                example = serialize_fn(translated, label)
-                writer.write(example)
-                if (i + 1) % 5000 == 0:
-                    elapsed = time.time() - start
-                    rate = (i + 1) / elapsed
-                    print(
-                        f"  {i + 1}/{total} ({100 * (i + 1) / total:.1f}%) - {rate:.1f} samples/sec"
-                    )
-        elapsed = time.time() - start
-        print(
-            f"Done! {total} samples in {elapsed:.1f}s ({total / elapsed:.1f} samples/sec)"
+
+_ASCII_TO_BASE_IDX = _build_ascii_to_base_idx()
+_COMPLEMENT_LUT = _build_complement_lut()
+
+
+# Use forkserver on Linux to avoid fork-deadlocks when the parent process has
+# background threads (e.g. from PyTorch/NumPy/OpenMP). Fall back to the default
+# context on platforms where forkserver is unavailable.
+try:
+    _MP_CONTEXT = multiprocessing.get_context("forkserver")
+except ValueError:
+    _MP_CONTEXT = multiprocessing.get_context()
+
+
+# ---------------------------------------------------------------------------
+# Memory guard helpers
+# ---------------------------------------------------------------------------
+def _estimate_onehot_memory(
+    total_rows: int,
+    crop_size: int,
+    format: str,
+    one_hot: bool,
+    codon_map_arr: np.ndarray | None = None,
+) -> int:
+    """Return the estimated raw float32 bytes needed for one-hot output.
+
+    Returns 0 when ``one_hot`` is False or ``format`` does not require it.
+    """
+    if not one_hot:
+        return 0
+
+    total_rows = max(0, total_rows)
+    crop_size = max(0, crop_size)
+    estimated = 0
+
+    if format in ("nucleotide", "both"):
+        # (2 strands, crop_size, 4 bases) float32
+        estimated += total_rows * 2 * crop_size * 4 * np.dtype(np.float32).itemsize
+
+    if format in ("translated", "both") and codon_map_arr is not None:
+        vocab_size = int(codon_map_arr.max()) + 1
+        max_codon_len = max(0, crop_size // 3 - 1)
+        # (6 frames, max_codon_len, vocab_size) float32
+        estimated += (
+            total_rows * 6 * max_codon_len * vocab_size * np.dtype(np.float32).itemsize
+        )
+
+    return int(estimated)
+
+
+def _check_onehot_memory(
+    estimated_bytes: int,
+    available_bytes: int,
+    fraction: float = 0.75,
+) -> None:
+    """Raise MemoryError if the estimated one-hot buffer is too large.
+
+    The ``fraction`` sets a safety margin below 100 % of available RAM to
+    leave room for the OS, worker overhead, and intermediate copies.
+    """
+    if estimated_bytes <= 0:
+        return
+
+    if estimated_bytes > available_bytes * fraction:
+        raise MemoryError(
+            f"Estimated one-hot output requires {estimated_bytes / (1024 ** 3):.1f} GiB, "
+            f"but only {available_bytes / (1024 ** 3):.1f} GiB RAM is available "
+            f"(safety fraction: {fraction:.0%}). "
+            "Avoid one-hot encoding for large files; use integer encoding instead "
+            "and let the dataloader/model convert to one-hot at training time."
         )
 
 
-def _convert_with_tf(
-    csv_path: str,
-    output_path: str,
-    format: str,
-    crop_size: int,
-    num_classes: int,
-    use_embedding_layer: bool,
-):
-    """Convert CSV using TensorFlow preprocessing (tfrecord only)."""
-    from jaeger.seqops.encode import process_string_train
-    from jaeger.seqops.maps import CODONS, CODON_ID
-
-    total = sum(1 for _ in open(csv_path))
-    print(f"Total samples: {total}")
-
-    preprocess_fn = process_string_train(
-        crop_size=crop_size,
-        seq_onehot=False,
-        input_type="translated",
-        class_label_onehot=True,
-        num_classes=num_classes,
-        shuffle=False,
-        ngram_width=3,
-        codons=CODONS,
-        codon_num=CODON_ID,
-    )
-
-    _convert_to_tfrecord(
-        csv_path, output_path, total, preprocess_fn, use_embedding_layer
-    )
+def _count_lines(path: str) -> int:
+    """Count newline-terminated rows without loading the whole file."""
+    count = 0
+    with open(path, "rb") as f:
+        for _ in f:
+            count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------
-# numpy_raw (int8 sequences)
+# Constants
 # ---------------------------------------------------------------------------
 _BASE_MAP = {"A": 0, "T": 1, "G": 2, "C": 3, "N": 4}
 _BASE_MAP_LOWER = {"a": 0, "t": 1, "g": 2, "c": 3, "n": 4}
+_COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G", "N": "N"}
+_NUCLEOTIDE_ONEHOT_ORDER = "ATGC"
+
+_CODON_TO_ID: Dict[str, int] | None = None
 
 
-def _encode_sequence_int8(seq: str, crop_size: int) -> np.ndarray:
-    """Encode DNA sequence to int8 array."""
-    arr = np.zeros(crop_size, dtype=np.int8)
-    length = min(len(seq), crop_size)
-    for i in range(length):
-        c = seq[i]
-        if c in _BASE_MAP:
-            arr[i] = _BASE_MAP[c]
-        elif c in _BASE_MAP_LOWER:
-            arr[i] = _BASE_MAP_LOWER[c]
-        else:
-            arr[i] = 4
-    return arr
-
-
-def _process_chunk_numpy_raw(
-    lines: list[str], crop_size: int, num_classes: int
-) -> tuple:
-    """Process a chunk of CSV lines to int8 sequences."""
-    n = len(lines)
-    sequences = np.zeros((n, crop_size), dtype=np.int8)
-    labels = np.zeros((n, num_classes), dtype=np.float32)
-
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            continue
-        comma_idx = line.find(",")
-        if comma_idx == -1:
-            continue
-        label = int(line[:comma_idx])
-        seq = line[comma_idx + 1 :]
-        sequences[i] = _encode_sequence_int8(seq, crop_size)
-        labels[i, label] = 1.0
-
-    return sequences, labels
-
-
-def _convert_to_numpy_raw(
-    csv_path: str,
-    output_path: str,
-    crop_size: int,
-    num_classes: int,
-    num_workers: int | None,
-):
-    """Convert CSV to NumPy raw (int8 sequences)."""
-    total = sum(1 for _ in open(csv_path))
-    print(f"Total samples: {total}")
-
-    if num_workers is None:
-        num_workers = cpu_count()
-    print(f"Using {num_workers} workers")
-
-    with open(csv_path) as f:
-        lines = f.readlines()
-
-    chunk_size = max(1, len(lines) // num_workers)
-    chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
-    print(f"Split into {len(chunks)} chunks")
-
-    start = time.time()
-    process_fn = partial(
-        _process_chunk_numpy_raw, crop_size=crop_size, num_classes=num_classes
-    )
-
-    with Pool(num_workers) as pool:
-        results = pool.map(process_fn, chunks)
-
-    all_sequences = np.concatenate([r[0] for r in results], axis=0)
-    all_labels = np.concatenate([r[1] for r in results], axis=0)
-
-    elapsed = time.time() - start
-    print(
-        f"Processed {total} samples in {elapsed:.2f}s ({total / elapsed:.0f} samples/sec)"
-    )
-
-    np.savez_compressed(output_path, sequences=all_sequences, labels=all_labels)
-    seq_mb = all_sequences.nbytes / (1024 * 1024)
-    label_mb = all_labels.nbytes / (1024 * 1024)
-    print(f"Saved: sequences={seq_mb:.1f}MB, labels={label_mb:.1f}MB")
-
-
-# ---------------------------------------------------------------------------
-# numpy_full (fully preprocessed)
-# ---------------------------------------------------------------------------
-_CODON_TO_ID = None
-_COMP = {"A": "T", "T": "A", "G": "C", "C": "G", "N": "N"}
-
-# Precomputed lookup tables for numba
-_CODON_LUT = None
-_ASCII_TO_IDX = None
-_COMP_LUT = None
-
-
-def _get_codon_to_id():
+def _get_codon_to_id() -> Dict[str, int]:
     """Lazy-load codon mapping to avoid E402 module-level import."""
     global _CODON_TO_ID
     if _CODON_TO_ID is None:
@@ -259,504 +204,540 @@ def _get_codon_to_id():
     return _CODON_TO_ID
 
 
-def _build_numba_lookups():
-    """Build flat lookup tables for numba-optimized processing."""
-    global _CODON_LUT, _ASCII_TO_IDX, _COMP_LUT
-    if _CODON_LUT is not None:
-        return _CODON_LUT, _ASCII_TO_IDX, _COMP_LUT
+def _get_codon_map(codon_map_name: str) -> np.ndarray:
+    """Return the requested length-64 codon map from jaeger.seqops.maps."""
+    import jaeger.seqops.maps as maps
 
-    from jaeger.seqops.maps import CODONS
+    mapping = getattr(maps, codon_map_name, None)
+    if mapping is None:
+        raise ValueError(f"Unknown codon map: {codon_map_name}")
+    mapping = np.asarray(mapping)
+    if mapping.shape != (64,):
+        raise ValueError(
+            f"Codon map {codon_map_name} must have shape (64,), got {mapping.shape}"
+        )
+    return mapping
 
-    base_to_idx = {"A": 0, "T": 1, "G": 2, "C": 3, "N": 4}
 
-    # Complement lookup: A<->T, G<->C, N<->N
-    _COMP_LUT = np.array([1, 0, 3, 2, 4], dtype=np.int8)
+def _base_index(char: str) -> int:
+    """Return 0..4 for ACGTN (case-insensitive)."""
+    if char in _BASE_MAP:
+        return _BASE_MAP[char]
+    return _BASE_MAP_LOWER.get(char, 4)
 
-    # Flat codon lookup: 125 entries (5x5x5)
-    codon_to_id = {c: i for i, c in enumerate(CODONS)}
-    _CODON_LUT = np.full(125, -1, dtype=np.int32)
-    bases = ["A", "T", "G", "C", "N"]
-    for i in range(5):
-        for j in range(5):
-            for k in range(5):
-                codon = bases[i] + bases[j] + bases[k]
-                _CODON_LUT[i * 25 + j * 5 + k] = codon_to_id.get(codon, -1)
 
-    # ASCII to base index lookup
-    _ASCII_TO_IDX = np.full(256, 4, dtype=np.int8)
-    for c, i in base_to_idx.items():
-        _ASCII_TO_IDX[ord(c)] = i
+def _reverse_complement(seq: str) -> str:
+    """Return the reverse-complement DNA string."""
+    return "".join(_COMPLEMENT.get(b, "N") for b in reversed(seq.upper()))
 
-    return _CODON_LUT, _ASCII_TO_IDX, _COMP_LUT
+
+# ---------------------------------------------------------------------------
+# Nucleotide encoding
+# ---------------------------------------------------------------------------
+@njit(cache=False)
+def _encode_nucleotide_integer_numba(
+    seq_bytes: np.ndarray, crop_size: int, pad_int: int
+) -> Tuple[np.ndarray, int]:
+    """Numba kernel for 2-strand integer nucleotide encoding."""
+    length = min(seq_bytes.shape[0], crop_size)
+    arr = np.full((2, crop_size), pad_int, dtype=np.int32)
+    ascii_lut = _ASCII_TO_BASE_IDX
+    comp_lut = _COMPLEMENT_LUT
+
+    for i in range(length):
+        idx = ascii_lut[seq_bytes[i]]
+        arr[0, i] = idx + 1
+
+    for i in range(length):
+        idx = comp_lut[ascii_lut[seq_bytes[length - 1 - i]]]
+        arr[1, i] = idx + 1
+
+    return arr, length
+
+
+def _encode_nucleotide_integer(
+    seq: str, crop_size: int, pad_int: int
+) -> Tuple[np.ndarray, int]:
+    """Encode a DNA sequence as integer nucleotide indices (2 strands)."""
+    if HAS_NUMBA:
+        seq_bytes = np.frombuffer(seq[:crop_size].encode("ascii"), dtype=np.uint8)
+        return _encode_nucleotide_integer_numba(seq_bytes, crop_size, pad_int)
+
+    seq = seq[:crop_size]
+    length = len(seq)
+    arr = np.full((2, crop_size), pad_int, dtype=np.int32)
+
+    for i, ch in enumerate(seq):
+        arr[0, i] = _base_index(ch) + 1
+
+    rev = _reverse_complement(seq)
+    for i, ch in enumerate(rev):
+        arr[1, i] = _base_index(ch) + 1
+
+    return arr, length
 
 
 @njit(cache=False)
-def _process_sequence_numba(
-    seq_bytes, crop_size, seq_len, codon_lut, comp_lut, ascii_lut
-):
-    """Process DNA sequence to 6-frame codon embeddings (numba-optimized)."""
-    length = min(len(seq_bytes), crop_size)
+def _encode_nucleotide_onehot_numba(
+    seq_bytes: np.ndarray, crop_size: int
+) -> Tuple[np.ndarray, int]:
+    """Numba kernel for 2-strand one-hot nucleotide encoding."""
+    length = min(seq_bytes.shape[0], crop_size)
+    arr = np.zeros((2, crop_size, 4), dtype=np.float32)
+    ascii_lut = _ASCII_TO_BASE_IDX
+    comp_lut = _COMPLEMENT_LUT
 
-    # Convert ASCII bytes to base indices
-    bases = np.empty(length, dtype=np.int8)
     for i in range(length):
-        bases[i] = ascii_lut[seq_bytes[i]]
+        idx = ascii_lut[seq_bytes[i]]
+        if idx < 4:
+            arr[0, i, idx] = 1.0
 
-    # Compute frame lengths
-    offset = [-2, -1, 0][length % 3]
-    ngrams_len = length - 3 + 1
+    for i in range(length):
+        idx = comp_lut[ascii_lut[seq_bytes[length - 1 - i]]]
+        if idx < 4:
+            arr[1, i, idx] = 1.0
+
+    return arr, length
+
+
+def _encode_nucleotide_onehot(seq: str, crop_size: int) -> Tuple[np.ndarray, int]:
+    """Encode a DNA sequence as a one-hot nucleotide tensor (2 strands)."""
+    if HAS_NUMBA:
+        seq_bytes = np.frombuffer(seq[:crop_size].encode("ascii"), dtype=np.uint8)
+        return _encode_nucleotide_onehot_numba(seq_bytes, crop_size)
+
+    seq = seq[:crop_size]
+    length = len(seq)
+    arr = np.zeros((2, crop_size, 4), dtype=np.float32)
+
+    for i, ch in enumerate(seq):
+        idx = _base_index(ch)
+        if idx < 4:
+            arr[0, i, idx] = 1.0
+
+    rev = _reverse_complement(seq)
+    for i, ch in enumerate(rev):
+        idx = _base_index(ch)
+        if idx < 4:
+            arr[1, i, idx] = 1.0
+
+    return arr, length
+
+
+# ---------------------------------------------------------------------------
+# Translated (codon) encoding
+# ---------------------------------------------------------------------------
+@njit(cache=False)
+def _translate_sequence_integer_numba(
+    seq_bytes: np.ndarray, crop_size: int, codon_lut: np.ndarray, pad_int: int
+) -> Tuple[np.ndarray, int]:
+    """Numba kernel for 6-frame codon indices using *codon_lut*."""
+    length = min(seq_bytes.shape[0], crop_size)
+    ngram_width = 3
+    ngrams_len = max(0, length - ngram_width + 1)
+    offset = [-2, -1, 0][length % ngram_width]
+    ascii_lut = _ASCII_TO_BASE_IDX
+    comp_lut = _COMPLEMENT_LUT
 
     end_f1 = ngrams_len - 3 + offset
     end_f2 = ngrams_len - 2 + offset
     end_f3 = ngrams_len - 1 + offset
 
-    nf1 = max(0, (end_f1 + 2) // 3)
-    nf2 = max(0, (end_f2 + 1) // 3)
-    nf3 = max(0, end_f3 // 3)
+    nf1 = max(0, (end_f1 + 2) // ngram_width)
+    nf2 = max(0, (end_f2 + 1) // ngram_width)
+    nf3 = max(0, end_f3 // ngram_width)
 
-    # Reverse complement
-    rev_bases = np.empty(length, dtype=np.int8)
-    for i in range(length):
-        rev_bases[i] = comp_lut[bases[length - 1 - i]]
+    # Reverse complement bytes
+    rev_len = length
+    rev_ngrams_len = max(0, rev_len - ngram_width + 1)
+    end_r1 = rev_ngrams_len - 3 + offset
+    end_r2 = rev_ngrams_len - 2 + offset
+    end_r3 = rev_ngrams_len - 1 + offset
 
-    nr1 = max(0, (end_f1 + 2) // 3)
-    nr2 = max(0, (end_f2 + 1) // 3)
-    nr3 = max(0, end_f3 // 3)
+    nr1 = max(0, (end_r1 + 2) // ngram_width)
+    nr2 = max(0, (end_r2 + 1) // ngram_width)
+    nr3 = max(0, end_r3 // ngram_width)
 
     min_len = min(nf1, nf2, nf3, nr1, nr2, nr3)
+    max_codon_len = max(0, crop_size // 3 - 1)
+    frames = np.full((6, max_codon_len), pad_int, dtype=np.int32)
+
     if min_len <= 0:
-        return np.empty((6, 0), dtype=np.int32)
-    min_len = min(min_len, seq_len)
+        return frames, 0
 
-    frames = np.empty((6, min_len), dtype=np.int32)
-
-    # Forward frames
     for i in range(min_len):
-        idx0 = bases[i * 3]
-        idx1 = bases[i * 3 + 1]
-        idx2 = bases[i * 3 + 2]
-        frames[0, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2]
+        # Forward frame 1
+        b0 = ascii_lut[seq_bytes[i * 3]]
+        b1 = ascii_lut[seq_bytes[i * 3 + 1]]
+        b2 = ascii_lut[seq_bytes[i * 3 + 2]]
+        cid = codon_lut[b0 * 25 + b1 * 5 + b2]
+        frames[0, i] = pad_int if cid < 0 else cid + 1
 
-        idx0 = bases[i * 3 + 1]
-        idx1 = bases[i * 3 + 2]
-        idx2 = bases[i * 3 + 3]
-        frames[1, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2]
+        # Forward frame 2
+        b0 = ascii_lut[seq_bytes[i * 3 + 1]]
+        b1 = ascii_lut[seq_bytes[i * 3 + 2]]
+        b2 = ascii_lut[seq_bytes[i * 3 + 3]]
+        cid = codon_lut[b0 * 25 + b1 * 5 + b2]
+        frames[1, i] = pad_int if cid < 0 else cid + 1
 
-        idx0 = bases[i * 3 + 2]
-        idx1 = bases[i * 3 + 3]
-        idx2 = bases[i * 3 + 4]
-        frames[2, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2]
+        # Forward frame 3
+        b0 = ascii_lut[seq_bytes[i * 3 + 2]]
+        b1 = ascii_lut[seq_bytes[i * 3 + 3]]
+        b2 = ascii_lut[seq_bytes[i * 3 + 4]]
+        cid = codon_lut[b0 * 25 + b1 * 5 + b2]
+        frames[2, i] = pad_int if cid < 0 else cid + 1
 
-    # Reverse frames
-    for i in range(min_len):
-        idx0 = rev_bases[i * 3]
-        idx1 = rev_bases[i * 3 + 1]
-        idx2 = rev_bases[i * 3 + 2]
-        frames[3, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2]
+        # Reverse frames use reversed sequence
+        ri = rev_len - 1 - i * 3
+        b0 = comp_lut[ascii_lut[seq_bytes[ri]]]
+        b1 = comp_lut[ascii_lut[seq_bytes[ri - 1]]]
+        b2 = comp_lut[ascii_lut[seq_bytes[ri - 2]]]
+        cid = codon_lut[b0 * 25 + b1 * 5 + b2]
+        frames[3, i] = pad_int if cid < 0 else cid + 1
 
-        idx0 = rev_bases[i * 3 + 1]
-        idx1 = rev_bases[i * 3 + 2]
-        idx2 = rev_bases[i * 3 + 3]
-        frames[4, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2]
+        b0 = comp_lut[ascii_lut[seq_bytes[ri - 1]]]
+        b1 = comp_lut[ascii_lut[seq_bytes[ri - 2]]]
+        b2 = comp_lut[ascii_lut[seq_bytes[ri - 3]]]
+        cid = codon_lut[b0 * 25 + b1 * 5 + b2]
+        frames[4, i] = pad_int if cid < 0 else cid + 1
 
-        idx0 = rev_bases[i * 3 + 2]
-        idx1 = rev_bases[i * 3 + 3]
-        idx2 = rev_bases[i * 3 + 4]
-        frames[5, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2]
+        b0 = comp_lut[ascii_lut[seq_bytes[ri - 2]]]
+        b1 = comp_lut[ascii_lut[seq_bytes[ri - 3]]]
+        b2 = comp_lut[ascii_lut[seq_bytes[ri - 4]]]
+        cid = codon_lut[b0 * 25 + b1 * 5 + b2]
+        frames[5, i] = pad_int if cid < 0 else cid + 1
 
-    # +1 for embedding layer
-    for i in range(6):
-        for j in range(min_len):
-            frames[i, j] = frames[i, j] + 1
-
-    return frames
+    return frames, min_len
 
 
-def _process_sequence_full(
-    seq: str, crop_size: int, ngram_width: int = 3
-) -> np.ndarray:
-    """Process a single DNA sequence to 6-frame codon embeddings (pure Python)."""
-    codon_to_id = _get_codon_to_id()
+def _translate_sequence_integer(
+    seq: str, crop_size: int, codon_map: np.ndarray, pad_int: int, codon_lut: np.ndarray | None = None
+) -> Tuple[np.ndarray, int]:
+    """Encode a DNA sequence as 6-frame codon indices using *codon_map*."""
+    if HAS_NUMBA:
+        seq_bytes = np.frombuffer(
+            seq[:crop_size].upper().encode("ascii"), dtype=np.uint8
+        )
+        if codon_lut is None:
+            codon_lut = _build_codon_lut(codon_map)
+        return _translate_sequence_integer_numba(
+            seq_bytes, crop_size, codon_lut, pad_int
+        )
+
     seq = seq[:crop_size].upper()
     length = len(seq)
-    offset = [-2, -1, 0][length % ngram_width]
+    codon_to_id = _get_codon_to_id()
 
-    ngrams_len = length - ngram_width + 1
+    ngram_width = 3
+    ngrams_len = max(0, length - ngram_width + 1)
     ngrams = [seq[i : i + ngram_width] for i in range(ngrams_len)]
+    offset = [-2, -1, 0][length % ngram_width]
 
     end_f1 = ngrams_len - 3 + offset
     end_f2 = ngrams_len - 2 + offset
     end_f3 = ngrams_len - 1 + offset
 
-    f1 = [codon_to_id.get(ngrams[i], -1) for i in range(0, end_f1, ngram_width)]
-    f2 = [codon_to_id.get(ngrams[i], -1) for i in range(1, end_f2, ngram_width)]
-    f3 = [codon_to_id.get(ngrams[i], -1) for i in range(2, end_f3, ngram_width)]
+    f1 = [ngrams[i] for i in range(0, end_f1, ngram_width)]
+    f2 = [ngrams[i] for i in range(1, end_f2, ngram_width)]
+    f3 = [ngrams[i] for i in range(2, end_f3, ngram_width)]
 
-    rev_comp = "".join(_COMP.get(b, "N") for b in reversed(seq))
-    rev_ngrams_len = len(rev_comp) - ngram_width + 1
+    rev_comp = _reverse_complement(seq)
+    rev_ngrams_len = max(0, len(rev_comp) - ngram_width + 1)
     rev_ngrams = [rev_comp[i : i + ngram_width] for i in range(rev_ngrams_len)]
 
     end_r1 = rev_ngrams_len - 3 + offset
     end_r2 = rev_ngrams_len - 2 + offset
     end_r3 = rev_ngrams_len - 1 + offset
 
-    r1 = [codon_to_id.get(rev_ngrams[i], -1) for i in range(0, end_r1, ngram_width)]
-    r2 = [codon_to_id.get(rev_ngrams[i], -1) for i in range(1, end_r2, ngram_width)]
-    r3 = [codon_to_id.get(rev_ngrams[i], -1) for i in range(2, end_r3, ngram_width)]
+    r1 = [rev_ngrams[i] for i in range(0, end_r1, ngram_width)]
+    r2 = [rev_ngrams[i] for i in range(1, end_r2, ngram_width)]
+    r3 = [rev_ngrams[i] for i in range(2, end_r3, ngram_width)]
 
     min_len = min(len(f1), len(f2), len(f3), len(r1), len(r2), len(r3))
-    frames = np.array(
-        [
-            f1[:min_len],
-            f2[:min_len],
-            f3[:min_len],
-            r1[:min_len],
-            r2[:min_len],
-            r3[:min_len],
-        ],
-        dtype=np.int32,
-    )
-    frames = frames + 1
-    return frames
+    max_codon_len = max(0, crop_size // 3 - 1)
+    frames = np.full((6, max_codon_len), pad_int, dtype=np.int32)
+
+    for frame_idx, codons in enumerate([f1, f2, f3, r1, r2, r3]):
+        for i, codon in enumerate(codons[:min_len]):
+            cid = codon_to_id.get(codon, -1)
+            if 0 <= cid < len(codon_map):
+                frames[frame_idx, i] = int(codon_map[cid]) + 1
+            else:
+                frames[frame_idx, i] = pad_int
+
+    return frames, min_len
 
 
-@njit(cache=False)
-def _process_batch_numba(
-    sequences, lengths, crop_size, seq_len, codon_lut, comp_lut, ascii_lut
-):
-    """Process a batch of DNA sequences to 6-frame codon embeddings."""
-    n = len(lengths)
-    out = np.zeros((n, 6, seq_len), dtype=np.int32)
+def _to_one_hot(arr: np.ndarray, vocab_size: int, pad_int: int) -> np.ndarray:
+    """Convert an integer array to a one-hot float tensor.
 
-    for s in range(n):
-        length = min(lengths[s], crop_size)
+    Padding positions (``arr == pad_int``) remain all-zero.
+    """
+    one_hot = np.zeros(arr.shape + (vocab_size,), dtype=np.float32)
+    mask = arr != pad_int
+    if mask.any():
+        one_hot[mask] = np.eye(vocab_size)[arr[mask] - 1]
+    return one_hot
 
-        # Convert ASCII to base indices
-        bases = np.empty(length, dtype=np.int8)
-        for i in range(length):
-            bases[i] = ascii_lut[sequences[s, i]]
 
-        # Compute frame lengths
-        offset = [-2, -1, 0][length % 3]
-        ngrams_len = length - 3 + 1
+# ---------------------------------------------------------------------------
+# Chunk processing
+# ---------------------------------------------------------------------------
+def _parse_csv_line(line: str) -> Tuple[int, str]:
+    """Parse a 'label,sequence[,id]' CSV line."""
+    parts = line.strip().split(",", 2)
+    if len(parts) < 2:
+        raise ValueError(f"Invalid CSV line (no comma): {line!r}")
+    return int(parts[0]), parts[1]
 
-        end_f1 = ngrams_len - 3 + offset
-        end_f2 = ngrams_len - 2 + offset
-        end_f3 = ngrams_len - 1 + offset
 
-        nf1 = max(0, (end_f1 + 2) // 3)
-        nf2 = max(0, (end_f2 + 1) // 3)
-        nf3 = max(0, end_f3 // 3)
+def _sliding_windows(seq: str, crop_size: int, stride: int):
+    """Yield windows from *seq* using a sliding window of *crop_size*.
 
-        # Reverse complement
-        rev_bases = np.empty(length, dtype=np.int8)
-        for i in range(length):
-            rev_bases[i] = comp_lut[bases[length - 1 - i]]
+    If *stride* is 0 (or negative), a single truncated window is returned.
+    Sequences shorter than *crop_size* yield one padded window.
+    """
+    if stride <= 0:
+        yield seq[:crop_size]
+        return
 
-        nr1 = max(0, (end_f1 + 2) // 3)
-        nr2 = max(0, (end_f2 + 1) // 3)
-        nr3 = max(0, end_f3 // 3)
+    length = len(seq)
+    if length <= crop_size:
+        yield seq
+        return
 
-        min_len = min(nf1, nf2, nf3, nr1, nr2, nr3)
-        if min_len <= 0:
+    for start in range(0, length, stride):
+        window = seq[start : start + crop_size]
+        if not window:
+            break
+        yield window
+
+
+def _process_chunk(
+    lines: List[str],
+    crop_size: int,
+    stride: int,
+    num_classes: int,
+    codon_map: np.ndarray,
+    format: str,
+    one_hot: bool,
+    pad_int: int,
+) -> Dict[str, List[np.ndarray]]:
+    """Process a chunk of CSV lines and return per-sample arrays."""
+    out: Dict[str, List[np.ndarray]] = {
+        "nucleotide": [],
+        "translated": [],
+        "labels": [],
+        "lengths": [],
+    }
+
+    codon_lut = None
+    if format in ("translated", "both"):
+        codon_lut = _build_codon_lut(codon_map)
+
+    for line in lines:
+        if not line.strip():
             continue
-        min_len = min(min_len, seq_len)
+        label, seq = _parse_csv_line(line)
+        label_vec = np.zeros(num_classes, dtype=np.float32)
+        label_vec[label] = 1.0
 
-        for i in range(min_len):
-            idx0 = bases[i * 3]
-            idx1 = bases[i * 3 + 1]
-            idx2 = bases[i * 3 + 2]
-            out[s, 0, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2] + 1
+        for window in _sliding_windows(seq, crop_size, stride):
+            if format in ("nucleotide", "both"):
+                if one_hot:
+                    nuc, nuc_len = _encode_nucleotide_onehot(window, crop_size)
+                else:
+                    nuc, nuc_len = _encode_nucleotide_integer(
+                        window, crop_size, pad_int
+                    )
+                out["nucleotide"].append(nuc)
 
-            idx0 = bases[i * 3 + 1]
-            idx1 = bases[i * 3 + 2]
-            idx2 = bases[i * 3 + 3]
-            out[s, 1, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2] + 1
+            if format in ("translated", "both"):
+                trans, trans_len = _translate_sequence_integer(
+                    window, crop_size, codon_map, pad_int, codon_lut=codon_lut
+                )
+                if one_hot:
+                    trans = _to_one_hot(trans, int(codon_map.max()) + 1, pad_int)
+                out["translated"].append(trans)
 
-            idx0 = bases[i * 3 + 2]
-            idx1 = bases[i * 3 + 3]
-            idx2 = bases[i * 3 + 4]
-            out[s, 2, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2] + 1
-
-        for i in range(min_len):
-            idx0 = rev_bases[i * 3]
-            idx1 = rev_bases[i * 3 + 1]
-            idx2 = rev_bases[i * 3 + 2]
-            out[s, 3, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2] + 1
-
-            idx0 = rev_bases[i * 3 + 1]
-            idx1 = rev_bases[i * 3 + 2]
-            idx2 = rev_bases[i * 3 + 3]
-            out[s, 4, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2] + 1
-
-            idx0 = rev_bases[i * 3 + 2]
-            idx1 = rev_bases[i * 3 + 3]
-            idx2 = rev_bases[i * 3 + 4]
-            out[s, 5, i] = codon_lut[idx0 * 25 + idx1 * 5 + idx2] + 1
+            out["labels"].append(label_vec)
+            # Store nucleotide length when available; otherwise codon length.
+            out["lengths"].append(
+                nuc_len if format in ("nucleotide", "both") else trans_len
+            )
 
     return out
 
 
-def _process_chunk_numpy_full(
-    lines: list[str], crop_size: int, num_classes: int
-) -> tuple:
-    """Process a chunk of CSV lines to fully preprocessed tensors."""
-    n = len(lines)
-    seq_len = crop_size // 3 - 1
-    sequences = np.zeros((n, 6, seq_len), dtype=np.int32)
-    labels = np.zeros((n, num_classes), dtype=np.float32)
-
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            continue
-        comma_idx = line.find(",")
-        if comma_idx == -1:
-            continue
-        label = int(line[:comma_idx])
-        seq = line[comma_idx + 1 :]
-        frames = _process_sequence_full(seq, crop_size)
-        actual_len = frames.shape[1]
-        sequences[i, :, :actual_len] = frames
-        labels[i, label] = 1.0
-
-    return sequences, labels
-
-
-def _convert_to_numpy_full(
-    csv_path: str,
-    output_path: str,
-    crop_size: int,
-    num_classes: int,
-    num_workers: int | None,
-):
-    """Convert CSV to fully preprocessed NumPy format."""
-    total = sum(1 for _ in open(csv_path))
-    print(f"Total samples: {total}")
-
-    if num_workers is None:
-        num_workers = cpu_count()
-    print(f"Using {num_workers} workers")
-
-    # Read and parse CSV
-    with open(csv_path) as f:
-        lines = f.readlines()
-
-    start = time.time()
-
-    if HAS_NUMBA and total >= 1000:
-        # Fast path: batch numba processing (no multiprocessing overhead)
-        print("Using numba-optimized batch processing")
-        codon_lut, ascii_lut, comp_lut = _build_numba_lookups()
-        seq_len = crop_size // 3 - 1
-
-        # Parse labels and encode sequences as uint8 array
-        labels = np.zeros((total, num_classes), dtype=np.float32)
-        sequences = np.full((total, crop_size), ord("N"), dtype=np.uint8)
-        lengths = np.zeros(total, dtype=np.int32)
-
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                continue
-            comma_idx = line.find(",")
-            if comma_idx == -1:
-                continue
-            label = int(line[:comma_idx])
-            seq = line[comma_idx + 1 :]
-            seq_bytes = seq.encode()
-            length = min(len(seq_bytes), crop_size)
-            sequences[i, :length] = np.frombuffer(seq_bytes[:length], dtype=np.uint8)
-            lengths[i] = length
-            labels[i, label] = 1.0
-
-        # Process entire batch in numba
-        all_sequences = _process_batch_numba(
-            sequences, lengths, crop_size, seq_len, codon_lut, comp_lut, ascii_lut
-        )
-        all_labels = labels
-    else:
-        # Fallback: multiprocessing with pure Python
-        if HAS_NUMBA:
-            print("Numba available but dataset too small for batch mode")
-        else:
-            print("Numba not available, using pure Python")
-
-        chunk_size = max(1, len(lines) // num_workers)
-        chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
-        process_fn = partial(
-            _process_chunk_numpy_full, crop_size=crop_size, num_classes=num_classes
-        )
-        with Pool(num_workers) as pool:
-            results = pool.map(process_fn, chunks)
-        all_sequences = np.concatenate([r[0] for r in results], axis=0)
-        all_labels = np.concatenate([r[1] for r in results], axis=0)
-
-    elapsed = time.time() - start
-    print(
-        f"Processed {total} samples in {elapsed:.2f}s ({total / elapsed:.0f} samples/sec)"
-    )
-
-    np.savez_compressed(output_path, translated=all_sequences, label=all_labels)
-    seq_mb = all_sequences.nbytes / (1024 * 1024)
-    label_mb = all_labels.nbytes / (1024 * 1024)
-    print(f"Saved: translated={seq_mb:.1f}MB, label={label_mb:.1f}MB")
-
-
-# ---------------------------------------------------------------------------
-# numpy_raw_variable (variable-length int8)
-# ---------------------------------------------------------------------------
-
-
-def _encode_variable_length(line: str, max_length: int) -> tuple:
-    """Encode a single CSV line to variable-length int8 sequence."""
-    line = line.strip()
-    if not line:
-        return None, None, None
-    comma_idx = line.find(",")
-    if comma_idx == -1:
-        return None, None, None
-    label = int(line[:comma_idx])
-    seq = line[comma_idx + 1 :]
-    length = min(len(seq), max_length)
-
-    arr = np.full(max_length, 4, dtype=np.int8)
-    for i in range(length):
-        c = seq[i]
-        if c in _BASE_MAP:
-            arr[i] = _BASE_MAP[c]
-        elif c in _BASE_MAP_LOWER:
-            arr[i] = _BASE_MAP_LOWER[c]
-        else:
-            arr[i] = 4
-    return arr, length, label
-
-
-def _process_chunk_numpy_raw_variable(
-    lines: list[str], max_length: int, num_classes: int
-) -> tuple:
-    """Process a chunk of CSV lines with variable lengths."""
-    n = len(lines)
-    sequences = np.full((n, max_length), 4, dtype=np.int8)
-    lengths = np.zeros(n, dtype=np.int32)
-    labels = np.zeros((n, num_classes), dtype=np.float32)
-
-    for i, line in enumerate(lines):
-        seq_arr, length, label = _encode_variable_length(line, max_length)
-        if seq_arr is None:
-            continue
-        sequences[i] = seq_arr
-        lengths[i] = length
-        labels[i, label] = 1.0
-
-    return sequences, lengths, labels
-
-
-def _convert_to_numpy_raw_variable(
-    csv_path: str,
-    output_path: str,
-    max_length: int,
-    num_classes: int,
-    num_workers: int | None,
-):
-    """Convert CSV to NumPy with variable-length sequences."""
-    total = sum(1 for _ in open(csv_path))
-    print(f"Total samples: {total}")
-
-    if num_workers is None:
-        num_workers = cpu_count()
-    print(f"Using {num_workers} workers")
-
-    with open(csv_path) as f:
-        lines = f.readlines()
-
-    chunk_size = max(1, len(lines) // num_workers)
-    chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
-    print(f"Split into {len(chunks)} chunks")
-
-    start = time.time()
-    process_fn = partial(
-        _process_chunk_numpy_raw_variable,
-        max_length=max_length,
-        num_classes=num_classes,
-    )
-
-    with Pool(num_workers) as pool:
-        results = pool.map(process_fn, chunks)
-
-    all_sequences = np.concatenate([r[0] for r in results], axis=0)
-    all_lengths = np.concatenate([r[1] for r in results], axis=0)
-    all_labels = np.concatenate([r[2] for r in results], axis=0)
-
-    elapsed = time.time() - start
-    print(
-        f"Processed {total} samples in {elapsed:.2f}s ({total / elapsed:.0f} samples/sec)"
-    )
-
-    np.savez_compressed(
-        output_path,
-        sequences=all_sequences,
-        lengths=all_lengths,
-        labels=all_labels,
-    )
-    seq_mb = all_sequences.nbytes / (1024 * 1024)
-    length_mb = all_lengths.nbytes / (1024 * 1024)
-    label_mb = all_labels.nbytes / (1024 * 1024)
-    print(
-        f"Saved: sequences={seq_mb:.1f}MB, lengths={length_mb:.1f}MB, labels={label_mb:.1f}MB"
-    )
+def _trim_to_max(arrays: List[np.ndarray], lengths: List[int]) -> np.ndarray:
+    """Stack a list of padded arrays and trim to the actual maximum length."""
+    stacked = np.stack(arrays, axis=0)
+    max_len = max(lengths) if lengths else 0
+    if max_len == 0:
+        return stacked
+    # Time/length is the second-to-last axis for 1-D feature arrays and the
+    # second axis for nucleotide/translated arrays. Trim all axes after batch
+    # and frame/strand dims to max_len.
+    if stacked.ndim == 3:
+        return stacked[:, :, :max_len]
+    if stacked.ndim == 4:
+        return stacked[:, :, :max_len, :]
+    return stacked
 
 
 # ---------------------------------------------------------------------------
 # Public dispatcher
 # ---------------------------------------------------------------------------
-
-
 def convert_dataset(
     input_path: str,
     output_path: str,
     format: str,
     crop_size: int = 500,
+    stride: int = 0,
     num_classes: int = 3,
-    use_embedding_layer: bool = True,
-    max_length: int = 1000,
     num_workers: int | None = None,
+    one_hot: bool = False,
+    pad_int: int = 0,
+    codon_map: str = "CODON_ID",
+    max_length: int = 5000,
+    compress: str = "fast",
+    _available_memory_bytes: int | None = None,
 ):
     """Convert a CSV dataset to an optimized training format.
 
     Args:
         input_path: Path to input CSV file (label,sequence format).
         output_path: Path to output file.
-        format: Target format — ``tfrecord``, ``numpy_raw``, ``numpy_full``,
-            or ``numpy_raw_variable``.
-        crop_size: Sequence crop size (for fixed-length formats).
+        format: Target representation — ``nucleotide``, ``translated``, or ``both``.
+        crop_size: Maximum sequence length to process per window.
+        stride: Sliding-window step in nucleotides. 0 = one window per sequence.
         num_classes: Number of output classes.
-        use_embedding_layer: Whether model uses embedding layer (TFRecord only).
-        max_length: Maximum sequence length (variable-length only).
         num_workers: Number of parallel workers (``None`` = auto).
+        one_hot: Output float one-hot tensors instead of integer indices.
+        pad_int: Integer value used for padding and stored as ``pad_int``.
+        codon_map: Name of a length-64 codon map in ``jaeger.seqops.maps``.
+        max_length: Deprecated; kept for compatibility.
+        compress: NPZ compression level — ``fast`` (zlib 1), ``default`` (zlib 6),
+            or ``none``.
+        _available_memory_bytes: Internal override for memory guard tests; do not
+            use from production code.
+
+    Raises:
+        MemoryError: If ``one_hot=True`` and the estimated raw float32 tensor
+            exceeds the available RAM safety margin.
     """
-    valid_formats = ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"]
+    del max_length  # no longer used
+
+    format = format.lower()
+    total_lines = _count_lines(input_path)
+    valid_formats = ["nucleotide", "translated", "both"]
     if format not in valid_formats:
         raise ValueError(
             f"Invalid format: {format}. Choose from: {', '.join(valid_formats)}"
         )
 
-    print(f"Converting {input_path} -> {output_path}")
-    print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
+    compress = compress.lower()
+    valid_compress = ["fast", "default", "none"]
+    if compress not in valid_compress:
+        raise ValueError(
+            f"Invalid compress: {compress}. Choose from: {', '.join(valid_compress)}"
+        )
 
-    if format == "tfrecord":
-        _convert_with_tf(
-            input_path, output_path, format, crop_size, num_classes, use_embedding_layer
+    codon_map_arr = _get_codon_map(codon_map) if format in ("translated", "both") else None
+
+    # Guard against one-hot outputs that cannot fit in RAM.
+    if one_hot:
+        estimated = _estimate_onehot_memory(
+            total_rows=total_lines,
+            crop_size=crop_size,
+            format=format,
+            one_hot=one_hot,
+            codon_map_arr=codon_map_arr,
         )
-    elif format == "numpy_raw":
-        _convert_to_numpy_raw(
-            input_path, output_path, crop_size, num_classes, num_workers
+        available = (
+            _available_memory_bytes
+            if _available_memory_bytes is not None
+            else psutil.virtual_memory().available
         )
-    elif format == "numpy_full":
-        _convert_to_numpy_full(
-            input_path, output_path, crop_size, num_classes, num_workers
-        )
-    elif format == "numpy_raw_variable":
-        _convert_to_numpy_raw_variable(
-            input_path, output_path, max_length, num_classes, num_workers
-        )
+        _check_onehot_memory(estimated, available)
+
+    # Validate pad_int does not collide with actual token indices.
+    if not one_hot and format in ("nucleotide", "both"):
+        actual_nuc = {1, 2, 3, 4, 5}  # A,T,G,C,N after +1 offset
+        if pad_int in actual_nuc:
+            raise ValueError(
+                f"pad_int ({pad_int}) collides with a nucleotide token index "
+                f"({sorted(actual_nuc)})"
+            )
+    if not one_hot and format in ("translated", "both") and codon_map_arr is not None:
+        actual_trans = set(int(v) + 1 for v in codon_map_arr)
+        if pad_int in actual_trans:
+            raise ValueError(
+                f"pad_int ({pad_int}) collides with a translated token index "
+                f"for codon map {codon_map}"
+            )
+
+    print(f"Converting {input_path} -> {output_path}")
+    print(
+        f"Format: {format}, one_hot: {one_hot}, pad_int: {pad_int}, "
+        f"codon_map: {codon_map}, crop_size: {crop_size}, stride: {stride}, "
+        f"num_classes: {num_classes}, compress: {compress}"
+    )
+
+    with open(input_path) as f:
+        lines = f.readlines()
+
+    if num_workers is None:
+        num_workers = cpu_count()
+    print(f"Total CSV rows: {total_lines}, using {num_workers} workers")
+
+    chunk_size = max(1, len(lines) // num_workers)
+    chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
+
+    start = time.time()
+    process_fn = partial(
+        _process_chunk,
+        crop_size=crop_size,
+        stride=stride,
+        num_classes=num_classes,
+        codon_map=codon_map_arr if codon_map_arr is not None else np.arange(64),
+        format=format,
+        one_hot=one_hot,
+        pad_int=pad_int,
+    )
+
+    if num_workers == 1:
+        results = [process_fn(chunk) for chunk in chunks]
+    elif HAS_NUMBA:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            results = list(executor.map(process_fn, chunks))
+    else:
+        with _MP_CONTEXT.Pool(num_workers) as pool:
+            results = pool.map(process_fn, chunks)
+
+    # Merge chunks
+    nuc_arrays = [a for r in results for a in r["nucleotide"]]
+    trans_arrays = [a for r in results for a in r["translated"]]
+    labels = np.stack([a for r in results for a in r["labels"]], axis=0)
+    lengths = np.array([a for r in results for a in r["lengths"]], dtype=np.int32)
+
+    to_save: Dict[str, np.ndarray] = {"label": labels, "lengths": lengths, "pad_int": np.array(pad_int)}
+
+    if format in ("nucleotide", "both"):
+        to_save["nucleotide"] = _trim_to_max(nuc_arrays, lengths.tolist())
+    if format in ("translated", "both") and codon_map_arr is not None:
+        to_save["translated"] = _trim_to_max(trans_arrays, [t.shape[1] for t in trans_arrays])
+        to_save["vocab_size"] = np.array(int(codon_map_arr.max()) + 1)
+
+    _save_npz(output_path, to_save, compress)
+
+    total_windows = len(labels)
+    elapsed = time.time() - start
+    print(
+        f"Processed {total_lines} CSV rows into {total_windows} windows in "
+        f"{elapsed:.2f}s ({total_windows / elapsed:.0f} windows/sec)"
+    )
+    for key, arr in to_save.items():
+        print(f"  {key}: shape={arr.shape}, dtype={arr.dtype}")

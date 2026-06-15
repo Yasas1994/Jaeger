@@ -38,13 +38,7 @@ def test_utils_help():
     runner = CliRunner()
     result = runner.invoke(cli.main, ["utils", "--help"])
     assert result.exit_code == 0
-    assert "combine" in result.output.lower()
-
-
-def test_taxonomy_help():
-    runner = CliRunner()
-    result = runner.invoke(cli.main, ["taxonomy", "--help"])
-    assert result.exit_code == 0
+    assert "convert" in result.output.lower()
 
 
 def test_download_help():
