@@ -1,0 +1,60 @@
+wing: jaeger
+rooms:
+- name: slurm
+  description: Files from slurm/
+  keywords:
+  - slurm
+  - slurm
+- name: testing
+  description: Files from tests/
+  keywords:
+  - testing
+  - tests
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: src
+  description: Files from src/
+  keywords:
+  - src
+  - src
+- name: singularity
+  description: Files from singularity/
+  keywords:
+  - singularity
+  - singularity
+- name: train_config
+  description: Files from train_config/
+  keywords:
+  - train_config
+  - train_config
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: memory
+  description: Files from memory/
+  keywords:
+  - memory
+  - memory
+- name: recipes
+  description: Files from recipes/
+  keywords:
+  - recipes
+  - recipes
+- name: test_log
+  description: Files from test_log/
+  keywords:
+  - test_log
+  - test_log
+- name: test_cli
+  description: Files from test_cli/
+  keywords:
+  - test_cli
+  - test_cli
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []
