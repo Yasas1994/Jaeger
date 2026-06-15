@@ -310,6 +310,13 @@ def tune(**kwargs):
     help="Show a per-batch Rich progress bar with loss and speed",
 )
 @click.option(
+    "--profile",
+    is_flag=True,
+    required=False,
+    default=False,
+    help="Show per-section timing in the progress bar",
+)
+@click.option(
     "-v",
     "--verbose",
     count=True,
