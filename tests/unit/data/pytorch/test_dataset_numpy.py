@@ -100,7 +100,12 @@ def test_translate_to_codons_known_sequence():
     assert x.shape[0] == 6
     assert x.shape[1] == 4
 
-    expected = [codon_table["ATG"], codon_table["AAA"], codon_table["TTT"], codon_table["CCC"]]
+    expected = [
+        codon_table["ATG"],
+        codon_table["AAA"],
+        codon_table["TTT"],
+        codon_table["CCC"],
+    ]
     assert torch.equal(x[0], torch.tensor(expected, dtype=torch.long))
 
 

@@ -34,16 +34,18 @@ class EarlyStopping:
         if current is None:
             return
 
-        improved = (self.mode == "min" and current < self.best_value - self.min_delta) or (
-            self.mode == "max" and current > self.best_value + self.min_delta
-        )
+        improved = (
+            self.mode == "min" and current < self.best_value - self.min_delta
+        ) or (self.mode == "max" and current > self.best_value + self.min_delta)
 
         if improved:
             self.best_value = current
             self.best_epoch = epoch
             self.wait = 0
             if self.restore_best_weights:
-                self.best_state = {k: v.cpu().clone() for k, v in trainer.model.state_dict().items()}
+                self.best_state = {
+                    k: v.cpu().clone() for k, v in trainer.model.state_dict().items()
+                }
         else:
             self.wait += 1
             if self.wait >= self.patience:
@@ -90,7 +92,9 @@ class ModelCheckpoint:
             if self.save_best_only:
                 self._save(trainer, epoch)
                 if self.verbose:
-                    print(f"Epoch {epoch}: {self.monitor} improved to {current:.4f}; saving model")
+                    print(
+                        f"Epoch {epoch}: {self.monitor} improved to {current:.4f}; saving model"
+                    )
         elif not self.save_best_only:
             self._save(trainer, epoch)
 

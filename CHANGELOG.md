@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 <!-- insertion marker -->
+## v1.27.1 (2026-06-15)
+
+### Changed
+
+- Migrated the training and inference backend from TensorFlow to PyTorch.
+  - New `jaeger.nnlib.pytorch` modules provide model building, layers, losses, metrics, and conversion utilities.
+  - New `jaeger.training.pytorch` trainer, callbacks, and distributed helpers support multi-GPU and mixed-precision training.
+  - New `jaeger.data.pytorch` CSV/NumPy dataset builders and collators feed variable-length sequences to PyTorch models.
+  - `jaeger train` now runs the PyTorch training path by default.
+  - `jaeger predict` now uses the PyTorch inference runner; legacy TensorFlow SavedModel support is retained only for deprecated models.
+
+### Added
+
+- SLURM batch scripts and Singularity definitions updated for the PyTorch container workflow.
+- CPU-only (`[cpu]`), GPU (`[gpu]`), and Apple Silicon (`[darwin-arm]`) optional dependency groups now resolve PyTorch wheels instead of TensorFlow.
+
+### Deprecated
+
+- The bundled `default` TensorFlow SavedModel and `experimental_*` models remain available via `jaeger predict-legacy` but are no longer recommended.
+
 ## v1.26.4 (2026-06-13)
 
 ### Feat

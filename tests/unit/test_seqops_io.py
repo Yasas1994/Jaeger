@@ -58,7 +58,12 @@ class TestFragmentGenerators:
     def test_fragment_generator(self, unlabeled_fasta_path: str):
         frags = list(
             seqio.fragment_generator(
-                unlabeled_fasta_path, fragsize=16, stride=16, num=2, no_progress=True, dustmask=False
+                unlabeled_fasta_path,
+                fragsize=16,
+                stride=16,
+                num=2,
+                no_progress=True,
+                dustmask=False,
             )
         )
         assert len(frags) > 0
@@ -68,7 +73,9 @@ class TestFragmentGenerators:
 
     def test_fragment_generator_lib(self, unlabeled_fasta_path: str):
         frags = list(
-            seqio.fragment_generator_lib(unlabeled_fasta_path, fragsize=16, stride=16, num=2)
+            seqio.fragment_generator_lib(
+                unlabeled_fasta_path, fragsize=16, stride=16, num=2
+            )
         )
         assert len(frags) > 0
         parts = frags[0].split(",")
@@ -101,7 +108,9 @@ class TestWriteFastaFromResults:
         )
         data = {"contig_1": (df, 0, 12)}
         out = tmp_path / "phages.fasta"
-        seqio.write_fasta_from_results(data, str(out), reliability_cutoff=0.5, phage_score=1)
+        seqio.write_fasta_from_results(
+            data, str(out), reliability_cutoff=0.5, phage_score=1
+        )
         text = out.read_text()
         assert ">contig_1_0" in text
         assert ">contig_1_2" in text

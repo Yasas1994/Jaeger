@@ -36,9 +36,7 @@ def translate_to_codons(seq: np.ndarray, codon_table: Dict[str, int]) -> torch.T
         frames.append(torch.tensor(rev_indices, dtype=torch.long))
 
     max_len = max(len(f) for f in frames)
-    frames = [
-        torch.nn.functional.pad(f, (0, max_len - len(f))) for f in frames
-    ]
+    frames = [torch.nn.functional.pad(f, (0, max_len - len(f))) for f in frames]
     return torch.stack(frames)
 
 

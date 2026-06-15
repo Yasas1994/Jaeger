@@ -16,7 +16,9 @@ def setup_distributed(backend: str = "nccl") -> bool:
         rank = int(os.environ["SLURM_PROCID"])
         world_size = int(os.environ["SLURM_NTASKS"])
         local_rank = int(os.environ.get("SLURM_LOCALID", 0))
-        dist.init_process_group(backend=backend, init_method="env://", rank=rank, world_size=world_size)
+        dist.init_process_group(
+            backend=backend, init_method="env://", rank=rank, world_size=world_size
+        )
         if torch.cuda.is_available():
             torch.cuda.set_device(local_rank)
         return True
@@ -32,7 +34,9 @@ def cleanup_distributed():
 def get_device() -> torch.device:
     if dist.is_initialized():
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        return torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+        return torch.device(
+            f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+        )
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 

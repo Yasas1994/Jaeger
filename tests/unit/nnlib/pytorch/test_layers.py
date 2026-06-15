@@ -68,9 +68,7 @@ def test_masked_conv1d_no_mask():
 
 def test_masked_conv1d_activation():
     x = torch.abs(torch.randn(2, 3, 10, 4)) + 1.0
-    layer = MaskedConv1D(
-        filters=8, kernel_size=3, padding="same", activation="relu"
-    )
+    layer = MaskedConv1D(filters=8, kernel_size=3, padding="same", activation="relu")
     out, _ = layer(x, mask=None)
     assert (out >= 0).all()
 
@@ -261,8 +259,14 @@ def test_representation_model_forward():
     model = RepresentationModel(
         embedding=embedding,
         hidden_layers=[
-            {"name": "masked_conv1d", "config": {"filters": 16, "kernel_size": 3, "padding": "same"}},
-            {"name": "masked_batchnorm", "config": {"num_features": 16, "return_nmd": True}},
+            {
+                "name": "masked_conv1d",
+                "config": {"filters": 16, "kernel_size": 3, "padding": "same"},
+            },
+            {
+                "name": "masked_batchnorm",
+                "config": {"num_features": 16, "return_nmd": True},
+            },
         ],
         pooling="average",
     )

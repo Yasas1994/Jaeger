@@ -6,6 +6,20 @@ import torch
 from jaeger.nnlib.pytorch.builder import ModelBuilder
 
 
+def _dummy_input_from_config(
+    config: Dict[str, Any],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return a dummy (x, mask) tuple that matches the model input shape."""
+    model_cfg = config.get("model", {})
+    embedding_cfg = model_cfg.get("embedding", {})
+    sp_cfg = model_cfg.get("string_processor", {})
+    frames = int(embedding_cfg.get("frames", 6))
+    crop_size = int(sp_cfg.get("crop_size", 500))
+    x = torch.zeros((1, frames, crop_size), dtype=torch.long)
+    mask = torch.ones((1, frames, crop_size), dtype=torch.bool)
+    return x, mask
+
+
 class PyTorchInferenceRunner:
     """Load and run a PyTorch Jaeger model for inference."""
 
@@ -33,10 +47,22 @@ class PyTorchInferenceRunner:
             state = torch.load(path, map_location=self.device, weights_only=True)
         except TypeError:
             state = torch.load(path, map_location=self.device, weights_only=False)
-        if "model_state_dict" in state:
-            self.model.load_state_dict(state["model_state_dict"])
-        else:
-            self.model.load_state_dict(state)
+        sd = state.get("model_state_dict", state)
+        try:
+            self.model.load_state_dict(sd)
+        except RuntimeError:
+            # The checkpoint may contain trained MaskedConv1D weights that
+            # require lazy layers to be materialized before loading.
+            self._initialize_lazy_layers()
+            self.model.load_state_dict(sd)
+
+    def _initialize_lazy_layers(self):
+        """Run a dummy forward so MaskedConv1D layers materialize before loading."""
+        dummy_x, dummy_mask = _dummy_input_from_config(self.config)
+        dummy_x = dummy_x.to(self.device)
+        dummy_mask = dummy_mask.to(self.device)
+        with torch.no_grad():
+            self.model(dummy_x, dummy_mask)
 
     def predict(
         self,

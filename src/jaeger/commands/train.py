@@ -59,6 +59,22 @@ def _count_parameters(model: nn.Module) -> Tuple[int, int]:
     return total, trainable
 
 
+def _initialize_lazy_layers(
+    models: Dict[str, nn.Module], config: Dict[str, Any]
+) -> None:
+    """Run a dummy forward pass to materialize any lazy layers."""
+    model_cfg = config.get("model", {})
+    embedding_cfg = model_cfg.get("embedding", {})
+    sp_cfg = model_cfg.get("string_processor", {})
+    frames = int(embedding_cfg.get("frames", 6))
+    crop_size = int(sp_cfg.get("crop_size", 500))
+    device = next(models["jaeger_classifier"].parameters()).device
+    dummy = torch.zeros((1, frames, crop_size), dtype=torch.long, device=device)
+    mask = torch.ones((1, frames, crop_size), dtype=torch.bool, device=device)
+    with torch.no_grad():
+        models["jaeger_classifier"](dummy, mask)
+
+
 def _load_checkpoint_if_requested(
     model: nn.Module,
     optimizer: Optional[torch.optim.Optimizer],
@@ -282,6 +298,8 @@ def train_fragment_core(**kwargs):
         models = builder.build_fragment_classifier()
         rep_model = models["rep_model"]
 
+        _initialize_lazy_layers(models, config)
+
         total_params, trainable_params = _count_parameters(rep_model)
         logger.info(
             "rep_model parameters: total=%s, trainable=%s",
@@ -411,7 +429,7 @@ def train_fragment_core(**kwargs):
         if kwargs.get("save_model", False) or kwargs.get("only_save", False):
             save_dir = model_save_path if model_save_path else classifier_dir
             _save_model_checkpoint(
-                models["jaeger_classifier"],
+                models["jaeger_model"],
                 save_dir,
                 "classifier.pt",
                 metadata=kwargs.get("meta"),

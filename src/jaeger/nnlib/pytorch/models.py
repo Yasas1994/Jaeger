@@ -71,7 +71,13 @@ class Embedding(nn.Module):
 class ClassificationHead(nn.Module):
     """Dense head for class prediction."""
 
-    def __init__(self, input_dim: int, num_classes: int, hidden_units: List[int], dropout: float = 0.0):
+    def __init__(
+        self,
+        input_dim: int,
+        num_classes: int,
+        hidden_units: List[int],
+        dropout: float = 0.0,
+    ):
         super().__init__()
         layers = []
         prev = input_dim
@@ -92,7 +98,13 @@ class ClassificationHead(nn.Module):
 class ReliabilityHead(nn.Module):
     """Dense head for confidence estimation."""
 
-    def __init__(self, input_dim: int, num_classes: int, hidden_units: List[int], dropout: float = 0.0):
+    def __init__(
+        self,
+        input_dim: int,
+        num_classes: int,
+        hidden_units: List[int],
+        dropout: float = 0.0,
+    ):
         super().__init__()
         layers = []
         prev = input_dim
@@ -126,7 +138,9 @@ class ProjectionHead(nn.Module):
 
 
 class RepresentationModel(nn.Module):
-    def __init__(self, embedding: nn.Module, hidden_layers: List[dict], pooling: str = "average"):
+    def __init__(
+        self, embedding: nn.Module, hidden_layers: List[dict], pooling: str = "average"
+    ):
         super().__init__()
         self.embedding = embedding
         self.blocks = nn.ModuleList()
@@ -147,7 +161,7 @@ class RepresentationModel(nn.Module):
             elif name == "transformer_encoder":
                 self.blocks.append(TransformerEncoder(**config))
             elif name == "residual_block":
-                inner = self.blocks.pop() if self.blocks else None
+                inner = self.blocks.pop(-1) if self.blocks else None
                 self.blocks.append(ResidualBlock(inner))
             elif name == "dense":
                 if "units" in config:
@@ -155,7 +169,9 @@ class RepresentationModel(nn.Module):
                     config["out_features"] = config.pop("units")
                 self.blocks.append(nn.Linear(**config))
             elif name == "activation":
-                self.blocks.append(GeLU() if config.get("activation") == "gelu" else nn.ReLU())
+                self.blocks.append(
+                    GeLU() if config.get("activation") == "gelu" else nn.ReLU()
+                )
             elif name == "dropout":
                 self.blocks.append(nn.Dropout(config.get("rate", 0.0)))
             else:
@@ -256,7 +272,9 @@ class JaegerModel(nn.Module):
         self.classification_head = classification_head
         self.reliability_head = reliability_head
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
         outputs = self.rep_model(x, mask)
         if isinstance(outputs, tuple):
             embedding = outputs[0]
@@ -268,7 +286,10 @@ class JaegerModel(nn.Module):
             gate = None
 
         prediction = self.classification_head(embedding)
-        result: Dict[str, torch.Tensor] = {"prediction": prediction, "embedding": embedding}
+        result: Dict[str, torch.Tensor] = {
+            "prediction": prediction,
+            "embedding": embedding,
+        }
         if nmd is not None:
             result["nmd"] = nmd
         if gate is not None:

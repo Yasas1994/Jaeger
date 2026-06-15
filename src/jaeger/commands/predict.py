@@ -25,7 +25,7 @@ GB_BYTES = 1024**3
 def _resolve_codon_value(value):
     """Resolve a codon table configuration value to a list."""
     if isinstance(value, str):
-        if value == "CODONS":
+        if value in ("CODON", "CODONS"):
             return CODONS
         if value == "CODON_ID":
             return CODON_ID
@@ -56,9 +56,9 @@ def _translate_fragment(seq: str, codon_table: dict, crop_size: int) -> torch.Te
     forward = _codon_ids(seq)
     reverse = _codon_ids(rev)
 
-    frames = [
-        forward[offset::3] for offset in range(3)
-    ] + [reverse[offset::3] for offset in range(3)]
+    frames = [forward[offset::3] for offset in range(3)] + [
+        reverse[offset::3] for offset in range(3)
+    ]
 
     target_len = max(0, len(seq) // 3 - 1)
     frames = [f[:target_len] + [-1] * (target_len - len(f)) for f in frames]
@@ -137,8 +137,7 @@ def run_core(**kwargs):
     log_file = Path(f"{file_base}_jaeger.log")
     logger = get_logger(output_dir, log_file, level=kwargs.get("verbose", 1))
     logger.info(
-        description(version("jaeger-bio"))
-        + "\n{:-^80}".format("validating parameters")
+        description(version("jaeger-bio")) + "\n{:-^80}".format("validating parameters")
     )
     logger.debug(config)
 
@@ -170,9 +169,7 @@ def run_core(**kwargs):
             )
     precision = kwargs.get("precision", "fp32")
     if precision and precision != "fp32":
-        logger.warning(
-            f"--precision {precision} is not supported and will be ignored."
-        )
+        logger.warning(f"--precision {precision} is not supported and will be ignored.")
 
     if kwargs.get("cpu") or not torch.cuda.is_available():
         device = torch.device("cpu")
@@ -197,13 +194,9 @@ def run_core(**kwargs):
     logger.info(f"model: {model_id}")
 
     if current_process is not None:
-        logger.info(
-            f"avail mem: {psutil.virtual_memory().available / GB_BYTES:.2f}GB"
-        )
+        logger.info(f"avail mem: {psutil.virtual_memory().available / GB_BYTES:.2f}GB")
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
-        logger.info(
-            f"wall time(s) : {time.time() - current_process.create_time():.2f}"
-        )
+        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
         logger.info(
             f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB "
             f"({current_process.memory_percent():.2f}%)"
@@ -348,9 +341,7 @@ def run_core(**kwargs):
                     identifier="phage",
                 )
                 plot_type = kwargs.get("plot_type", "circular")
-                config_labels = {
-                    i: c for i, c in enumerate(class_map.get("class", []))
-                }
+                config_labels = {i: c for i, c in enumerate(class_map.get("class", []))}
                 if plot_type in ("circular", "both"):
                     plot_scores(
                         logits_df,
@@ -380,9 +371,7 @@ def run_core(**kwargs):
             else:
                 logger.info("no prophage regions found")
         except Exception as e:
-            logger.error(
-                f"an error {e} occurred during the prophage prediction step"
-            )
+            logger.error(f"an error {e} occurred during the prophage prediction step")
             logger.debug(traceback.format_exc())
 
     if kwargs.get("getsequences"):
@@ -401,9 +390,7 @@ def run_core(**kwargs):
 
     if kwargs.get("window_scores"):
         output_scores_path = output_dir / f"{file_base}_window_scores.npz"
-        logger.info(
-            f"writing window-wise scores and metadata to {output_scores_path}"
-        )
+        logger.info(f"writing window-wise scores and metadata to {output_scores_path}")
         np.savez(
             output_scores_path,
             headers=data_full["headers"],
@@ -416,9 +403,7 @@ def run_core(**kwargs):
 
     if current_process is not None:
         logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
-        logger.info(
-            f"wall time(s) : {time.time() - current_process.create_time():.2f}"
-        )
+        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
         logger.info(
             f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB "
             f"({current_process.memory_percent():.2f}%)"

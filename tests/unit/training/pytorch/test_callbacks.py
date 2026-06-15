@@ -43,7 +43,9 @@ def test_early_stopping():
     val_loader = _make_data()
     loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
-    early_stop = EarlyStopping(monitor="val_loss", patience=1, restore_best_weights=True)
+    early_stop = EarlyStopping(
+        monitor="val_loss", patience=1, restore_best_weights=True
+    )
 
     trainer = Trainer(
         model=model,

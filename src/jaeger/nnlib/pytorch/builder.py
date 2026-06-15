@@ -20,7 +20,9 @@ class _ClassifierPipeline(nn.Module):
         self.rep_model = rep_model
         self.head = head
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         embedding = self.rep_model(x, mask)
         if isinstance(embedding, tuple):
             embedding = embedding[0]
@@ -39,7 +41,9 @@ class ModelBuilder:
 
     def build_fragment_classifier(self) -> Dict[str, nn.Module]:
         if "classifier" not in self.model_cfg:
-            raise ValueError("classifier config is required for build_fragment_classifier")
+            raise ValueError(
+                "classifier config is required for build_fragment_classifier"
+            )
 
         models: Dict[str, nn.Module] = {}
 
@@ -109,9 +113,7 @@ class ModelBuilder:
                 "reliability training branch is not implemented yet"
             )
         if train_branch == "pretrain":
-            raise NotImplementedError(
-                "pretrain training branch is not implemented yet"
-            )
+            raise NotImplementedError("pretrain training branch is not implemented yet")
         raise ValueError(f"Unknown train_branch: {train_branch}")
 
     def get_metrics(self, branch: str = "classifier") -> Dict[str, Any]:

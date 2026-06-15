@@ -1,6 +1,10 @@
 import os
 
-from jaeger.training.pytorch.distributed import get_device, is_main_process, setup_distributed
+from jaeger.training.pytorch.distributed import (
+    get_device,
+    is_main_process,
+    setup_distributed,
+)
 
 
 def test_get_device_without_distributed():

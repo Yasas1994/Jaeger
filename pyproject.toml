@@ -14,7 +14,7 @@ includes = ["src/jaeger/**/*.py", "src/jaeger/**/*.json", "src/jaeger/**/*.h5", 
 
 [project]
 name = "jaeger-bio"
-version = "1.26.4"
+version = "1.27.1"
 description = "A quick and precise pipeline for detecting phages in sequence assemblies."
 readme = "README.md"
 authors = [

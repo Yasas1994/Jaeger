@@ -12,7 +12,9 @@ def test_arcface_loss_shape():
 
 
 def test_arcface_loss_class_index_labels():
-    loss = ArcFaceLoss(num_classes=3, embedding_dim=64, margin=0.5, scale=30.0, onehot=False)
+    loss = ArcFaceLoss(
+        num_classes=3, embedding_dim=64, margin=0.5, scale=30.0, onehot=False
+    )
     labels = torch.tensor([0, 1, 2], dtype=torch.long)
     embeddings = torch.randn(3, 64)
     out = loss(labels, embeddings)
