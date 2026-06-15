@@ -24,7 +24,12 @@ import torch.nn as nn
 
 from jaeger.dataops.pytorch.builders import build_datasets
 from jaeger.nnlib.pytorch.builder import ModelBuilder
-from jaeger.training.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from jaeger.training.pytorch.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TerminateOnNaN,
+)
 from jaeger.training.pytorch.distributed import (
     cleanup_distributed,
     get_device,
@@ -158,7 +163,7 @@ def _callback_path_from_config(
     return None
 
 
-_SUPPORTED_CALLBACKS = {"EarlyStopping", "ModelCheckpoint"}
+_SUPPORTED_CALLBACKS = {"EarlyStopping", "ModelCheckpoint", "ReduceLROnPlateau", "TerminateOnNaN"}
 
 
 def _build_callbacks(train_cfg: Dict[str, Any]) -> List[Any]:
@@ -192,6 +197,21 @@ def _build_callbacks(train_cfg: Dict[str, Any]) -> List[Any]:
                         verbose=int(params.get("verbose", 1) or 0),
                     )
                 )
+        elif name == "ReduceLROnPlateau":
+            callbacks.append(
+                ReduceLROnPlateau(
+                    monitor=params.get("monitor", "val_loss"),
+                    mode=params.get("mode", "min"),
+                    patience=int(params.get("patience", 2)),
+                    factor=float(params.get("factor", 0.5)),
+                    min_lr=float(params.get("min_lr", 1e-6)),
+                    verbose=int(params.get("verbose", 0) or 0),
+                )
+            )
+        elif name == "TerminateOnNaN":
+            callbacks.append(
+                TerminateOnNaN(monitor=params.get("monitor", "train_loss"))
+            )
         elif name in _SUPPORTED_CALLBACKS:
             continue
         else:

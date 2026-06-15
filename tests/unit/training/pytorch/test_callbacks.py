@@ -4,7 +4,12 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from jaeger.training.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from jaeger.training.pytorch.callbacks import (
+    EarlyStopping,
+    ModelCheckpoint,
+    ReduceLROnPlateau,
+    TerminateOnNaN,
+)
 from jaeger.training.pytorch.trainer import Trainer
 
 
@@ -83,3 +88,71 @@ def test_model_checkpoint():
         )
         trainer.fit()
         assert ckpt_path.exists()
+
+
+def test_reduce_lr_on_plateau_lowers_lr():
+    """ReduceLROnPlateau should lower LR after patience epochs of no improvement."""
+    param = torch.nn.Parameter(torch.zeros(1))
+    optimizer = torch.optim.SGD([param], lr=0.1)
+    reduce_lr = ReduceLROnPlateau(
+        monitor="val_loss", mode="min", patience=1, factor=0.1, min_lr=1e-6
+    )
+
+    class _FakeTrainer:
+        pass
+
+    fake_trainer = _FakeTrainer()
+    fake_trainer.optimizer = optimizer
+
+    # Improve once to set baseline.
+    reduce_lr.on_epoch_end(fake_trainer, 1, {"val_loss": 1.0})
+    assert optimizer.param_groups[0]["lr"] == 0.1
+
+    # One epoch of no improvement triggers reduction (patience=1).
+    reduce_lr.on_epoch_end(fake_trainer, 2, {"val_loss": 1.0})
+    assert abs(optimizer.param_groups[0]["lr"] - 0.01) < 1e-10
+
+    # Further plateaus reduce again until min_lr is reached.
+    reduce_lr.on_epoch_end(fake_trainer, 3, {"val_loss": 1.0})
+    assert abs(optimizer.param_groups[0]["lr"] - 0.001) < 1e-10
+
+
+def test_terminate_on_nan_stops_training():
+    """TerminateOnNaN should stop training when the monitored metric is NaN."""
+    model = _make_model()
+    train_loader = _make_data()
+    val_loader = _make_data()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    terminate = TerminateOnNaN(monitor="train_loss")
+
+    # Monkeypatch train_one_epoch to return NaN loss on epoch 2.
+    from jaeger.training.pytorch import trainer as trainer_module
+    from jaeger.training.pytorch.engine import train_one_epoch as original_train
+
+    def _nan_train(*args, **kwargs):
+        return {"loss": float("nan")}
+
+    original_evaluate = trainer_module.evaluate
+
+    def _nan_evaluate(*args, **kwargs):
+        return {"loss": float("nan")}
+
+    trainer_module.train_one_epoch = _nan_train
+    trainer_module.evaluate = _nan_evaluate
+    try:
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            epochs=5,
+            device=torch.device("cpu"),
+            callbacks=[terminate],
+        )
+        history = trainer.fit()
+        assert len(history) == 1
+    finally:
+        trainer_module.train_one_epoch = original_train
+        trainer_module.evaluate = original_evaluate
