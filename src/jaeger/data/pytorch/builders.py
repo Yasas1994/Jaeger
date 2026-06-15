@@ -7,6 +7,7 @@ from typing import Any, Dict
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from jaeger.data.pytorch.collate import pad_collate
+from jaeger.data.pytorch.dataset_csv import CSVDataset
 from jaeger.data.pytorch.dataset_numpy import NumpyFullDataset, NumpyRawDataset
 from jaeger.seqops.maps import CODONS
 
@@ -77,6 +78,26 @@ def build_datasets(
                     mutate=string_cfg.get("mutate", False),
                     mutation_rate=string_cfg.get("mutation_rate", 0.1),
                     shuffle_frames=string_cfg.get("shuffle_frames", False),
+                )
+                for path in paths
+            ]
+            datasets[split] = (
+                split_datasets[0]
+                if len(split_datasets) == 1
+                else ConcatDataset(split_datasets)
+            )
+        elif data_format == "csv":
+            split_datasets = [
+                CSVDataset(
+                    path,
+                    crop_size=string_cfg.get("crop_size", 500),
+                    num_classes=num_classes,
+                    codon_table=codon_table,
+                    shuffle=string_cfg.get("shuffle", False),
+                    mutate=string_cfg.get("mutate", False),
+                    mutation_rate=string_cfg.get("mutation_rate", 0.1),
+                    shuffle_frames=string_cfg.get("shuffle_frames", False),
+                    label_first=True,
                 )
                 for path in paths
             ]

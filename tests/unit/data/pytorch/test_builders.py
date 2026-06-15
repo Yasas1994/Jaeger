@@ -116,7 +116,7 @@ def test_build_datasets_unsupported_format(tmp_path):
     _make_npz(train_path, n_samples=4)
     _make_npz(val_path, n_samples=4)
 
-    config = _build_config([train_path], [val_path], data_format="csv")
+    config = _build_config([train_path], [val_path], data_format="hdf5")
     with pytest.raises(ValueError, match="Unsupported data_format"):
         build_datasets(config, branch="classifier")
 
