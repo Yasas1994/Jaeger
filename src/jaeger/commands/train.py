@@ -76,20 +76,19 @@ def _resolve_steps(value: Optional[int]) -> Optional[int]:
     return int(value)
 
 
-def _initialize_lazy_layers(
-    models: Dict[str, nn.Module], config: Dict[str, Any]
-) -> None:
-    """Run a dummy forward pass to materialize any lazy layers."""
+def _make_dummy_input(
+    config: Dict[str, Any], device: torch.device, length: Optional[int] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Build a dummy (input, mask) tuple matching the model config."""
     model_cfg = config.get("model", {})
     embedding_cfg = model_cfg.get("embedding", {})
     sp_cfg = model_cfg.get("string_processor", {})
     input_type = embedding_cfg.get("input_type", "translated")
     input_shape = embedding_cfg.get("input_shape")
     crop_size = int(sp_cfg.get("crop_size", 500))
-    device = next(models["jaeger_classifier"].parameters()).device
 
-    # Use a short dummy length; lazy layers only need to infer channel dims.
-    length = 64 if input_type == "nucleotide" else max(1, crop_size // 3 - 1)
+    if length is None:
+        length = 64 if input_type == "nucleotide" else max(1, crop_size // 3 - 1)
 
     if input_shape is not None and len(input_shape) == 3:
         # One-hot input, e.g. [2, null, 4] or [6, null, vocab_size].
@@ -108,6 +107,15 @@ def _initialize_lazy_layers(
         dtype=torch.bool,
         device=device,
     )
+    return dummy, mask
+
+
+def _initialize_lazy_layers(
+    models: Dict[str, nn.Module], config: Dict[str, Any]
+) -> None:
+    """Run a dummy forward pass to materialize any lazy layers."""
+    device = next(models["jaeger_classifier"].parameters()).device
+    dummy, mask = _make_dummy_input(config, device)
     with torch.no_grad():
         models["jaeger_classifier"](dummy, mask)
 
