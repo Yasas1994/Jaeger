@@ -5,9 +5,10 @@ from __future__ import annotations
 import click
 import numpy as np
 import pytest
+import torch
 import yaml
 
-from jaeger.commands.train import train_fragment_core
+from jaeger.commands.train import _load_checkpoint_if_requested, train_fragment_core
 
 
 def _make_raw_npz(path, n_samples, seq_length=50):
@@ -338,3 +339,38 @@ def test_train_fragment_core_resume_from_last_checkpoint(tmp_path):
 
     checkpoints = list((tmp_path / "checkpoints" / "classifier").glob("*.pt"))
     assert len(checkpoints) >= 1
+
+
+def test_load_checkpoint_maps_optimizer_state_to_device(tmp_path):
+    """Resumed optimizer state should live on the target device."""
+    model = torch.nn.Linear(4, 2)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # Run one step so the optimizer has state.
+    x = torch.randn(2, 4)
+    loss = model(x).sum()
+    loss.backward()
+    optimizer.step()
+
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+        },
+        checkpoint_path,
+    )
+
+    # Load onto CPU (tests in CI may not have CUDA).
+    target_device = torch.device("cpu")
+    fresh_model = torch.nn.Linear(4, 2)
+    fresh_model.to(target_device)
+    fresh_optimizer = torch.optim.Adam(fresh_model.parameters(), lr=1e-3)
+    _load_checkpoint_if_requested(
+        fresh_model, fresh_optimizer, checkpoint_path, target_device
+    )
+
+    # Verify optimizer state tensors are on the target device.
+    for state in fresh_optimizer.state.values():
+        for value in state.values():
+            if isinstance(value, torch.Tensor):
+                assert value.device == target_device

@@ -110,8 +110,13 @@ def _load_checkpoint_if_requested(
     model: nn.Module,
     optimizer: Optional[torch.optim.Optimizer],
     checkpoint_path: Optional[str | Path],
+    device: torch.device,
 ) -> None:
-    """Load model and optimizer state dicts from *checkpoint_path* if provided."""
+    """Load model and optimizer state dicts from *checkpoint_path* if provided.
+
+    The checkpoint is mapped to *device* so that both model parameters and
+    optimizer state land on the target device and stay in sync.
+    """
     if checkpoint_path is None:
         return
     path = Path(checkpoint_path)
@@ -119,7 +124,7 @@ def _load_checkpoint_if_requested(
         logger.warning("Checkpoint path does not exist: %s", path)
         return
     logger.info("Loading checkpoint from %s", path)
-    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    checkpoint = torch.load(path, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -370,6 +375,14 @@ def train_fragment_core(**kwargs):
         )
         model_num_params = numerize(total_params, decimal=1)
 
+        # Move models to the target device before building optimizers so that
+        # optimizer param_groups and any resumed optimizer state live on the
+        # same device as the model.
+        rep_model.to(device)
+        models["jaeger_classifier"].to(device)
+        if models.get("reliability_head") is not None:
+            models["reliability_head"].to(device)
+
         train_cfg = config.get("training", {})
         classifier_dir = Path(train_cfg.get("classifier_dir", "checkpoints/classifier"))
         reliability_dir = Path(
@@ -410,7 +423,7 @@ def train_fragment_core(**kwargs):
             checkpoint_path = None
             if kwargs.get("from_last_checkpoint", False):
                 checkpoint_path = _find_latest_checkpoint(classifier_dir)
-            _load_checkpoint_if_requested(model, optimizer, checkpoint_path)
+            _load_checkpoint_if_requested(model, optimizer, checkpoint_path, device)
 
             if kwargs.get("only_classification_head", False) or kwargs.get(
                 "only_heads", False
@@ -494,7 +507,7 @@ def train_fragment_core(**kwargs):
                 if kwargs.get("from_last_checkpoint", False):
                     rel_checkpoint_path = _find_latest_checkpoint(reliability_dir)
                 _load_checkpoint_if_requested(
-                    rel_pipeline, rel_optimizer, rel_checkpoint_path
+                    rel_pipeline, rel_optimizer, rel_checkpoint_path, device
                 )
 
                 rel_callbacks = _build_callbacks(train_cfg)
