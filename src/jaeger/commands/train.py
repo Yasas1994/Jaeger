@@ -250,6 +250,12 @@ class _ReliabilityPipeline(nn.Module):
     help="Enable XLA JIT compilation for training.",
 )
 @click.option("--meta", type=click.Path(), default=None)
+@click.option(
+    "--profile",
+    is_flag=True,
+    default=False,
+    help="Show per-section timing in the progress bar.",
+)
 def train_fragment(
     config,
     mixed_precision,
@@ -263,6 +269,7 @@ def train_fragment(
     self_supervised_pretraining,
     xla,
     meta,
+    profile,
 ):
     """Train a fragment-level Jaeger model."""
     train_fragment_core(
@@ -278,6 +285,7 @@ def train_fragment(
         self_supervised_pretraining=self_supervised_pretraining,
         xla=xla,
         meta=meta,
+        profile=profile,
     )
 
 
@@ -393,6 +401,7 @@ def train_fragment_core(**kwargs):
                     history_path=str(classifier_dir / "history.json"),
                     branch="classifier",
                     progress_bar=kwargs.get("progress_bar", False),
+                    profile=kwargs.get("profile", False),
                 )
                 trainer.fit()
 
@@ -450,6 +459,7 @@ def train_fragment_core(**kwargs):
                     history_path=str(reliability_dir / "history.json"),
                     branch="reliability",
                     progress_bar=kwargs.get("progress_bar", False),
+                    profile=kwargs.get("profile", False),
                 )
                 rel_trainer.fit()
 

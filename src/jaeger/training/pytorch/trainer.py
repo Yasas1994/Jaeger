@@ -47,6 +47,7 @@ class Trainer:
         history_path: Optional[str] = None,
         branch: str = "classifier",
         progress_bar: bool = False,
+        profile: bool = False,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -61,6 +62,7 @@ class Trainer:
         self.history_path = Path(history_path) if history_path else None
         self.branch = branch
         self.progress_bar = progress_bar
+        self.profile = profile
         self.history: List[Dict[str, float]] = []
         self.should_stop = False
 
@@ -102,6 +104,7 @@ class Trainer:
                         branch=self.branch,
                         progress=progress,
                         task_id=train_task,
+                        profile=self.profile,
                     )
                     val_metrics = evaluate(
                         self.model,
@@ -112,6 +115,7 @@ class Trainer:
                         branch=self.branch,
                         progress=progress,
                         task_id=val_task,
+                        profile=self.profile,
                     )
             else:
                 train_metrics = train_one_epoch(
@@ -122,6 +126,7 @@ class Trainer:
                     self.device,
                     metrics=self.metrics,
                     branch=self.branch,
+                    profile=self.profile,
                 )
                 val_metrics = evaluate(
                     self.model,
@@ -130,6 +135,7 @@ class Trainer:
                     self.device,
                     metrics=self.metrics,
                     branch=self.branch,
+                    profile=self.profile,
                 )
 
             epoch_log = {"epoch": epoch}

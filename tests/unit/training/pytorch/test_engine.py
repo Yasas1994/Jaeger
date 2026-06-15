@@ -102,3 +102,32 @@ def test_train_one_epoch_progress_shows_cumulative_mean():
     assert description.startswith("loss=")
     loss_value = float(description.split("=")[1])
     assert loss_value > 0
+
+
+def test_train_one_epoch_profile_returns_timings():
+    """Profiling should return per-section timing averages."""
+    model = _make_dummy_classifier()
+    loader = _make_dummy_loader()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    history = train_one_epoch(
+        model, loader, loss_fn, optimizer, torch.device("cpu"), profile=True
+    )
+    assert "time_data_ms" in history
+    assert "time_forward_ms" in history
+    assert "time_backward_ms" in history
+    assert "time_optim_ms" in history
+    assert "time_metrics_ms" in history
+    assert all(history[k] >= 0 for k in history if k.startswith("time_"))
+
+
+def test_evaluate_profile_returns_timings():
+    """Profiling should return per-section timing averages for evaluation."""
+    model = _make_dummy_classifier()
+    loader = _make_dummy_loader()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    history = evaluate(model, loader, loss_fn, torch.device("cpu"), profile=True)
+    assert "time_data_ms" in history
+    assert "time_forward_ms" in history
+    assert "time_metrics_ms" in history
+    assert "time_backward_ms" not in history
