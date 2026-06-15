@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from decimal import Decimal
 from pathlib import Path
-
-import pytest
 
 from jaeger.utils import misc
 

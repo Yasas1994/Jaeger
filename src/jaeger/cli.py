@@ -10,67 +10,6 @@ The Jaeger approach uses homology-free machine learning to identify
 both phages and prophages in metagenomic assemblies.
 """
 
-import os
-import sys
-
-# Suppress TensorFlow and C++ warnings before any TF imports.
-# These must be set before the first tensorflow import.
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN custom ops warning
-os.environ["GRPC_VERBOSITY"] = "ERROR"  # Suppress gRPC logs
-os.environ["GLOG_minloglevel"] = "2"  # Suppress glog INFO messages
-os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
-
-if sys.platform.startswith("linux"):
-    os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
-
-
-# Patch TensorFlow 2.18 + Python 3.12 compatibility bug before any TF imports.
-# TF's internal _DictWrapper objects fail inspect.getattr_static during
-# isinstance checks with typing generics, causing SavedModel loading to crash.
-# This bug is fixed in TensorFlow 2.21+.
-# See: https://github.com/tensorflow/tensorflow/issues/78784
-# We also temporarily silence native stderr during this first TF import to
-# suppress harmless but noisy startup messages (oneDNN, CUDA plugin checks,
-# absl pre-init warnings, etc.).
-def _silence_tf_import():
-    import os as _os
-
-    stderr_fd = _os.dup(2)
-    devnull = _os.open(_os.devnull, _os.O_WRONLY)
-    try:
-        _os.dup2(devnull, 2)
-        import tensorflow as tf  # noqa: F401
-        from tensorflow.python.framework import tensor_util
-
-        _original_is_tf_type = tensor_util.is_tf_type
-
-        def _patched_is_tf_type(x):
-            try:
-                return _original_is_tf_type(x)
-            except TypeError:
-                return False
-
-        # Detect the bug by trying the actual _DictWrapper class
-        from tensorflow.python.trackable.data_structures import _DictWrapper
-
-        try:
-            _original_is_tf_type(_DictWrapper())
-        except TypeError:
-            tensor_util.is_tf_type = _patched_is_tf_type
-    finally:
-        _os.dup2(stderr_fd, 2)
-        _os.close(devnull)
-        _os.close(stderr_fd)
-
-
-try:
-    _silence_tf_import()
-except Exception:
-    pass  # TF not installed, incompatible version, or bug already fixed
-finally:
-    del _silence_tf_import
-
 import click
 import logging
 from pathlib import Path
@@ -78,13 +17,8 @@ from importlib.metadata import version
 from importlib.resources import files
 from jaeger.utils.misc import json_to_dict, add_data_to_json, AvailableModels
 import warnings
-from jaeger.commands.quantize import quantize_model
-from jaeger.commands.convert_graph import convert_graph
 
 warnings.filterwarnings("ignore")
-
-if sys.platform.startswith("linux"):
-    os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/lib/cuda"
 
 
 USER_MODEL_PATHS = json_to_dict(files("jaeger.data") / "config.json").get("model_paths")
@@ -93,10 +27,7 @@ AVAIL_MODELS = [
     i
     for i in AvailableModels(path=DEFAULT_MODEL_PATH + USER_MODEL_PATHS).info.keys()
     if i != "jaeger_fragment"
-] + ["default"]
-
-# Models that still use the legacy prediction workflow.
-LEGACY_PREDICT_MODELS = {"default", "experimental_1", "experimental_2"}
+]
 
 logger = logging.getLogger("Jaeger")
 
@@ -144,21 +75,24 @@ def health(**kwargs):
 @click.option(
     "-m",
     "--model",
-    default="default",
-    help=(
-        f"Select a deep-learning model to use. "
-        f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
-    ),
+    default=None,
+    help=("Model name (deprecated; use --model_path or --config)."),
 )
 @click.option(
     "--model_path",
     default=None,
-    help=("Give the path to a model. overrides --model"),
+    help=("Path to a PyTorch model directory containing config.yaml and model.pt."),
 )
 @click.option(
     "--config",
     type=click.Path(exists=True),
     help="Path to Jaeger config file (e.g., when using Apptainer or Docker)",
+)
+@click.option(
+    "--checkpoint",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to a PyTorch checkpoint (model.pt) to use with --config.",
 )
 @click.option(
     "-p",
@@ -244,72 +178,19 @@ def health(**kwargs):
     default=1,
 )
 @click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing files")
-@click.option(
-    "--quantized",
-    type=click.Choice(["dynamic", "float16", "full_int8"]),
-    help="Use quantized TFLite model for inference (dynamic|float16|full_int8)",
-)
-@click.option(
-    "--precision",
-    type=click.Choice(["fp32", "fp16", "bf16"]),
-    default="fp32",
-    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
-)
-@click.option(
-    "--xla",
-    is_flag=True,
-    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
-)
-@click.option(
-    "--onnx",
-    is_flag=True,
-    help="Use ONNX Runtime for inference. Requires converting the model first with 'jaeger utils convert-graph --mode onnx'.",
-)
-@click.option(
-    "--int8",
-    is_flag=True,
-    help="Use INT8 quantized ONNX model (use with --onnx). Requires 'jaeger utils convert-graph --mode onnx --int8'.",
-)
 def predict(**kwargs):
-    """
-    Runs Jaeger on a dataset
-    """
-    model = kwargs.get("model")
+    """Runs Jaeger on a dataset using the PyTorch inference path."""
     model_path = kwargs.get("model_path")
     config = kwargs.get("config")
 
-    if model_path:
-        model = "from_path"
-    else:
-        if model is None:
-            model = "default"
-        elif config is None and model not in AVAIL_MODELS:
-            raise click.BadParameter(
-                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
-            )
-
-    """Run jaeger inference pipeline."""
-    if model in LEGACY_PREDICT_MODELS:
-        import click as _click
-
-        _click.echo(
-            _click.style(
-                f"Warning: model '{model}' uses the legacy prediction workflow and is deprecated. "
-                "It will be removed in a future release. Please migrate to a modern model "
-                "(e.g., 'jaeger_38341_1.4M_fragment').",
-                fg="yellow",
-            ),
-            err=True,
+    if not model_path and not config:
+        raise click.BadParameter(
+            "PyTorch inference requires either --model_path or --config."
         )
 
-    if model == "default":
-        from jaeger.commands.predict_legacy import run_core
+    from jaeger.commands.predict import run_core
 
-        run_core(**kwargs)
-    else:
-        from jaeger.commands.predict import run_core
-
-        run_core(**kwargs)
+    run_core(**kwargs)
 
 
 @click.command(context_settings={"show_default": True})
@@ -954,8 +835,7 @@ def convert(**kwargs):
             jaeger utils optimize-data -i train.csv -o train.npz --format numpy_full
 
             Supported formats:
-              tfrecord            - TFRecord with preprocessed tensors
-              numpy_raw           - int8 sequences + TF preprocessing at train time
+              numpy_raw           - int8 sequences + runtime preprocessing at train time
               numpy_full          - fully preprocessed, fastest loading
               numpy_raw_variable  - variable-length int8 sequences
         """,
@@ -977,7 +857,7 @@ def convert(**kwargs):
 @click.option(
     "--format",
     type=click.Choice(
-        ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"],
+        ["numpy_raw", "numpy_full", "numpy_raw_variable"],
         case_sensitive=False,
     ),
     required=True,
@@ -1007,7 +887,7 @@ def convert(**kwargs):
     "--use-embedding-layer/--no-embedding-layer",
     default=True,
     show_default=True,
-    help="Use embedding layer (int indices) vs one-hot (tfrecord only)",
+    help="Use embedding layer (int indices) vs one-hot (numpy formats)",
 )
 @click.option(
     "--max-length",
@@ -1031,45 +911,6 @@ def optimize_data(**kwargs):
         max_length=kwargs.get("max_length"),
     )
     pass
-
-
-@utils.command(
-    context_settings=dict(ignore_unknown_options=True, show_default=True),
-    help="""Combine multiple model graphs into an ensemble model. Outputs can be summarized with majority voting,
-            sum or mean of logits of each model
-
-            usage\n
-            -----
-
-            jaeger utils combine_models -i path/to/model1 -i path/to/model2 -i path/to/model3 -c mv
-        """,
-)
-@click.option(
-    "-i",
-    "--input",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to saved model",
-    multiple=True,
-)
-@click.option(
-    "-o", "--output", type=str, required=True, help="Path to save the ensemble model"
-)
-@click.option(
-    "-c",
-    "--comb",
-    type=click.Choice(["MV", "SUM", "MEAN", "NONE"], case_sensitive=False),
-    required=True,
-    help="how to summarize the model outputs "
-    "MV: majority voting"
-    "SUM: sum of logits"
-    "MEAN: Mean of logits"
-    "NONE: Do not aggregate",
-)
-def combine_models(**kwargs):
-    from jaeger.commands.utils_models import combine_models_core
-
-    combine_models_core(**kwargs)
 
 
 @utils.command(
@@ -1100,385 +941,12 @@ def stats(**kwargs):
     pass
 
 
-@utils.command(
-    context_settings=dict(ignore_unknown_options=True, show_default=True),
-    help="""
-            Quantize a Jaeger model for faster inference
-
-            usage
-            -----
-
-            jaeger utils quantize -m default -o ./quantized_models
-            jaeger utils quantize -m jaeger_57341_1.5M_fragment -o ./quantized --mode float16
-        """,
-)
-@click.option(
-    "-m",
-    "--model",
-    type=str,
-    required=True,
-    help="Model name to quantize",
-)
-@click.option(
-    "-o",
-    "--output",
-    type=click.Path(path_type=Path),
-    required=True,
-    help="Output directory for the quantized model",
-)
-@click.option(
-    "--mode",
-    type=click.Choice(["dynamic", "float16", "full_int8"]),
-    default="dynamic",
-    help="Quantization mode",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    count=True,
-    help="Verbosity level",
-    default=1,
-)
-def quantize_cmd(**kwargs):
-    """Quantize a Jaeger model"""
-    quantize_model(**kwargs)
-
-
-@utils.command(
-    context_settings=dict(ignore_unknown_options=True, show_default=True),
-    help="""
-            Convert a Jaeger SavedModel to an optimized inference graph.
-
-            Supports XLA, TFLite, ONNX, and TensorRT backends.
-
-            usage
-            -----
-
-            jaeger utils convert-graph -m default -o ./optimized --mode xla
-            jaeger utils convert-graph -m default -o ./optimized --mode onnx
-            jaeger utils convert-graph -m default -o ./optimized --mode onnx --int8
-        """,
-)
-@click.option(
-    "-m",
-    "--model",
-    type=str,
-    required=True,
-    help="Model name to convert",
-)
-@click.option(
-    "-o",
-    "--output",
-    type=click.Path(path_type=Path),
-    required=True,
-    help="Output directory for the converted model",
-)
-@click.option(
-    "--mode",
-    type=click.Choice(["xla", "tflite", "onnx", "tensorrt"]),
-    default="xla",
-    help="Conversion mode",
-)
-@click.option(
-    "--int8",
-    is_flag=True,
-    help="Apply static INT8 quantization (ONNX mode only)",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    count=True,
-    help="Verbosity level",
-    default=1,
-)
-def convert_graph_cmd(model, output, mode, int8, verbose):
-    """Convert a Jaeger SavedModel to an optimized inference graph."""
-    convert_graph(model, output, mode, verbose, int8=int8)
-
-
-@click.group(context_settings=dict(help_option_names=["-h", "--help"]))
-@click.pass_context
-def taxonomy(obj):
-    """
-    exprimental taxonomy prediction pipeline
-    """
-    pass
-
-
-@taxonomy.command(
-    context_settings=dict(ignore_unknown_options=True),
-    help="""
-            Build a taxonomy database
-
-            usage                                                                      
-            -----                                                                      
-
-            jaeger taxonomy build [OPTIONS] -i contigs.fasta -o taxonomy_db
-
-        """,
-)
-@click.option(
-    "-i",
-    "--input",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to input file",
-)
-@click.option(
-    "-t",
-    "--tax",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to taxdump",
-)
-@click.option(
-    "-a",
-    "--acc2tax",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to accession2taxid file",
-)
-@click.option(
-    "-o", "--output", type=str, required=True, help="Path to output directory"
-)
-@click.option(
-    "--fsize",
-    type=int,
-    default=2048,
-    help="Length of the sliding window",
-)
-@click.option(
-    "--stride",
-    type=int,
-    default=2048,
-    help="The length of the gap between two sliding windows (stride==fsize)",
-)
-@click.option(
-    "-m",
-    "--model",
-    default="default",
-    help=(
-        f"Select a deep-learning model to use. "
-        f"Available choices (when --config is not set): {', '.join(AVAIL_MODELS)}"
-    ),
-)
-@click.option(
-    "--model_path",
-    default=None,
-    help=("Give the path to a model. overrides --model"),
-)
-@click.option(
-    "--config",
-    type=click.Path(exists=True),
-    help="Path to Jaeger config file (useful when using Apptainer or Docker)",
-)
-@click.option(
-    "--rc",
-    type=float,
-    default=0.1,
-    help="Minimum reliability score required to accept predictions",
-)
-@click.option(
-    "--batch",
-    type=int,
-    default=96,
-    help="Parallel batch size, lower if GPU runs out of memory",
-)
-@click.option("--workers", type=int, default=4, help="Number of threads to use")
-@click.option(
-    "--cpu",
-    is_flag=True,
-    help="Ignore available GPUs and explicitly run on CPU",
-)
-@click.option(
-    "--physicalid",
-    type=int,
-    default=0,
-    help="Set default GPU device ID for multi-GPU systems",
-)
-@click.option(
-    "--mem",
-    type=int,
-    default=4,
-    help="GPU memory limit",
-)
-@click.option(
-    "--precision",
-    type=click.Choice(["fp32", "fp16", "bf16"]),
-    default="fp32",
-    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
-)
-@click.option(
-    "--xla",
-    is_flag=True,
-    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    count=True,
-    help="Verbosity level: -vv debug, -v info",
-    default=1,
-)
-@click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing database")
-def build(**kwargs):
-    model = kwargs.get("model")
-    if kwargs.get("config") is None:
-        if model is None:
-            model = "default"
-        elif model not in AVAIL_MODELS:
-            raise click.BadParameter(
-                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
-            )
-    else:
-        if model is None:
-            model = "default"
-
-    """Run jaeger taxonomy database generation pipeline"""
-    if model == "default":
-        raise click.BadParameter(f"Model '{model}' is not supported")
-
-    else:
-        from jaeger.commands.taxonomy import build_taxdb
-
-        build_taxdb(**kwargs)
-
-
-@taxonomy.command(
-    "predict",
-    context_settings=dict(ignore_unknown_options=True),
-    help="""
-            Use exeperimental taxonomy prediction workflow
-
-            usage                                                                      
-            -----                                                                      
-
-            jaeger taxonomy predict [OPTIONS] -i contigs.fasta -d taxonomy_db -o output_dir
-
-        """,
-)
-@click.option(
-    "-i",
-    "--input",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to input file",
-)
-@click.option(
-    "-d",
-    "--db",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to taxonomy database",
-)
-@click.option(
-    "-o", "--output", type=str, required=True, help="Path to output directory"
-)
-@click.option(
-    "--fsize",
-    type=int,
-    default=2048,
-    help="Length of the sliding window",
-)
-@click.option(
-    "--stride",
-    type=int,
-    default=2048,
-    help="The gap between two sliding of the sliding window (fsize = stride)",
-)
-@click.option(
-    "-m",
-    "--model",
-    default="default",
-    help=(
-        f"Select a deep-learning model to use. "
-        f"Available models: (when --config is not set): {', '.join(AVAIL_MODELS)}"
-    ),
-)
-@click.option(
-    "--config",
-    type=click.Path(exists=True),
-    help="Path to Jaeger config file (e.g., when using Apptainer or Docker)",
-)
-@click.option(
-    "--rc",
-    type=float,
-    default=0.1,
-    help="Minimum reliability score required to accept predictions",
-)
-@click.option(
-    "--batch",
-    type=int,
-    default=96,
-    help="Parallel batch size, lower if GPU runs out of memory",
-)
-@click.option("--workers", type=int, default=4, help="Number of threads to use")
-@click.option(
-    "--cpu",
-    is_flag=True,
-    help="Ignore available GPUs and explicitly run on CPU",
-)
-@click.option(
-    "--physicalid",
-    type=int,
-    default=0,
-    help="Set default GPU device ID for multi-GPU systems",
-)
-@click.option(
-    "--mem",
-    type=int,
-    default=4,
-    help="GPU memory limit",
-)
-@click.option(
-    "--precision",
-    type=click.Choice(["fp32", "fp16", "bf16"]),
-    default="fp32",
-    help="GPU inference precision: fp32 (default), fp16, or bf16. fp16/bf16 reduce memory and may speed up inference on compatible GPUs.",
-)
-@click.option(
-    "--xla",
-    is_flag=True,
-    help="Enable XLA JIT compilation for inference. May provide 2-3x speedup on GPU after initial compilation overhead.",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    count=True,
-    help="Verbosity level: -vv debug, -v info",
-    default=1,
-)
-@click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing database")
-def predict_tax(**kwargs):  # noqa: F811
-    model = kwargs.get("model")
-    if kwargs.get("config") is None:
-        if model is None:
-            model = "default"
-        elif model not in AVAIL_MODELS:
-            raise click.BadParameter(
-                f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
-            )
-    else:
-        if model is None:
-            model = "default"
-
-    """Run jaeger taxonomy database generation pipeline"""
-    if model == "default":
-        raise click.BadParameter(f"Model '{model}' is not supported")
-
-    else:
-        from jaeger.commands.taxonomy import predict_taxonomy
-
-        predict_taxonomy(**kwargs)
-
-
 main.add_command(health)
 main.add_command(predict)
 main.add_command(train)
 main.add_command(register_models)
 main.add_command(download)
 main.add_command(utils)
-main.add_command(taxonomy)
 
 
 if __name__ == "__main__":

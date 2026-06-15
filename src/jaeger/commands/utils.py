@@ -561,9 +561,8 @@ def optimize_data_core(
 ):
     """Convert Jaeger CSV training data to an optimized format.
 
-    Supports four output formats:
-        - tfrecord: Preprocessed tensors in TFRecord format
-        - numpy_raw: int8 sequences + TF preprocessing at train time
+    Supports three output formats:
+        - numpy_raw: int8 sequences + runtime preprocessing at train time
         - numpy_full: Fully preprocessed, fastest loading
         - numpy_raw_variable: Variable-length int8 sequences
 
@@ -574,7 +573,7 @@ def optimize_data_core(
     output_path : str
         Path to output file.
     format : str
-        One of: tfrecord, numpy_raw, numpy_full, numpy_raw_variable.
+        One of: numpy_raw, numpy_full, numpy_raw_variable.
     crop_size : int
         Sequence crop size (default: 500).
     num_classes : int
@@ -583,13 +582,12 @@ def optimize_data_core(
         Number of parallel workers for CPU-bound formats.
         Defaults to all CPUs.
     use_embedding_layer : bool
-        For tfrecord: use embedding layer (int indices) vs one-hot.
+        Unused (kept for API compatibility).
     max_length : int
         For numpy_raw_variable: maximum sequence length.
     """
     format = format.lower()
     valid_formats = [
-        "tfrecord",
         "numpy_raw",
         "numpy_full",
         "numpy_raw_variable",

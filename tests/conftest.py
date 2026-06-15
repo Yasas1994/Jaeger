@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
 import numpy as np
 import pytest
-import tensorflow as tf
-
-# Keep TF reasonably quiet during tests.
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 
 
 @pytest.fixture

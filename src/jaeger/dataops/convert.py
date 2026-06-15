@@ -1,7 +1,6 @@
 """Dataset format converters.
 
 Converts CSV training data to optimized formats:
-- ``tfrecord`` — TensorFlow TFRecord with preprocessed tensors.
 - ``numpy_raw`` — int8 DNA sequences (fast loading, runtime preprocessing).
 - ``numpy_full`` — fully preprocessed tensors (fastest loading, no augmentations).
 - ``numpy_raw_variable`` — variable-length int8 sequences.
@@ -14,8 +13,6 @@ from __future__ import annotations
 import time
 from functools import partial
 from multiprocessing import Pool, cpu_count
-from pathlib import Path
-
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -35,117 +32,6 @@ except ImportError:
             return func
 
         return wrapper
-
-
-# ---------------------------------------------------------------------------
-# TFRecord helpers
-# ---------------------------------------------------------------------------
-def _int64_feature(value):
-    """Returns an int64_list from a bool / enum / int / uint."""
-    import tensorflow as tf
-
-    return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
-
-
-def _float_feature(value):
-    """Returns a float_list from a float / double."""
-    import tensorflow as tf
-
-    return tf.train.Feature(float_list=tf.train.FloatList(value=value))
-
-
-def _serialize_tfrecord_embedding(translated, label):
-    """Serialize a single example for embedding layer (int32 indices)."""
-    import tensorflow as tf
-
-    translated_flat = tf.reshape(translated, [-1])
-    feature = {
-        "translated": _int64_feature(translated_flat.numpy().tolist()),
-        "label": _float_feature(label.numpy().flatten().tolist()),
-    }
-    return tf.train.Example(
-        features=tf.train.Features(feature=feature)
-    ).SerializeToString()
-
-
-def _serialize_tfrecord_onehot(translated, label):
-    """Serialize a single example for one-hot encoded input (float32)."""
-    import tensorflow as tf
-
-    translated_flat = tf.reshape(translated, [-1])
-    feature = {
-        "translated": _float_feature(translated_flat.numpy().flatten().tolist()),
-        "label": _float_feature(label.numpy().flatten().tolist()),
-    }
-    return tf.train.Example(
-        features=tf.train.Features(feature=feature)
-    ).SerializeToString()
-
-
-def _convert_to_tfrecord(
-    csv_path, output_path, total, preprocess_fn, use_embedding_layer
-):
-    """Convert CSV to TFRecord with preprocessed tensors."""
-    import tensorflow as tf
-
-    serialize_fn = (
-        _serialize_tfrecord_embedding
-        if use_embedding_layer
-        else _serialize_tfrecord_onehot
-    )
-
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
-    with tf.io.TFRecordWriter(output_path) as writer:
-        start = time.time()
-        with open(csv_path) as f:
-            for i, line in enumerate(f):
-                outputs, label = preprocess_fn(line.strip().encode())
-                translated = outputs["translated"]
-                example = serialize_fn(translated, label)
-                writer.write(example)
-                if (i + 1) % 5000 == 0:
-                    elapsed = time.time() - start
-                    rate = (i + 1) / elapsed
-                    print(
-                        f"  {i + 1}/{total} ({100 * (i + 1) / total:.1f}%) - {rate:.1f} samples/sec"
-                    )
-        elapsed = time.time() - start
-        print(
-            f"Done! {total} samples in {elapsed:.1f}s ({total / elapsed:.1f} samples/sec)"
-        )
-
-
-def _convert_with_tf(
-    csv_path: str,
-    output_path: str,
-    format: str,
-    crop_size: int,
-    num_classes: int,
-    use_embedding_layer: bool,
-):
-    """Convert CSV using TensorFlow preprocessing (tfrecord only)."""
-    from jaeger.seqops.encode import process_string_train
-    from jaeger.seqops.maps import CODONS, CODON_ID
-
-    total = sum(1 for _ in open(csv_path))
-    print(f"Total samples: {total}")
-
-    preprocess_fn = process_string_train(
-        crop_size=crop_size,
-        seq_onehot=False,
-        input_type="translated",
-        class_label_onehot=True,
-        num_classes=num_classes,
-        shuffle=False,
-        ngram_width=3,
-        codons=CODONS,
-        codon_num=CODON_ID,
-    )
-
-    _convert_to_tfrecord(
-        csv_path, output_path, total, preprocess_fn, use_embedding_layer
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -727,15 +613,15 @@ def convert_dataset(
     Args:
         input_path: Path to input CSV file (label,sequence format).
         output_path: Path to output file.
-        format: Target format — ``tfrecord``, ``numpy_raw``, ``numpy_full``,
+        format: Target format — ``numpy_raw``, ``numpy_full``,
             or ``numpy_raw_variable``.
         crop_size: Sequence crop size (for fixed-length formats).
         num_classes: Number of output classes.
-        use_embedding_layer: Whether model uses embedding layer (TFRecord only).
+        use_embedding_layer: Unused (kept for API compatibility).
         max_length: Maximum sequence length (variable-length only).
         num_workers: Number of parallel workers (``None`` = auto).
     """
-    valid_formats = ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"]
+    valid_formats = ["numpy_raw", "numpy_full", "numpy_raw_variable"]
     if format not in valid_formats:
         raise ValueError(
             f"Invalid format: {format}. Choose from: {', '.join(valid_formats)}"
@@ -744,11 +630,7 @@ def convert_dataset(
     print(f"Converting {input_path} -> {output_path}")
     print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
 
-    if format == "tfrecord":
-        _convert_with_tf(
-            input_path, output_path, format, crop_size, num_classes, use_embedding_layer
-        )
-    elif format == "numpy_raw":
+    if format == "numpy_raw":
         _convert_to_numpy_raw(
             input_path, output_path, crop_size, num_classes, num_workers
         )
