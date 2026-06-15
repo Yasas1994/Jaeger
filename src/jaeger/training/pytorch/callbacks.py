@@ -1,6 +1,7 @@
+import json
 import math
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -214,3 +215,37 @@ class TerminateOnNaN:
 
     def on_train_end(self, trainer):
         pass
+
+
+class JsonLogger:
+    """Write per-epoch metrics to a JSON file.
+
+    The file is written as a JSON array. When ``append=True``, any existing
+    array is loaded at the start of training and new epochs are appended.
+    """
+
+    def __init__(self, filename: str, append: bool = False):
+        self.filename = Path(filename)
+        self.append = append
+        self.history: List[Dict[str, Any]] = []
+
+    def on_train_begin(self, trainer):
+        self.history = []
+        if self.append and self.filename.exists():
+            try:
+                with self.filename.open("r") as fh:
+                    self.history = json.load(fh)
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Could not load existing history: %s", exc)
+
+    def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, float]):
+        self.history.append(dict(logs))
+        self._write()
+
+    def on_train_end(self, trainer):
+        self._write()
+
+    def _write(self):
+        self.filename.parent.mkdir(parents=True, exist_ok=True)
+        with self.filename.open("w") as fh:
+            json.dump(self.history, fh, indent=2)

@@ -4,8 +4,11 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+import json
+
 from jaeger.training.pytorch.callbacks import (
     EarlyStopping,
+    JsonLogger,
     ModelCheckpoint,
     ReduceLROnPlateau,
     TerminateOnNaN,
@@ -156,3 +159,64 @@ def test_terminate_on_nan_stops_training():
     finally:
         trainer_module.train_one_epoch = original_train
         trainer_module.evaluate = original_evaluate
+
+
+def test_json_logger_writes_history():
+    """JsonLogger should write per-epoch metrics to a JSON file."""
+    model = _make_model()
+    train_loader = _make_data()
+    val_loader = _make_data()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        history_path = Path(tmpdir) / "history.json"
+        json_logger = JsonLogger(filename=str(history_path))
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            epochs=2,
+            device=torch.device("cpu"),
+            callbacks=[json_logger],
+        )
+        trainer.fit()
+        assert history_path.exists()
+        with history_path.open() as fh:
+            saved = json.load(fh)
+        assert len(saved) == 2
+        assert "train_loss" in saved[0]
+        assert "val_loss" in saved[0]
+
+
+def test_json_logger_appends_to_existing_history():
+    """JsonLogger with append=True should extend an existing history file."""
+    model = _make_model()
+    train_loader = _make_data()
+    val_loader = _make_data()
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        history_path = Path(tmpdir) / "history.json"
+        history_path.write_text(json.dumps([{"epoch": 1, "train_loss": 0.9}]))
+
+        json_logger = JsonLogger(filename=str(history_path), append=True)
+        trainer = Trainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            epochs=2,
+            device=torch.device("cpu"),
+            callbacks=[json_logger],
+        )
+        trainer.fit()
+
+        with history_path.open() as fh:
+            saved = json.load(fh)
+        assert len(saved) == 3
+        assert saved[0]["epoch"] == 1

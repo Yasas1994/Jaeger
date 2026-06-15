@@ -26,6 +26,7 @@ from jaeger.dataops.pytorch.builders import build_datasets
 from jaeger.nnlib.pytorch.builder import ModelBuilder
 from jaeger.training.pytorch.callbacks import (
     EarlyStopping,
+    JsonLogger,
     ModelCheckpoint,
     ReduceLROnPlateau,
     TerminateOnNaN,
@@ -163,7 +164,7 @@ def _callback_path_from_config(
     return None
 
 
-_SUPPORTED_CALLBACKS = {"EarlyStopping", "ModelCheckpoint", "ReduceLROnPlateau", "TerminateOnNaN"}
+_SUPPORTED_CALLBACKS = {"EarlyStopping", "JsonLogger", "ModelCheckpoint", "ReduceLROnPlateau", "TerminateOnNaN"}
 
 
 def _build_callbacks(train_cfg: Dict[str, Any]) -> List[Any]:
@@ -212,6 +213,15 @@ def _build_callbacks(train_cfg: Dict[str, Any]) -> List[Any]:
             callbacks.append(
                 TerminateOnNaN(monitor=params.get("monitor", "train_loss"))
             )
+        elif name == "JsonLogger":
+            filename = params.get("filename")
+            if filename is not None:
+                callbacks.append(
+                    JsonLogger(
+                        filename=filename,
+                        append=bool(params.get("append", False)),
+                    )
+                )
         elif name in _SUPPORTED_CALLBACKS:
             continue
         else:
@@ -483,7 +493,6 @@ def train_fragment_core(**kwargs):
                     device=device,
                     metrics=builder.get_metrics(branch="classifier"),
                     callbacks=callbacks,
-                    history_path=str(classifier_dir / "history.json"),
                     branch="classifier",
                     progress_bar=kwargs.get("progress_bar", False),
                     profile=kwargs.get("profile", False),
@@ -555,7 +564,6 @@ def train_fragment_core(**kwargs):
                     device=device,
                     metrics=builder.get_metrics(branch="reliability"),
                     callbacks=rel_callbacks,
-                    history_path=str(reliability_dir / "history.json"),
                     branch="reliability",
                     progress_bar=kwargs.get("progress_bar", False),
                     profile=kwargs.get("profile", False),
