@@ -13,6 +13,12 @@ def _format_timing(data_ms: float, forward_ms: float, backward_ms: float = 0.0, 
     return f" d={data_ms:.1f}ms f={forward_ms:.1f}ms m={metrics_ms:.1f}ms"
 
 
+def _maybe_synchronize(device: torch.device, profile: bool) -> None:
+    """Synchronize CUDA when profiling so timings measure real GPU work."""
+    if profile and device.type == "cuda":
+        torch.cuda.synchronize()
+
+
 def train_one_epoch(
     model: nn.Module,
     dataloader: DataLoader,
@@ -54,6 +60,7 @@ def train_one_epoch(
             if hasattr(m, "reset"):
                 m.reset()
 
+    _maybe_synchronize(device, profile)
     data_start = time.perf_counter()
     for batch_idx, batch in enumerate(dataloader):
         if train_steps is not None and train_steps >= 0 and batch_idx >= train_steps:
@@ -71,6 +78,7 @@ def train_one_epoch(
             else:
                 preds = outputs
             loss = loss_fn(preds, y)
+            _maybe_synchronize(device, profile)
             forward_time = time.perf_counter() - forward_start
             timing["forward"] += forward_time
         elif branch == "reliability":
@@ -80,6 +88,7 @@ def train_one_epoch(
             outputs = model(x, mask=mask)
             preds = outputs[forward_key]
             loss = loss_fn(preds, y)
+            _maybe_synchronize(device, profile)
             forward_time = time.perf_counter() - forward_start
             timing["forward"] += forward_time
         else:
@@ -87,11 +96,13 @@ def train_one_epoch(
 
         backward_start = time.perf_counter()
         loss.backward()
+        _maybe_synchronize(device, profile)
         backward_time = time.perf_counter() - backward_start
         timing["backward"] += backward_time
 
         optim_start = time.perf_counter()
         optimizer.step()
+        _maybe_synchronize(device, profile)
         optim_time = time.perf_counter() - optim_start
         timing["optim"] += optim_time
 
@@ -107,6 +118,7 @@ def train_one_epoch(
             for metric in metrics.values():
                 if hasattr(metric, "update"):
                     metric.update(preds.detach().cpu(), y.detach().cpu())
+        _maybe_synchronize(device, profile)
         metrics_time = time.perf_counter() - metrics_start
         timing["metrics"] += metrics_time
 
@@ -124,6 +136,7 @@ def train_one_epoch(
             progress.advance(task_id, 1)
             progress.update(task_id, description=description)
 
+        _maybe_synchronize(device, profile)
         data_start = time.perf_counter()
 
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
@@ -183,6 +196,7 @@ def evaluate(
                 m.reset()
 
     with torch.no_grad():
+        _maybe_synchronize(device, profile)
         data_start = time.perf_counter()
         for batch_idx, batch in enumerate(dataloader):
             if (
@@ -202,6 +216,7 @@ def evaluate(
             else:
                 preds = outputs
             loss = loss_fn(preds, y)
+            _maybe_synchronize(device, profile)
             forward_time = time.perf_counter() - forward_start
             timing["forward"] += forward_time
 
@@ -217,6 +232,7 @@ def evaluate(
                 for metric in metrics.values():
                     if hasattr(metric, "update"):
                         metric.update(preds.cpu(), y.cpu())
+            _maybe_synchronize(device, profile)
             metrics_time = time.perf_counter() - metrics_start
             timing["metrics"] += metrics_time
 
@@ -232,6 +248,7 @@ def evaluate(
                 progress.advance(task_id, 1)
                 progress.update(task_id, description=description)
 
+            _maybe_synchronize(device, profile)
             data_start = time.perf_counter()
 
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0

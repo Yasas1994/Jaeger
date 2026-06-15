@@ -1,7 +1,7 @@
 import torch
 from rich.progress import Progress
 
-from jaeger.training.pytorch.engine import evaluate, train_one_epoch
+from jaeger.training.pytorch.engine import _maybe_synchronize, evaluate, train_one_epoch
 
 
 class DummyClassifier(torch.nn.Module):
@@ -181,3 +181,44 @@ def test_evaluate_respects_validation_steps():
     )
     assert "loss" in history
     assert model.forward_count == 2
+
+
+def test_maybe_synchronize_no_op_on_cpu():
+    """_maybe_synchronize should not call torch.cuda.synchronize on CPU."""
+    _maybe_synchronize(torch.device("cpu"), profile=True)
+
+
+def test_maybe_synchronize_no_op_when_not_profiling():
+    """_maybe_synchronize should not call torch.cuda.synchronize when not profiling."""
+    class _FakeCuda:
+        called = False
+
+        @staticmethod
+        def synchronize():
+            _FakeCuda.called = True
+
+    original = torch.cuda.synchronize
+    try:
+        torch.cuda.synchronize = _FakeCuda.synchronize
+        _maybe_synchronize(torch.device("cuda:0"), profile=False)
+        assert not _FakeCuda.called
+    finally:
+        torch.cuda.synchronize = original
+
+
+def test_maybe_synchronize_syncs_when_profiling_on_cuda():
+    """_maybe_synchronize should call torch.cuda.synchronize when profiling on CUDA."""
+    class _FakeCuda:
+        called = False
+
+        @staticmethod
+        def synchronize():
+            _FakeCuda.called = True
+
+    original = torch.cuda.synchronize
+    try:
+        torch.cuda.synchronize = _FakeCuda.synchronize
+        _maybe_synchronize(torch.device("cuda:0"), profile=True)
+        assert _FakeCuda.called
+    finally:
+        torch.cuda.synchronize = original
