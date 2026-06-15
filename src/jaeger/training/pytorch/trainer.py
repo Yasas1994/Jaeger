@@ -17,6 +17,10 @@ from rich.text import Text
 from torch.utils.data import DataLoader
 
 from jaeger.training.pytorch.engine import evaluate, train_one_epoch
+from jaeger.utils.logging import get_logger
+
+
+logger = get_logger(log_file=None, log_path=None, level=3)
 
 
 class _SpeedMsColumn(ProgressColumn):
@@ -50,6 +54,7 @@ class Trainer:
         profile: bool = False,
         train_steps: Optional[int] = None,
         validation_steps: Optional[int] = None,
+        start_epoch: int = 0,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -67,6 +72,7 @@ class Trainer:
         self.profile = profile
         self.train_steps = train_steps
         self.validation_steps = validation_steps
+        self.start_epoch = start_epoch
         self.history: List[Dict[str, float]] = []
         self.should_stop = False
 
@@ -76,7 +82,18 @@ class Trainer:
             if hasattr(callback, "on_train_begin"):
                 callback.on_train_begin(self)
 
-        for epoch in range(1, self.epochs + 1):
+        if self.start_epoch >= self.epochs:
+            logger.info(
+                "Checkpoint epoch %d is >= requested epochs %d; nothing to train",
+                self.start_epoch,
+                self.epochs,
+            )
+            for callback in self.callbacks:
+                if hasattr(callback, "on_train_end"):
+                    callback.on_train_end(self)
+            return self.history
+
+        for epoch in range(self.start_epoch + 1, self.epochs + 1):
             for callback in self.callbacks:
                 if hasattr(callback, "on_epoch_begin"):
                     callback.on_epoch_begin(self, epoch)

@@ -111,23 +111,27 @@ def _load_checkpoint_if_requested(
     optimizer: Optional[torch.optim.Optimizer],
     checkpoint_path: Optional[str | Path],
     device: torch.device,
-) -> None:
+) -> int:
     """Load model and optimizer state dicts from *checkpoint_path* if provided.
 
     The checkpoint is mapped to *device* so that both model parameters and
     optimizer state land on the target device and stay in sync.
+
+    Returns the epoch stored in the checkpoint, or ``0`` if no checkpoint was
+    loaded or no epoch was recorded.
     """
     if checkpoint_path is None:
-        return
+        return 0
     path = Path(checkpoint_path)
     if not path.exists():
         logger.warning("Checkpoint path does not exist: %s", path)
-        return
+        return 0
     logger.info("Loading checkpoint from %s", path)
     checkpoint = torch.load(path, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    return int(checkpoint.get("epoch", 0))
 
 
 def _normalize_optimizer_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -423,7 +427,9 @@ def train_fragment_core(**kwargs):
             checkpoint_path = None
             if kwargs.get("from_last_checkpoint", False):
                 checkpoint_path = _find_latest_checkpoint(classifier_dir)
-            _load_checkpoint_if_requested(model, optimizer, checkpoint_path, device)
+            start_epoch = _load_checkpoint_if_requested(
+                model, optimizer, checkpoint_path, device
+            )
 
             if kwargs.get("only_classification_head", False) or kwargs.get(
                 "only_heads", False
@@ -464,6 +470,7 @@ def train_fragment_core(**kwargs):
                     profile=kwargs.get("profile", False),
                     train_steps=train_steps,
                     validation_steps=validation_steps,
+                    start_epoch=start_epoch,
                 )
                 trainer.fit()
 
@@ -506,7 +513,7 @@ def train_fragment_core(**kwargs):
                 rel_checkpoint_path = None
                 if kwargs.get("from_last_checkpoint", False):
                     rel_checkpoint_path = _find_latest_checkpoint(reliability_dir)
-                _load_checkpoint_if_requested(
+                rel_start_epoch = _load_checkpoint_if_requested(
                     rel_pipeline, rel_optimizer, rel_checkpoint_path, device
                 )
 
@@ -536,6 +543,7 @@ def train_fragment_core(**kwargs):
                     profile=kwargs.get("profile", False),
                     train_steps=rel_train_steps,
                     validation_steps=rel_validation_steps,
+                    start_epoch=rel_start_epoch,
                 )
                 rel_trainer.fit()
 
