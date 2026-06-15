@@ -195,11 +195,20 @@ class ModelBuilder:
         return metrics
 
     def _get_optimizer(self, name: str) -> torch.optim.Optimizer:
-        optimizers = {
-            "adam": torch.optim.Adam,
-            "sgd": torch.optim.SGD,
-            "rmsprop": torch.optim.RMSprop,
+        """Resolve a PyTorch optimizer class by case-insensitive name."""
+        if not name:
+            name = "adam"
+
+        available = {
+            cls_name.lower(): cls
+            for cls_name, cls in vars(torch.optim).items()
+            if isinstance(cls, type) and issubclass(cls, torch.optim.Optimizer)
         }
-        if name not in optimizers:
-            raise ValueError(f"Unsupported optimizer: {name}")
-        return optimizers[name]
+
+        opt_class = available.get(name.lower())
+        if opt_class is None:
+            raise ValueError(
+                f"Unsupported optimizer: {name}. "
+                f"Available torch.optim optimizers include: {', '.join(sorted(available))}"
+            )
+        return opt_class

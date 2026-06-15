@@ -70,6 +70,35 @@ def test_builder_compile_classifier():
     assert isinstance(loss, torch.nn.CrossEntropyLoss)
 
 
+def test_builder_resolve_adamw_optimizer():
+    """Generic torch.optim lookup should resolve AdamW."""
+    builder = ModelBuilder(_minimal_config())
+    opt_class = builder._get_optimizer("AdamW")
+    assert opt_class is torch.optim.AdamW
+
+
+def test_builder_resolve_optimizer_case_insensitive():
+    """Optimizer names should be case-insensitive."""
+    builder = ModelBuilder(_minimal_config())
+    assert builder._get_optimizer("adam") is torch.optim.Adam
+    assert builder._get_optimizer("ADAM") is torch.optim.Adam
+    assert builder._get_optimizer("Adam") is torch.optim.Adam
+
+
+def test_builder_default_optimizer_is_adam():
+    """Empty or missing optimizer name should default to Adam."""
+    builder = ModelBuilder(_minimal_config())
+    assert builder._get_optimizer("") is torch.optim.Adam
+    assert builder._get_optimizer(None) is torch.optim.Adam
+
+
+def test_builder_unknown_optimizer_raises():
+    """An unknown optimizer name should raise a clear ValueError."""
+    builder = ModelBuilder(_minimal_config())
+    with pytest.raises(ValueError, match="Unsupported optimizer: not_an_optimizer"):
+        builder._get_optimizer("not_an_optimizer")
+
+
 def test_builder_missing_classifier_raises():
     config = _minimal_config()
     del config["model"]["classifier"]
