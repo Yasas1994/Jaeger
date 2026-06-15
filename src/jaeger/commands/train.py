@@ -24,6 +24,7 @@ import torch.nn as nn
 
 from jaeger.dataops.pytorch.builders import build_datasets
 from jaeger.nnlib.pytorch.builder import ModelBuilder
+from jaeger.nnlib.pytorch.summary import ModelSummary
 from jaeger.training.pytorch.callbacks import (
     EarlyStopping,
     JsonLogger,
@@ -108,6 +109,19 @@ def _make_dummy_input(
         device=device,
     )
     return dummy, mask
+
+
+def _print_model_summary(
+    model: nn.Module, config: Dict[str, Any], branch_label: str
+) -> None:
+    """Log a Keras-style model summary for *model* using ModelSummary."""
+    device = next(model.parameters()).device
+    dummy, mask = _make_dummy_input(config, device)
+    summary_text = ModelSummary(model, input_data=(dummy, mask)).summary(
+        branch_label=branch_label
+    )
+    if summary_text:
+        logger.info("%s", summary_text)
 
 
 def _initialize_lazy_layers(
@@ -425,6 +439,8 @@ def train_fragment_core(**kwargs):
         if models.get("reliability_head") is not None:
             models["reliability_head"].to(device)
 
+        _print_model_summary(models["jaeger_classifier"], config, branch_label="classifier")
+
         train_cfg = config.get("training", {})
         classifier_dir = Path(train_cfg.get("classifier_dir", "checkpoints/classifier"))
         reliability_dir = Path(
@@ -535,6 +551,7 @@ def train_fragment_core(**kwargs):
                 rel_pipeline = _ReliabilityPipeline(
                     rep_model, models["reliability_head"]
                 )
+                _print_model_summary(rel_pipeline, config, branch_label="reliability")
                 rel_optimizer = torch.optim.Adam(
                     rel_pipeline.parameters(),
                     lr=(train_cfg.get("optimizer_params", {}) or {}).get("lr", 1e-3),
