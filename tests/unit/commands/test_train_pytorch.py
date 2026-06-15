@@ -52,6 +52,22 @@ def _build_config(tmp_path, train_path, val_path, data_format="numpy_raw"):
             "classifier_dir": str(tmp_path / "checkpoints" / "classifier"),
             "optimizer": "adam",
             "optimizer_params": {"lr": 1e-3},
+            "callbacks": {
+                "classifier": [
+                    {
+                        "name": "ModelCheckpoint",
+                        "params": {
+                            "filepath": str(
+                                tmp_path / "checkpoints" / "classifier" / "checkpoint_epoch_{epoch:02d}.pt"
+                            ),
+                            "monitor": "val_loss",
+                            "mode": "min",
+                            "save_best_only": False,
+                            "verbose": 0,
+                        },
+                    }
+                ]
+            },
             "fragment_classifier_data": {
                 "train": [{"path": [str(train_path)]}],
                 "validation": [{"path": [str(val_path)]}],

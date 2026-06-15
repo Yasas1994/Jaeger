@@ -95,14 +95,20 @@ class ModelCheckpoint:
 
         if improved:
             self.best_value = current
-            if self.save_best_only:
+
+        if self.save_best_only:
+            if improved:
                 self._save(trainer, epoch, logs)
                 if self.verbose:
                     print(
                         f"Epoch {epoch}: {self.monitor} improved to {current:.4f}; saving model"
                     )
-        elif not self.save_best_only:
+        else:
             self._save(trainer, epoch, logs)
+            if self.verbose and improved:
+                print(
+                    f"Epoch {epoch}: {self.monitor} improved to {current:.4f}; saving model"
+                )
 
     def _save(self, trainer, epoch: int, logs: Optional[Dict[str, float]] = None):
         logs = dict(logs or {})

@@ -52,7 +52,6 @@ def test_trainer_fit():
             optimizer=optimizer,
             epochs=2,
             device=torch.device("cpu"),
-            checkpoint_dir=tmpdir,
             history_path=Path(tmpdir) / "history.json",
         )
         history = trainer.fit()
@@ -60,7 +59,6 @@ def test_trainer_fit():
         assert "train_loss" in history[0]
         assert "val_loss" in history[0]
         assert (Path(tmpdir) / "history.json").exists()
-        assert len(list(Path(tmpdir).glob("checkpoint_epoch_*.pt"))) == 2
 
 
 def test_trainer_fit_with_progress_bar():
@@ -79,7 +77,6 @@ def test_trainer_fit_with_progress_bar():
             optimizer=optimizer,
             epochs=1,
             device=torch.device("cpu"),
-            checkpoint_dir=tmpdir,
             history_path=Path(tmpdir) / "history.json",
             progress_bar=True,
         )
@@ -118,7 +115,6 @@ def test_trainer_respects_train_and_validation_steps():
             optimizer=optimizer,
             epochs=2,
             device=torch.device("cpu"),
-            checkpoint_dir=tmpdir,
             history_path=Path(tmpdir) / "history.json",
             train_steps=2,
             validation_steps=1,
@@ -146,7 +142,6 @@ def test_trainer_resumes_from_start_epoch():
             optimizer=optimizer,
             epochs=5,
             device=torch.device("cpu"),
-            checkpoint_dir=tmpdir,
             history_path=Path(tmpdir) / "history.json",
             start_epoch=2,
         )
@@ -173,12 +168,9 @@ def test_trainer_skips_training_when_start_epoch_reaches_epochs():
             optimizer=optimizer,
             epochs=3,
             device=torch.device("cpu"),
-            checkpoint_dir=tmpdir,
             history_path=Path(tmpdir) / "history.json",
             start_epoch=3,
         )
         history = trainer.fit()
         assert len(history) == 0
         assert model.forward_count == 0
-        # No new checkpoint should be saved.
-        assert len(list(Path(tmpdir).glob("checkpoint_epoch_*.pt"))) == 0

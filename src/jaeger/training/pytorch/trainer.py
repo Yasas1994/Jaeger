@@ -47,7 +47,6 @@ class Trainer:
         device: torch.device,
         metrics: Optional[Dict[str, Any]] = None,
         callbacks: Optional[List[Any]] = None,
-        checkpoint_dir: Optional[str] = None,
         history_path: Optional[str] = None,
         branch: str = "classifier",
         progress_bar: bool = False,
@@ -65,7 +64,6 @@ class Trainer:
         self.device = device
         self.metrics = metrics or {}
         self.callbacks = callbacks or []
-        self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self.history_path = Path(history_path) if history_path else None
         self.branch = branch
         self.progress_bar = progress_bar
@@ -188,8 +186,6 @@ class Trainer:
             if getattr(self, "should_stop", False):
                 break
 
-            if self.checkpoint_dir:
-                self._save_checkpoint(epoch)
             if self.history_path:
                 self._save_history()
 
@@ -205,20 +201,6 @@ class Trainer:
             return len(loader)
         except TypeError:
             return None
-
-    def _save_checkpoint(self, epoch: int):
-        if self.checkpoint_dir is None:
-            return
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        path = self.checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": self.model.state_dict(),
-                "optimizer_state_dict": self.optimizer.state_dict(),
-            },
-            path,
-        )
 
     def _save_history(self):
         if self.history_path is None:
