@@ -1,4 +1,3 @@
-from collections import deque
 from typing import Any, Callable, Dict, Optional
 
 import torch
@@ -18,13 +17,13 @@ def train_one_epoch(
     branch: str = "classifier",
     progress: Optional[Any] = None,
     task_id: Optional[Any] = None,
-    loss_window_size: int = 50,
 ) -> Dict[str, float]:
     """Train for one epoch and return averaged loss and metrics."""
     model.train()
     total_loss = 0.0
     total_samples = 0
-    recent_losses: deque[float] = deque(maxlen=loss_window_size)
+    progress_loss = 0.0
+    progress_batches = 0
     if metrics:
         for m in metrics.values():
             if hasattr(m, "reset"):
@@ -56,12 +55,13 @@ def train_one_epoch(
         loss_value = loss.item()
         total_loss += loss_value * batch_size
         total_samples += batch_size
-        recent_losses.append(loss_value)
+        progress_loss += loss_value
+        progress_batches += 1
 
         if progress is not None and task_id is not None:
-            moving_avg = sum(recent_losses) / len(recent_losses)
+            mean_loss = progress_loss / progress_batches
             progress.advance(task_id, 1)
-            progress.update(task_id, description=f"loss={moving_avg:.4f}")
+            progress.update(task_id, description=f"loss={mean_loss:.4f}")
 
         if metrics:
             for metric in metrics.values():
@@ -90,13 +90,13 @@ def evaluate(
     branch: str = "classifier",
     progress: Optional[Any] = None,
     task_id: Optional[Any] = None,
-    loss_window_size: int = 50,
 ) -> Dict[str, float]:
     """Evaluate and return averaged loss and metrics."""
     model.eval()
     total_loss = 0.0
     total_samples = 0
-    recent_losses: deque[float] = deque(maxlen=loss_window_size)
+    progress_loss = 0.0
+    progress_batches = 0
     if metrics:
         for m in metrics.values():
             if hasattr(m, "reset"):
@@ -116,12 +116,13 @@ def evaluate(
             loss_value = loss.item()
             total_loss += loss_value * batch_size
             total_samples += batch_size
-            recent_losses.append(loss_value)
+            progress_loss += loss_value
+            progress_batches += 1
 
             if progress is not None and task_id is not None:
-                moving_avg = sum(recent_losses) / len(recent_losses)
+                mean_loss = progress_loss / progress_batches
                 progress.advance(task_id, 1)
-                progress.update(task_id, description=f"loss={moving_avg:.4f}")
+                progress.update(task_id, description=f"loss={mean_loss:.4f}")
 
             if metrics:
                 for metric in metrics.values():

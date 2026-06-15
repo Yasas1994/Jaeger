@@ -81,8 +81,8 @@ def test_evaluate_with_progress():
     assert "loss" in history
 
 
-def test_train_one_epoch_progress_uses_moving_average():
-    """The progress bar description should show the moving average, not a single batch."""
+def test_train_one_epoch_progress_shows_cumulative_mean():
+    """The progress bar description should show the cumulative mean loss so far."""
     model = _make_dummy_classifier()
     loader = _make_dummy_loader(n=8)
     loss_fn = torch.nn.CrossEntropyLoss()
@@ -97,10 +97,8 @@ def test_train_one_epoch_progress_uses_moving_average():
             torch.device("cpu"),
             progress=progress,
             task_id=task_id,
-            loss_window_size=4,
         )
         description = progress.tasks[task_id].description
     assert description.startswith("loss=")
-    # With a window of 4 over 8 identical batches the average should be stable.
     loss_value = float(description.split("=")[1])
     assert loss_value > 0
