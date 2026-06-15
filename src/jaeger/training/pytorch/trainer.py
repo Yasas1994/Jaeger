@@ -40,6 +40,7 @@ class Trainer:
         self.history_path = Path(history_path) if history_path else None
         self.branch = branch
         self.history: List[Dict[str, float]] = []
+        self.should_stop = False
 
     def fit(self) -> List[Dict[str, float]]:
         self.model.to(self.device)
@@ -80,6 +81,9 @@ class Trainer:
             for callback in self.callbacks:
                 if hasattr(callback, "on_epoch_end"):
                     callback.on_epoch_end(self, epoch, epoch_log)
+
+            if getattr(self, "should_stop", False):
+                break
 
             if self.checkpoint_dir:
                 self._save_checkpoint(epoch)
