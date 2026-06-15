@@ -6,6 +6,11 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 
+try:
+    import torchinfo
+except ImportError:
+    torchinfo = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,9 +24,7 @@ class ModelSummary:
 
     def summary(self, branch_label: str = "") -> str:
         """Return a Keras-style summary string, or an empty string on failure."""
-        try:
-            from torchinfo import summary as torchinfo_summary
-        except ImportError:
+        if torchinfo is None:
             logger.warning(
                 "torchinfo is not installed; skipping %s model summary",
                 branch_label or "model",
@@ -29,7 +32,7 @@ class ModelSummary:
             return ""
 
         try:
-            result = torchinfo_summary(
+            result = torchinfo.summary(
                 self.model,
                 input_data=self.input_data,
                 col_names=["input_size", "output_size", "num_params"],
