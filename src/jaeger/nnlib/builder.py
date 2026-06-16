@@ -690,6 +690,79 @@ class DynamicModelBuilder:
                 return (x, nmd, g) if has_nmd else (x, g)
         return x
 
+    def _build_branched_block(
+        self,
+        x,
+        cfg: dict[str, Any],
+        prefix: str,
+        merge_method: str | None = None,
+    ):
+        """Build a shared-weight branch stack, split input on axis 1, and merge.
+
+        Parameters
+        ----------
+        x:
+            Input tensor with a branch dimension in axis 1 (e.g.
+            ``(batch, 2, length, channels)``), or a list of branch tensors.
+        cfg:
+            Layer configuration for one branch (may contain ``hidden_layers``
+            and ``pooling``).
+        prefix:
+            Name prefix for layers.
+        merge_method:
+            How to merge branch outputs: ``average``, ``sum``, ``concat``, ``max``.
+            If None, return a list of branch outputs.
+
+        Returns
+        -------
+        Merged tensor, or list of branch tensors if ``merge_method`` is None.
+        """
+        if isinstance(x, list):
+            branches = x
+        else:
+            num_branches = int(x.shape[1])
+
+            def _split_and_squeeze(t):
+                return [
+                    tf.squeeze(b, axis=1)
+                    for b in tf.split(t, num_or_size_splits=num_branches, axis=1)
+                ]
+
+            branches = tf.keras.layers.Lambda(
+                _split_and_squeeze,
+                name=f"{prefix}_split_branches",
+            )(x)
+        branch_shape = branches[0].shape[1:]
+
+        branch_input = tf.keras.Input(shape=branch_shape, name=f"{prefix}_branch_input")
+        branch_output = self._build_block(branch_input, cfg, prefix=f"{prefix}_branch")
+        branch_model = tf.keras.Model(
+            branch_input, branch_output, name=f"{prefix}_branch"
+        )
+
+        branch_outputs = []
+        for b in branches:
+            bo = branch_model(b)
+            if isinstance(bo, (list, tuple)):
+                bo = bo[0]
+            branch_outputs.append(bo)
+
+        if merge_method is None:
+            return branch_outputs
+
+        merge_method = merge_method.lower()
+        if merge_method == "average":
+            return tf.keras.layers.Average(name=f"{prefix}_merge_avg")(branch_outputs)
+        if merge_method == "sum":
+            return tf.keras.layers.Add(name=f"{prefix}_merge_sum")(branch_outputs)
+        if merge_method == "max":
+            return tf.keras.layers.Maximum(name=f"{prefix}_merge_max")(branch_outputs)
+        if merge_method == "concat":
+            return tf.keras.layers.Concatenate(axis=-1, name=f"{prefix}_merge_concat")(
+                branch_outputs
+            )
+        raise ValueError(f"Unknown merge method: {merge_method}")
+
     # ------------------------------------------------------------------
     # Metrics / loss / optimizer factories
     # ------------------------------------------------------------------

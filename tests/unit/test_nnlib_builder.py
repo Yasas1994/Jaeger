@@ -47,3 +47,107 @@ class TestBuildBlock:
         out = builder._build_block(x, cfg, prefix="test")
         assert isinstance(out, keras.KerasTensor)
         assert list(out.shape) == [None, 4]
+
+
+class TestBranchedBlock:
+    """Unit tests for DynamicModelBuilder._build_branched_block."""
+
+    @pytest.fixture
+    def builder(self, tmp_path):
+        """Return a minimal builder instance for testing branched blocks."""
+        builder = DynamicModelBuilder.__new__(DynamicModelBuilder)
+        builder.output_dir = tmp_path / "output"
+        builder.output_dir.mkdir(parents=True, exist_ok=True)
+        builder._layers = {
+            "conv1d": tf.keras.layers.Conv1D,
+            "activation": tf.keras.layers.Activation,
+            "relu": tf.keras.layers.Activation,
+        }
+        builder._regularizer = {}
+        builder.model_cfg = {}
+        builder.input_shape = (16, 4)
+        return builder
+
+    def test_branched_block_splits_and_merges(self, builder):
+        import tensorflow as tf
+
+        inputs = tf.keras.Input(shape=(2, 16, 4), name="nucleotide")
+        branch_cfg = {
+            "hidden_layers": [
+                {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                {"name": "relu"},
+            ],
+            "pooling": "max1d",
+        }
+        out = builder._build_branched_block(
+            inputs, branch_cfg, prefix="test", merge_method="average"
+        )
+        assert list(out.shape) == [None, 8]
+
+    def test_branched_block_none_returns_list(self, builder):
+        inputs = tf.keras.Input(shape=(2, 16, 4), name="nucleotide")
+        branch_cfg = {
+            "hidden_layers": [
+                {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                {"name": "relu"},
+            ],
+            "pooling": "max1d",
+        }
+        out = builder._build_branched_block(
+            inputs, branch_cfg, prefix="test", merge_method=None
+        )
+        assert isinstance(out, list)
+        assert len(out) == 2
+        for tensor in out:
+            assert list(tensor.shape) == [None, 8]
+
+    @pytest.mark.parametrize(
+        "method,expected_dim",
+        [
+            ("sum", 8),
+            ("concat", 16),
+            ("max", 8),
+        ],
+    )
+    def test_branched_block_merge_methods(self, builder, method, expected_dim):
+        inputs = tf.keras.Input(shape=(2, 16, 4), name="nucleotide")
+        branch_cfg = {
+            "hidden_layers": [
+                {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                {"name": "relu"},
+            ],
+            "pooling": "max1d",
+        }
+        out = builder._build_branched_block(
+            inputs, branch_cfg, prefix="test", merge_method=method
+        )
+        assert list(out.shape) == [None, expected_dim]
+
+    def test_branched_block_invalid_merge_method(self, builder):
+        inputs = tf.keras.Input(shape=(2, 16, 4), name="nucleotide")
+        branch_cfg = {
+            "hidden_layers": [
+                {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                {"name": "relu"},
+            ],
+            "pooling": "max1d",
+        }
+        with pytest.raises(ValueError, match="Unknown merge method"):
+            builder._build_branched_block(
+                inputs, branch_cfg, prefix="test", merge_method="unknown"
+            )
+
+    def test_branched_block_list_input(self, builder):
+        branch1 = tf.keras.Input(shape=(16, 4), name="branch1")
+        branch2 = tf.keras.Input(shape=(16, 4), name="branch2")
+        branch_cfg = {
+            "hidden_layers": [
+                {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                {"name": "relu"},
+            ],
+            "pooling": "max1d",
+        }
+        out = builder._build_branched_block(
+            [branch1, branch2], branch_cfg, prefix="test", merge_method="sum"
+        )
+        assert list(out.shape) == [None, 8]
