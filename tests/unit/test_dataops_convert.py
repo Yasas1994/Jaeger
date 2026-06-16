@@ -108,3 +108,45 @@ class TestMapHelpers:
 
         with pytest.raises(ValueError):
             _parse_nucleotide_map("not json")
+
+
+class TestNucleotideEncoder:
+    def test_encode_nucleotide_int(self):
+        from jaeger.dataops.convert import (
+            _encode_nucleotide_batch,
+            _build_nucleotide_lookups,
+        )
+
+        sequences = np.full((1, 4), ord("N"), dtype=np.uint8)
+        sequences[0, :4] = np.frombuffer(b"ATGC", dtype=np.uint8)
+        lengths = np.array([4], dtype=np.int32)
+        user_map = {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+        ascii_to_user, comp_user, ascii_to_oh, comp_oh = _build_nucleotide_lookups(
+            user_map
+        )
+        out = _encode_nucleotide_batch(
+            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, False
+        )
+        assert out.shape == (1, 2, 4)
+        # forward strand: A=1, T=3, G=2, C=4
+        assert out[0, 0].tolist() == [1, 3, 2, 4]
+
+    def test_encode_nucleotide_onehot(self):
+        from jaeger.dataops.convert import (
+            _encode_nucleotide_batch,
+            _build_nucleotide_lookups,
+        )
+
+        sequences = np.full((1, 4), ord("N"), dtype=np.uint8)
+        sequences[0, :4] = np.frombuffer(b"ATGC", dtype=np.uint8)
+        lengths = np.array([4], dtype=np.int32)
+        user_map = {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+        ascii_to_user, comp_user, ascii_to_oh, comp_oh = _build_nucleotide_lookups(
+            user_map
+        )
+        out = _encode_nucleotide_batch(
+            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, True
+        )
+        assert out.shape == (1, 2, 4, 4)
+        assert out[0, 0, 0].tolist() == [1.0, 0.0, 0.0, 0.0]  # A
+        assert out[0, 0, 2].tolist() == [0.0, 1.0, 0.0, 0.0]  # G

@@ -78,6 +78,114 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Nucleotide batch encoder
+# ---------------------------------------------------------------------------
+def _build_nucleotide_lookups(user_map: dict[str, int]):
+    """Build ASCII lookup tables for integer and one-hot nucleotide encoding.
+
+    Returns
+    -------
+    ascii_to_user : np.ndarray, shape (256,)
+        Maps ASCII code to the user-defined integer token. Unknown -> N value.
+    comp_user : np.ndarray, shape (max_token + 1,)
+        Maps a user integer token to its reverse-complement user token.
+    ascii_to_oh : np.ndarray, shape (256,)
+        Maps ASCII code to 0-3 one-hot index; N/unknown -> -1.
+    comp_oh : np.ndarray, shape (4,)
+        Maps one-hot base index to its reverse-complement one-hot index.
+    """
+    ascii_to_user = np.full(256, user_map["N"], dtype=np.int32)
+    ascii_to_oh = np.full(256, -1, dtype=np.int32)
+
+    oh_order = ["A", "G", "T", "C"]
+    oh_index = {b: i for i, b in enumerate(oh_order)}
+    comp_letters = {"A": "T", "T": "A", "G": "C", "C": "G"}
+
+    for base in "ACGTN":
+        ascii_to_user[ord(base)] = user_map[base]
+        ascii_to_user[ord(base.lower())] = user_map[base]
+        if base in oh_index:
+            ascii_to_oh[ord(base)] = oh_index[base]
+            ascii_to_oh[ord(base.lower())] = oh_index[base]
+
+    max_token = max(user_map.values())
+    comp_user = np.full(max_token + 1, user_map["N"], dtype=np.int32)
+    for base, token in user_map.items():
+        if base == "N":
+            continue
+        comp_letter = comp_letters.get(base, "N")
+        comp_user[token] = user_map.get(comp_letter, user_map["N"])
+
+    comp_oh = np.array([oh_index[comp_letters[b]] for b in oh_order], dtype=np.int32)
+    return ascii_to_user, comp_user, ascii_to_oh, comp_oh
+
+
+@njit(cache=False)
+def _encode_nucleotide_batch_int(
+    sequences,
+    lengths,
+    crop_size,
+    ascii_to_user,
+    comp_user,
+):
+    """Encode a batch of DNA crops to integer nucleotide arrays."""
+    n = len(lengths)
+    out = np.zeros((n, 2, crop_size), dtype=np.int32)
+
+    for s in range(n):
+        length = min(lengths[s], crop_size)
+        for i in range(length):
+            au = ascii_to_user[sequences[s, i]]
+            out[s, 0, i] = au
+            out[s, 1, i] = comp_user[au]
+    return out
+
+
+@njit(cache=False)
+def _encode_nucleotide_batch_oh(
+    sequences,
+    lengths,
+    crop_size,
+    ascii_to_oh,
+    comp_oh,
+):
+    """Encode a batch of DNA crops to one-hot nucleotide arrays."""
+    n = len(lengths)
+    out = np.zeros((n, 2, crop_size, 4), dtype=np.float32)
+
+    for s in range(n):
+        length = min(lengths[s], crop_size)
+        for i in range(length):
+            aoh = ascii_to_oh[sequences[s, i]]
+            if 0 <= aoh < 4:
+                out[s, 0, i, aoh] = 1.0
+            coh = comp_oh[aoh] if 0 <= aoh < 4 else -1
+            if 0 <= coh < 4:
+                out[s, 1, i, coh] = 1.0
+    return out
+
+
+def _encode_nucleotide_batch(
+    sequences,
+    lengths,
+    crop_size,
+    ascii_to_user,
+    comp_user,
+    ascii_to_oh,
+    comp_oh,
+    one_hot,
+):
+    """Encode a batch of DNA crops to nucleotide integer or one-hot arrays."""
+    if one_hot:
+        return _encode_nucleotide_batch_oh(
+            sequences, lengths, crop_size, ascii_to_oh, comp_oh
+        )
+    return _encode_nucleotide_batch_int(
+        sequences, lengths, crop_size, ascii_to_user, comp_user
+    )
+
+
+# ---------------------------------------------------------------------------
 # TFRecord helpers
 # ---------------------------------------------------------------------------
 def _int64_feature(value):
