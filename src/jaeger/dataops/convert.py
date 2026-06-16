@@ -1,12 +1,10 @@
 """Dataset format converters.
 
-Converts CSV training data to optimized formats:
-- ``tfrecord`` — TensorFlow TFRecord with preprocessed tensors.
-- ``numpy_raw`` — int8 DNA sequences (fast loading, runtime preprocessing).
-- ``numpy_full`` — fully preprocessed tensors (fastest loading, no augmentations).
-- ``numpy_raw_variable`` — variable-length int8 sequences.
-
-The ``numpy_full`` converter uses Numba JIT when available for ~5× speedup.
+Converts CSV training data to a compressed NumPy ``.npz`` archive.
+Supported output representations:
+- ``nucleotide`` — integer or one-hot encoded DNA crops.
+- ``translated`` — 6-frame codon / dicodon embedding crops.
+- ``both`` — both nucleotide and translated representations.
 """
 
 from __future__ import annotations
@@ -1401,47 +1399,97 @@ def convert_dataset(
     input_path: str,
     output_path: str,
     format: str,
-    crop_size: int = 500,
+    crop_size: int | tuple[int, ...] | list[int] = 500,
+    stride: int = 0,
     num_classes: int = 3,
-    use_embedding_layer: bool = True,
-    max_length: int = 1000,
     num_workers: int | None = None,
-):
-    """Convert a CSV dataset to an optimized training format.
+    one_hot: bool = False,
+    pad_int: int = 0,
+    codon_map: str = "codon_id",
+    nucleotide_map: str | None = None,
+    compress: str = "default",
+    max_length: int = 5000,  # deprecated, ignored
+    use_embedding_layer: bool = True,  # deprecated, ignored
+) -> None:
+    """Convert a CSV dataset to a compressed NumPy ``.npz`` file.
 
-    Args:
-        input_path: Path to input CSV file (label,sequence format).
-        output_path: Path to output file.
-        format: Target format — ``tfrecord``, ``numpy_raw``, ``numpy_full``,
-            or ``numpy_raw_variable``.
-        crop_size: Sequence crop size (for fixed-length formats).
-        num_classes: Number of output classes.
-        use_embedding_layer: Whether model uses embedding layer (TFRecord only).
-        max_length: Maximum sequence length (variable-length only).
-        num_workers: Number of parallel workers (``None`` = auto).
+    This function is a thin dispatcher around :func:`_convert_to_npz`. It
+    supports three output representations: ``nucleotide``, ``translated``, and
+    ``both``. The resulting ``.npz`` archive contains encoded crops, labels,
+    crop metadata, and (depending on the format) the nucleotide/codon mapping
+    used during encoding.
+
+    Parameters
+    ----------
+    input_path : str
+        Path to input CSV file (label,sequence format).
+    output_path : str
+        Path to output ``.npz`` file.
+    format : str
+        One of ``nucleotide``, ``translated``, or ``both`` (case-insensitive).
+    crop_size : int | tuple[int, ...] | list[int], optional
+        Sequence crop size(s). An int is wrapped as ``[crop_size]``; a tuple or
+        list is converted to a list (default: 500).
+    stride : int, optional
+        Sliding-window stride. ``0`` means a single crop per sequence
+        (default: 0).
+    num_classes : int, optional
+        Number of output classes (default: 3).
+    num_workers : int | None, optional
+        Number of parallel workers for CPU-bound encoding. ``None`` processes
+        the file in a single worker (default: None).
+    one_hot : bool, optional
+        Encode nucleotide crops as one-hot float tensors instead of integer
+        tokens (default: False).
+    pad_int : int, optional
+        Integer value used for padding nucleotide crops (default: 0).
+    codon_map : str, optional
+        Codon map name, e.g. ``codon_id``, ``aa_id``, ``cod_id``
+        (default: ``codon_id``).
+    nucleotide_map : str | None, optional
+        JSON string with mappings for ``A``, ``C``, ``G``, ``T``, ``N``. Uses
+        the default mapping when ``None``.
+    compress : str, optional
+        Compression mode for ``np.savez``: ``default`` uses
+        ``np.savez_compressed``; ``none`` uses ``np.savez``.
+    max_length : int, optional
+        Deprecated and ignored. Kept for backward compatibility with old CLI
+        calls.
+    use_embedding_layer : bool, optional
+        Deprecated and ignored. Kept for backward compatibility with old CLI
+        calls.
     """
-    valid_formats = ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"]
+    if isinstance(crop_size, int):
+        crop_sizes = [crop_size]
+    else:
+        crop_sizes = list(crop_size)
+
+    format = format.lower()
+    valid_formats = ["nucleotide", "translated", "both"]
     if format not in valid_formats:
         raise ValueError(
             f"Invalid format: {format}. Choose from: {', '.join(valid_formats)}"
         )
 
-    print(f"Converting {input_path} -> {output_path}")
-    print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
+    nucleotide_map_dict = _parse_nucleotide_map(nucleotide_map)
 
-    if format == "tfrecord":
-        _convert_with_tf(
-            input_path, output_path, format, crop_size, num_classes, use_embedding_layer
-        )
-    elif format == "numpy_raw":
-        _convert_to_numpy_raw(
-            input_path, output_path, crop_size, num_classes, num_workers
-        )
-    elif format == "numpy_full":
-        _convert_to_numpy_full(
-            input_path, output_path, crop_size, num_classes, num_workers
-        )
-    elif format == "numpy_raw_variable":
-        _convert_to_numpy_raw_variable(
-            input_path, output_path, max_length, num_classes, num_workers
-        )
+    print(f"Converting {input_path} -> {output_path}")
+    print(
+        f"Format: {format}, Crop sizes: {crop_sizes}, Stride: {stride}, "
+        f"Num classes: {num_classes}"
+    )
+
+    _convert_to_npz(
+        input_path=input_path,
+        output_path=output_path,
+        fmt=format,
+        crop_sizes=crop_sizes,
+        stride=stride,
+        num_classes=num_classes,
+        num_workers=num_workers,
+        one_hot=one_hot,
+        pad_int=pad_int,
+        codon_map_name=codon_map,
+        nucleotide_map=nucleotide_map_dict,
+        compress=compress,
+    )

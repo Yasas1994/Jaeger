@@ -21,12 +21,27 @@ class TestFeatureHelpers:
 
 
 class TestConvertDataset:
-    def test_numpy_full(self, simple_csv_path: str, tmp_path: Path):
+    def test_nucleotide_format(self, simple_csv_path: str, tmp_path: Path):
         out = tmp_path / "out.npz"
         convert.convert_dataset(
             input_path=simple_csv_path,
             output_path=str(out),
-            format="numpy_full",
+            format="nucleotide",
+            crop_size=24,
+            num_classes=2,
+            num_workers=1,
+        )
+        assert out.exists()
+        data = np.load(out)
+        assert "nucleotide" in data
+        assert "labels" in data
+
+    def test_translated_format(self, simple_csv_path: str, tmp_path: Path):
+        out = tmp_path / "out.npz"
+        convert.convert_dataset(
+            input_path=simple_csv_path,
+            output_path=str(out),
+            format="translated",
             crop_size=24,
             num_classes=2,
             num_workers=1,
@@ -34,38 +49,28 @@ class TestConvertDataset:
         assert out.exists()
         data = np.load(out)
         assert "translated" in data
-        assert "label" in data
 
-    def test_numpy_raw(self, simple_csv_path: str, tmp_path: Path):
+    def test_both_format(self, simple_csv_path: str, tmp_path: Path):
         out = tmp_path / "out.npz"
         convert.convert_dataset(
             input_path=simple_csv_path,
             output_path=str(out),
-            format="numpy_raw",
+            format="both",
             crop_size=24,
             num_classes=2,
             num_workers=1,
         )
         assert out.exists()
-
-    def test_numpy_raw_variable(self, simple_csv_path: str, tmp_path: Path):
-        out = tmp_path / "out.npz"
-        convert.convert_dataset(
-            input_path=simple_csv_path,
-            output_path=str(out),
-            format="numpy_raw_variable",
-            crop_size=24,
-            num_classes=2,
-            num_workers=1,
-        )
-        assert out.exists()
+        data = np.load(out)
+        assert "nucleotide" in data
+        assert "translated" in data
 
     def test_invalid_format(self, simple_csv_path: str, tmp_path: Path):
         with pytest.raises(ValueError):
             convert.convert_dataset(
                 input_path=simple_csv_path,
                 output_path=str(tmp_path / "out.npz"),
-                format="unknown",
+                format="tfrecord",
                 crop_size=24,
                 num_classes=2,
             )

@@ -553,62 +553,63 @@ def optimize_data_core(
     input_path: str,
     output_path: str,
     format: str,
-    crop_size: int = 500,
+    crop_size: tuple[int, ...] = (500,),
+    stride: int = 0,
     num_classes: int = 3,
     num_workers: int | None = None,
-    use_embedding_layer: bool = True,
-    max_length: int = 5000,
+    one_hot: bool = False,
+    pad_int: int = 0,
+    codon_map: str = "codon_id",
+    nucleotide_map: str | None = None,
+    compress: str = "default",
+    max_length: int = 5000,  # deprecated, ignored
 ):
-    """Convert Jaeger CSV training data to an optimized format.
+    """Convert Jaeger CSV training data to an optimized ``.npz`` format.
 
-    Supports four output formats:
-        - tfrecord: Preprocessed tensors in TFRecord format
-        - numpy_raw: int8 sequences + TF preprocessing at train time
-        - numpy_full: Fully preprocessed, fastest loading
-        - numpy_raw_variable: Variable-length int8 sequences
+    This is a thin wrapper around :func:`jaeger.dataops.convert.convert_dataset`.
+    See that function for details on supported formats and output contents.
 
     Parameters
     ----------
     input_path : str
         Path to input CSV file (label,sequence format).
     output_path : str
-        Path to output file.
+        Path to output ``.npz`` file.
     format : str
-        One of: tfrecord, numpy_raw, numpy_full, numpy_raw_variable.
-    crop_size : int
-        Sequence crop size (default: 500).
-    num_classes : int
+        One of ``nucleotide``, ``translated``, or ``both``.
+    crop_size : tuple[int, ...]
+        Sequence crop size(s) (default: ``(500,)``).
+    stride : int, optional
+        Sliding-window stride (default: 0).
+    num_classes : int, optional
         Number of classes (default: 3).
-    num_workers : int | None
-        Number of parallel workers for CPU-bound formats.
-        Defaults to all CPUs.
-    use_embedding_layer : bool
-        For tfrecord: use embedding layer (int indices) vs one-hot.
-    max_length : int
-        For numpy_raw_variable: maximum sequence length.
+    num_workers : int | None, optional
+        Number of parallel workers. ``None`` processes in a single worker.
+    one_hot : bool, optional
+        Encode nucleotide crops as one-hot float tensors (default: False).
+    pad_int : int, optional
+        Integer padding value for nucleotide crops (default: 0).
+    codon_map : str, optional
+        Codon map name (default: ``codon_id``).
+    nucleotide_map : str | None, optional
+        JSON string with mappings for ``A``, ``C``, ``G``, ``T``, ``N``.
+    compress : str, optional
+        Compression mode for the output archive (default: ``default``).
+    max_length : int, optional
+        Deprecated and ignored. Kept for backward compatibility.
     """
-    format = format.lower()
-    valid_formats = [
-        "tfrecord",
-        "numpy_raw",
-        "numpy_full",
-        "numpy_raw_variable",
-    ]
-    if format not in valid_formats:
-        raise ValueError(
-            f"Invalid format: {format}. Choose from: {', '.join(valid_formats)}"
-        )
-
-    print(f"Converting {input_path} -> {output_path}")
-    print(f"Format: {format}, Crop size: {crop_size}, Num classes: {num_classes}")
-
     convert_dataset(
         input_path=input_path,
         output_path=output_path,
         format=format,
         crop_size=crop_size,
+        stride=stride,
         num_classes=num_classes,
         num_workers=num_workers,
-        use_embedding_layer=use_embedding_layer,
+        one_hot=one_hot,
+        pad_int=pad_int,
+        codon_map=codon_map,
+        nucleotide_map=nucleotide_map,
+        compress=compress,
         max_length=max_length,
     )
