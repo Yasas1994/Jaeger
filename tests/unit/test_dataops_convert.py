@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 from jaeger.dataops import convert
-from jaeger.seqops import encode
 
 
 class TestFeatureHelpers:
@@ -70,3 +69,42 @@ class TestConvertDataset:
                 crop_size=24,
                 num_classes=2,
             )
+
+
+class TestMapHelpers:
+    def test_get_codon_map_codom_id(self):
+        from jaeger.dataops.convert import _get_codon_map
+
+        mapping = _get_codon_map("codon_id")
+        assert len(mapping) == 64
+        assert mapping[0] == 0
+
+    def test_get_codon_map_invalid(self):
+        from jaeger.dataops.convert import _get_codon_map
+
+        with pytest.raises(ValueError):
+            _get_codon_map("not_a_map")
+
+    def test_parse_nucleotide_map_default(self):
+        from jaeger.dataops.convert import _parse_nucleotide_map
+
+        m = _parse_nucleotide_map(None)
+        assert m["A"] == 1 and m["N"] == 0
+
+    def test_parse_nucleotide_map_custom(self):
+        from jaeger.dataops.convert import _parse_nucleotide_map
+
+        m = _parse_nucleotide_map('{"A":0,"G":1,"T":2,"C":3,"N":4}')
+        assert m == {"A": 0, "G": 1, "T": 2, "C": 3, "N": 4}
+
+    def test_parse_nucleotide_map_missing_base(self):
+        from jaeger.dataops.convert import _parse_nucleotide_map
+
+        with pytest.raises(ValueError):
+            _parse_nucleotide_map('{"A":0}')
+
+    def test_parse_nucleotide_map_invalid_json(self):
+        from jaeger.dataops.convert import _parse_nucleotide_map
+
+        with pytest.raises(ValueError):
+            _parse_nucleotide_map("not json")

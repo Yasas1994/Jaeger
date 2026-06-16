@@ -11,12 +11,52 @@ The ``numpy_full`` converter uses Numba JIT when available for ~5× speedup.
 
 from __future__ import annotations
 
+import json
 import time
 from functools import partial
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import numpy as np
+
+# ---------------------------------------------------------------------------
+# Codon / nucleotide lookup helpers
+# ---------------------------------------------------------------------------
+_CODON_MAP_NAMES = {
+    "codon_id": "CODON_ID",
+    "aa_id": "AA_ID",
+    "pc5_id": "PC5_ID",
+    "murphy10_id": "MURPHY10_ID",
+    "cod_id": "DICODON_ID",
+    "pc2_id": "PC2_ID",
+}
+
+_DEFAULT_NUCLEOTIDE_MAP = {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+
+
+def _get_codon_map(name: str) -> list[int]:
+    """Return the codon map list from ``jaeger.seqops.maps`` by CLI name."""
+    from jaeger.seqops import maps
+
+    attr = _CODON_MAP_NAMES.get(name.lower())
+    if attr is None or not hasattr(maps, attr):
+        raise ValueError(f"Unknown codon map: {name}")
+    return list(getattr(maps, attr))
+
+
+def _parse_nucleotide_map(json_str: str | None) -> dict[str, int]:
+    """Parse and validate a JSON nucleotide-to-int mapping."""
+    if json_str is None:
+        return dict(_DEFAULT_NUCLEOTIDE_MAP)
+    try:
+        mapping = json.loads(json_str)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid --nucleotide-map JSON: {exc}") from exc
+    for base in "ACGTN":
+        if base not in mapping:
+            raise ValueError(f"--nucleotide-map must contain a mapping for {base}")
+    return {k: int(v) for k, v in mapping.items()}
+
 
 # ---------------------------------------------------------------------------
 # Numba availability
