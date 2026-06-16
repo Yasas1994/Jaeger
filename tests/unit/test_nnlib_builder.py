@@ -151,3 +151,45 @@ class TestBranchedBlock:
             [branch1, branch2], branch_cfg, prefix="test", merge_method="sum"
         )
         assert list(out.shape) == [None, 8]
+
+
+def test_dvf_model_builds():
+    from jaeger.nnlib.builder import DynamicModelBuilder
+
+    config = {
+        "model": {
+            "name": "test_dvf",
+            "experiment": "test_dvf",
+            "classifier_out_dim": 3,
+            "embedding": {
+                "input_type": "nucleotide",
+                "input_shape": (2, None, 4),
+                "use_embedding_layer": False,
+            },
+            "representation_learner": {
+                "branch": {
+                    "hidden_layers": [
+                        {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                        {"name": "relu"},
+                    ],
+                    "pooling": "max1d",
+                }
+            },
+            "classifier": {
+                "branch": {
+                    "hidden_layers": [
+                        {"name": "dense", "config": {"units": 8}},
+                        {"name": "relu"},
+                        {"name": "dense", "config": {"units": 3}},
+                        {"name": "merge", "config": {"method": "average"}},
+                    ]
+                }
+            },
+        },
+        "training": {},
+    }
+    builder = DynamicModelBuilder(config)
+    models = builder.build_fragment_classifier()
+    assert "jaeger_classifier" in models
+    assert models["jaeger_classifier"].output.shape[-1] == 3
+    assert "jaeger_model" in models

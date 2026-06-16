@@ -261,15 +261,28 @@ class DynamicModelBuilder:
         else:
             raise ValueError("Missing 'embedding' section in config")
 
+        rep_cfg = self.model_cfg.get("representation_learner", {})
+        class_cfg = self.model_cfg.get("classifier", {})
+        rep_is_branched = "branch" in rep_cfg
+        class_is_branched = "branch" in class_cfg
+
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
-            merge_cfg = self.model_cfg.get("reliability_model", {}).get("merge")
-            rep_out = self._build_block(
-                x,
-                self.model_cfg["representation_learner"],
-                prefix="rep",
-                nmd_merge=merge_cfg,
-            )
+            if rep_is_branched:
+                rep_out = self._build_branched_block(
+                    x,
+                    rep_cfg["branch"],
+                    prefix="rep",
+                    merge_method=None,
+                )
+            else:
+                merge_cfg = self.model_cfg.get("reliability_model", {}).get("merge")
+                rep_out = self._build_block(
+                    x,
+                    self.model_cfg["representation_learner"],
+                    prefix="rep",
+                    nmd_merge=merge_cfg,
+                )
             models["rep_model"] = tf.keras.Model(
                 inputs=self.inputs, outputs=rep_out, name="rep_model"
             )
@@ -322,20 +335,54 @@ class DynamicModelBuilder:
 
         # === 3. CLASSIFIER ===
         if "classifier" in self.model_cfg:
-            input_shape = (self.model_cfg["classifier"].get("input_shape"),)
-            inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
-            x_classifier = self._build_block(
-                inputs, self.model_cfg["classifier"], prefix="classifier"
-            )
+            if class_is_branched:
+                branch_hidden = list(class_cfg["branch"].get("hidden_layers", []))
+                if not branch_hidden or branch_hidden[-1].get("name") != "merge":
+                    raise ValueError(
+                        "Branched classifier must end with a 'merge' layer"
+                    )
+                merge_cfg = branch_hidden[-1].get("config", {})
+                merge_method = merge_cfg.get("method", "average")
+                head_cfg = {"hidden_layers": branch_hidden[:-1]}
+
+                rep_out = models["rep_model"].output
+                num_branches = len(rep_out) if isinstance(rep_out, list) else 1
+                first_branch = rep_out[0] if isinstance(rep_out, list) else rep_out
+                input_shape = int(first_branch.shape[-1])
+                branch_inputs = [
+                    tf.keras.Input(shape=(input_shape,), name=f"classifier_input_{i}")
+                    for i in range(num_branches)
+                ]
+                x_classifier = self._build_branched_block(
+                    branch_inputs,
+                    head_cfg,
+                    prefix="classifier",
+                    merge_method=merge_method,
+                )
+                inputs = branch_inputs
+            else:
+                input_shape = (self.model_cfg["classifier"].get("input_shape"),)
+                inputs = tf.keras.Input(shape=input_shape, name="classifier_input")
+                x_classifier = self._build_block(
+                    inputs, self.model_cfg["classifier"], prefix="classifier"
+                )
+
             models["classification_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_classifier, name="classification_head"
             )
+
             rep_out = models["rep_model"].output
-            if isinstance(rep_out, tuple):
+            if isinstance(rep_out, list) and class_is_branched:
+                x = models["classification_head"](rep_out)
+            elif isinstance(rep_out, list):
+                x_rep = tf.keras.layers.Concatenate(axis=-1)(rep_out)
+                x = models["classification_head"](x_rep)
+            elif isinstance(rep_out, tuple):
                 x_rep = rep_out[0]
+                x = models["classification_head"](x_rep)
             else:
-                x_rep = rep_out
-            x = models["classification_head"](x_rep)
+                x = models["classification_head"](rep_out)
+
             models["jaeger_classifier"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_classifier"
             )
@@ -412,46 +459,62 @@ class DynamicModelBuilder:
 
         # === 5. COMBINED MODEL ===
         rep_out = models["rep_model"].output
-        has_reliability = "reliability_head" in models
-        if isinstance(rep_out, (list, tuple)):
-            if len(rep_out) == 2:
-                x1, x2 = rep_out
-                class_ = models["classification_head"](x1)
-                outputs: dict[str, Any] = {
-                    "prediction": class_,
-                    "embedding": x1,
-                    "nmd": x2,
-                }
-                if has_reliability:
-                    outputs["reliability"] = models["reliability_head"](x2)
-                models["jaeger_model"] = tf.keras.Model(
-                    inputs=models["rep_model"].input,
-                    outputs=outputs,
-                    name="Jaeger_model",
-                )
-            elif len(rep_out) == 3:
-                x1, x2, g = rep_out
-                class_ = models["classification_head"](x1)
-                outputs = {
-                    "prediction": class_,
-                    "embedding": x1,
-                    "nmd": x2,
-                    "gate": g,
-                }
-                if has_reliability:
-                    outputs["reliability"] = models["reliability_head"](x2)
-                models["jaeger_model"] = tf.keras.Model(
-                    inputs=models["rep_model"].input,
-                    outputs=outputs,
-                    name="Jaeger_model",
-                )
-        else:
-            class_ = models["classification_head"](rep_out)
+        if rep_is_branched or class_is_branched:
+            prediction = models["jaeger_classifier"].output
+
+            if isinstance(rep_out, list):
+                embedding = tf.keras.layers.Average(name="embedding_avg")(rep_out)
+            elif isinstance(rep_out, tuple):
+                embedding = rep_out[0]
+            else:
+                embedding = rep_out
+
             models["jaeger_model"] = tf.keras.Model(
                 inputs=models["rep_model"].input,
-                outputs={"prediction": class_, "embedding": rep_out},
+                outputs={"prediction": prediction, "embedding": embedding},
                 name="Jaeger_model",
             )
+        else:
+            has_reliability = "reliability_head" in models
+            if isinstance(rep_out, (list, tuple)):
+                if len(rep_out) == 2:
+                    x1, x2 = rep_out
+                    class_ = models["classification_head"](x1)
+                    outputs: dict[str, Any] = {
+                        "prediction": class_,
+                        "embedding": x1,
+                        "nmd": x2,
+                    }
+                    if has_reliability:
+                        outputs["reliability"] = models["reliability_head"](x2)
+                    models["jaeger_model"] = tf.keras.Model(
+                        inputs=models["rep_model"].input,
+                        outputs=outputs,
+                        name="Jaeger_model",
+                    )
+                elif len(rep_out) == 3:
+                    x1, x2, g = rep_out
+                    class_ = models["classification_head"](x1)
+                    outputs = {
+                        "prediction": class_,
+                        "embedding": x1,
+                        "nmd": x2,
+                        "gate": g,
+                    }
+                    if has_reliability:
+                        outputs["reliability"] = models["reliability_head"](x2)
+                    models["jaeger_model"] = tf.keras.Model(
+                        inputs=models["rep_model"].input,
+                        outputs=outputs,
+                        name="Jaeger_model",
+                    )
+            else:
+                class_ = models["classification_head"](rep_out)
+                models["jaeger_model"] = tf.keras.Model(
+                    inputs=models["rep_model"].input,
+                    outputs={"prediction": class_, "embedding": rep_out},
+                    name="Jaeger_model",
+                )
 
         return models
 
