@@ -1,3 +1,7 @@
+"""Tests for jaeger.nnlib.v2.nmd."""
+
+from __future__ import annotations
+
 import tensorflow as tf
 
 from jaeger.nnlib.v2.layers import MaskedBatchNorm
