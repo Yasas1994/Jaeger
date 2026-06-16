@@ -163,4 +163,7 @@ def _load_numpy_dataset(
     if labels.ndim == 1 and num_classes == 1:
         labels = labels[:, np.newaxis]
 
-    return tf.data.Dataset.from_tensor_slices((features, labels))
+    # Force the in-memory dataset to live on CPU; otherwise TensorFlow may try to
+    # place the full arrays on the default (GPU) device and OOM for large NPZs.
+    with tf.device("/CPU:0"):
+        return tf.data.Dataset.from_tensor_slices((features, labels))
