@@ -94,3 +94,70 @@ class TestNMDMerge:
     def test_invalid_mode(self):
         with pytest.raises(ValueError):
             NMDMerge(mode="unsupported")
+
+
+def test_builder_knows_nmd_layer():
+    from jaeger.nnlib.builder import DynamicModelBuilder
+
+    config = {
+        "model": {
+            "name": "test_nmd_registration",
+            "experiment": "test",
+            "seed": 42,
+            "classifier_out_dim": 3,
+            "reliability_out_dim": 0,
+            "class_label_map": [
+                {"class": "chromosome", "label": 0},
+                {"class": "virus", "label": 1},
+                {"class": "plasmid", "label": 2},
+            ],
+            "embedding": {
+                "use_embedding_layer": True,
+                "input_type": "translated",
+                "strands": 2,
+                "frames": 6,
+                "input_shape": [6, None],
+                "embedding_size": 64,
+                "embedding_regularizer": "l2",
+                "embedding_regularizer_w": 1e-05,
+            },
+            "string_processor": {
+                "data_format": "numpy_full",
+                "seq_onehot": False,
+                "codon": "CODON",
+                "codon_id": "CODON_ID",
+                "crop_size": 100,
+                "classifier_labels": [0, 1, 2],
+                "classifier_labels_map": [0, 1, 2],
+            },
+            "representation_learner": {
+                "hidden_layers": [
+                    {"name": "masked_conv1d", "config": {"filters": 16, "kernel_size": 3}},
+                    {"name": "nmd", "config": {}},
+                    {"name": "activation", "config": {"activation": "gelu"}},
+                ],
+                "pooling": "max",
+            },
+            "classifier": {
+                "input_shape": 16,
+                "hidden_layers": [
+                    {"name": "dense", "config": {"units": 3, "activation": None, "dtype": "float32"}}
+                ],
+            },
+        },
+        "training": {
+            "optimizer": "adam",
+            "optimizer_params": {"learning_rate": 0.001},
+            "loss_classifier": "categorical_crossentropy",
+            "loss_params_classifier": {"from_logits": True},
+            "metrics_classifier": [{"name": "categorical_accuracy", "params": None}],
+            "callbacks": {"directories": []},
+            "model_saving": {"path": "/tmp/test_nmd_registration", "save_weights": False, "save_exec_graph": False},
+            "fragment_classifier_data": {"train": [{"class": ["chromosome"], "label": [0], "path": []}]},
+        },
+        "config_path": "/tmp/test_nmd_registration_config.yaml",
+    }
+    builder = DynamicModelBuilder(config)
+    models = builder.build_fragment_classifier()
+    assert "nmd" in builder._layers
+    assert "prediction" in models["jaeger_model"].output_names

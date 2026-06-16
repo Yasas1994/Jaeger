@@ -50,6 +50,7 @@ from jaeger.nnlib.v2.layers import (
     TransformerEncoder,
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss, HierarchicalLoss
+from jaeger.nnlib.v2.nmd import NMDLayer, NMDMerge  # noqa: F401
 from jaeger.utils.logging import get_logger
 from jaeger.utils.misc import clear_directory
 
@@ -166,6 +167,7 @@ class DynamicModelBuilder:
             "axial_attention": AxialAttention,
             "local_attention": LocalAttention,
             "residual_block": ResidualBlock_wrapper,
+            "nmd": NMDLayer,
             "dense": tf.keras.layers.Dense,
             "activation": tf.keras.layers.Activation,
             "dropout": tf.keras.layers.Dropout,
@@ -386,6 +388,7 @@ class DynamicModelBuilder:
             if len(rep_out) == 2:
                 x1, x2 = rep_out
                 class_ = models["classification_head"](x1)
+                class_ = tf.keras.layers.Identity(name="prediction")(class_)
                 outputs: dict[str, Any] = {
                     "prediction": class_,
                     "embedding": x1,
@@ -401,6 +404,7 @@ class DynamicModelBuilder:
             elif len(rep_out) == 3:
                 x1, x2, g = rep_out
                 class_ = models["classification_head"](x1)
+                class_ = tf.keras.layers.Identity(name="prediction")(class_)
                 outputs = {
                     "prediction": class_,
                     "embedding": x1,
@@ -416,6 +420,7 @@ class DynamicModelBuilder:
                 )
         else:
             class_ = models["classification_head"](rep_out)
+            class_ = tf.keras.layers.Identity(name="prediction")(class_)
             models["jaeger_model"] = tf.keras.Model(
                 inputs=models["rep_model"].input,
                 outputs={"prediction": class_, "embedding": rep_out},
@@ -596,6 +601,13 @@ class DynamicModelBuilder:
                     previous_channels = cfg_layer.get("filters")
                 elif "units" in cfg_layer:
                     previous_channels = cfg_layer.get("units")
+                continue
+
+            # Standalone NMD layer: produce a side-output vector while leaving
+            # the main feature map unchanged for downstream layers / pooling.
+            if layer_name == "nmd":
+                nmd_ = layer_class(**cfg_layer)(x)
+                nmd.append(nmd_)
                 continue
 
             x = layer_class(**cfg_layer)(x)
