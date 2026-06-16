@@ -42,6 +42,7 @@ from jaeger.nnlib.v2.layers import (
     MaskedBatchNorm,
     MaskedConv1D,
     MetricModel,
+    MultiScaleConv1D,
     ResidualBlock_wrapper,
     TransformerEncoder,
 )
@@ -151,6 +152,7 @@ class DynamicModelBuilder:
 
         self._layers = {
             "masked_conv1d": MaskedConv1D,
+            "multi_scale_conv": MultiScaleConv1D,
             "conv1d": tf.keras.layers.Conv1D,
             "masked_batchnorm": MaskedBatchNorm,
             "batchnorm": tf.keras.layers.BatchNormalization,
