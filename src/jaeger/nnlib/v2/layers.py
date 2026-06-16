@@ -374,6 +374,7 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
 class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.supports_masking = True
 
     def call(self, inputs, mask=None):
         # Assuming inputs and mask have the same shape (batch_size, height, width, channels)
@@ -402,6 +403,9 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
             input_shape[0],
             input_shape[-1],
         )  # Output shape is (batch_size, num_channels)
+
+    def get_config(self):
+        return super().get_config()
 
 
 class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
@@ -1748,6 +1752,7 @@ class AxialAttention(tf.keras.layers.Layer):
         feed_forward_dim,
         dropout_rate=0.1,
         num_blocks=1,
+        epsilon=1e-6,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -1756,9 +1761,11 @@ class AxialAttention(tf.keras.layers.Layer):
         self.feed_forward_dim = feed_forward_dim
         self.dropout_rate = dropout_rate
         self.num_blocks = num_blocks
+        self.epsilon = epsilon
 
         self.length_attns = []
         self.frame_attns = []
+        self.layer_norms = []
 
         for i in range(num_blocks):
             # Attention over length (intra-frame) — uses existing TransformerEncoder logic
@@ -1772,6 +1779,10 @@ class AxialAttention(tf.keras.layers.Layer):
                     name=f"length_attn_{i}",
                 )
             )
+            self.layer_norms.append(
+                tf.keras.layers.LayerNormalization(
+                    epsilon=epsilon))
+            
             # Attention over frames (cross-frame)
             self.frame_attns.append(
                 CrossFrameAttention(
@@ -1786,10 +1797,14 @@ class AxialAttention(tf.keras.layers.Layer):
 
     def call(self, inputs, training=False):
         x = inputs
-        for length_attn, frame_attn in zip(self.length_attns, self.frame_attns):
+        for length_attn, frame_attn, layer_norm in zip(self.length_attns, self.frame_attns, self.layer_norms):
+            residual = x
             x = length_attn(x, training=training)
             x = frame_attn(x, training=training)
-        return x
+            x = layer_norm(x, training=training)
+            x += residual
+
+        return x 
 
     def get_config(self):
         cfg = super().get_config()
