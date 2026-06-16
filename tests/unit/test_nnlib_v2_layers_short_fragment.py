@@ -155,7 +155,7 @@ class TestLocalAttention:
         with tf.GradientTape() as tape:
             tape.watch(x)
             out = layer(x, mask=mask)
-            loss = tf.reduce_mean(out ** 2)
+            loss = tf.reduce_mean(out**2)
         grads = tape.gradient(loss, x)
         assert grads is not None
         assert np.all(np.isfinite(grads.numpy()))
