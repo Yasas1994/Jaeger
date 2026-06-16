@@ -149,3 +149,31 @@ def test_missing_nmd_raises_when_reliability_configured(base_config):
         builder = DynamicModelBuilder(base_config)
         with pytest.raises(ValueError, match="no NMD tensor"):
             builder.build_fragment_classifier()
+
+
+@pytest.mark.parametrize(
+    "mode,target_dim,input_shape",
+    [
+        ("sum", 8, 8),
+        ("mean", 8, 8),
+        ("max", 8, 8),
+        ("weighted", 8, 8),
+    ],
+)
+def test_merge_modes(base_config, mode, target_dim, input_shape):
+    base_config["model"]["reliability_model"] = {
+        "merge": {"mode": mode, "target_dim": target_dim},
+        "input_shape": input_shape,
+        "hidden_layers": [
+            {
+                "name": "dense",
+                "config": {"units": 1, "activation": None, "dtype": "float32"},
+            }
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        base_config["training"]["model_saving"]["path"] = tmp
+        builder = DynamicModelBuilder(base_config)
+        models = builder.build_fragment_classifier()
+        nmd_out = models["rep_model"].output[1]
+        assert list(nmd_out.shape) == [None, input_shape]
