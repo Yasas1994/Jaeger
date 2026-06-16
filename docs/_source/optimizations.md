@@ -356,38 +356,36 @@ Expected output on a working NVIDIA system:
 
 **Effort:** medium — convert CSV data once, then update config.
 
-When training large models, the biggest bottleneck is often not the GPU but the CPU preprocessing pipeline (codon translation, n-gram extraction, frame stacking). Jaeger can skip live preprocessing entirely by loading data that has already been converted to tensors.
+When training large models, the biggest bottleneck is often not the GPU but the CPU preprocessing pipeline (codon translation, n-gram extraction, frame stacking). Jaeger can skip live preprocessing entirely by loading data that has already been converted to tensors and saved as a unified NumPy `.npz` file.
 
 ### 7.1 Convert your training data
 
+Use the `jaeger utils optimize-data` command. The `--format` option selects the representation written to the `.npz` file (`translated`, `nucleotide`, or `both`). In the training config, set `data_format: numpy` so Jaeger loads the `.npz` directly.
+
 ```bash
-# NumPy full format (fastest — fully preprocessed, direct loading)
-python scripts/convert_to_numpy_full.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled_full.npz \
+# Translated representation (default for most Jaeger models)
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_translated.npz \
+  --format translated \
   --crop-size 500 \
   --num-classes 3
 
-# NumPy raw format (fast int8 + runtime augmentations)
-python scripts/convert_to_numpy_fast.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled_raw.npz \
+# Nucleotide/one-hot representation
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_nucleotide.npz \
+  --format nucleotide \
   --crop-size 500 \
   --num-classes 3
 
-# NumPy raw variable format (variable-length sequences)
-python scripts/convert_to_numpy_variable.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled_variable.npz \
-  --max-length 5000 \
+# Both translated and nucleotide representations in one file
+jaeger utils optimize-data \
+  -i train_shuffled.csv \
+  -o train_shuffled_both.npz \
+  --format both \
+  --crop-size 500 \
   --num-classes 3
-
-# TFRecord format (cached on disk, good for very large datasets)
-python scripts/convert_preprocessed_data.py \
-  --csv train_shuffled.csv \
-  --output train_shuffled.tfrecord \
-  --format tfrecord \
-  --crop-size 500
 ```
 
 ### 7.2 Update your training config
@@ -395,16 +393,16 @@ python scripts/convert_preprocessed_data.py \
 ```yaml
 model:
   string_processor:
-    data_format: numpy_full   # csv | tfrecord | numpy_raw | numpy_raw_variable | numpy_full
+    data_format: numpy   # csv | numpy
     # ... other settings
 
 fragment_classifier_data:
   train:
     - path:
-        - "{{ training.data_dir }}/train_shuffled_full.npz"
+        - "{{ training.data_dir }}/train_shuffled.npz"
   validation:
     - path:
-        - "{{ training.data_dir }}/val_shuffled_full.npz"
+        - "{{ training.data_dir }}/val_shuffled.npz"
 ```
 
 ### 7.3 Expected speedup
@@ -412,26 +410,21 @@ fragment_classifier_data:
 | Format | Batches/sec | Speedup vs CSV | Notes |
 |--------|-------------|----------------|-------|
 | CSV (live preprocess) | ~130–317 | 1.0× | Baseline — very slow |
-| TFRecord + cache | ~3,800 | ~12× | Cached on disk |
-| NumPy raw + cache | ~1,150–5,500 | ~17× | int8 + TF preprocessing, augmentations supported |
-| NumPy raw variable + cache | ~830 | ~3× | Variable-length sequences |
-| NumPy full + cache | ~2,900–10,000 | **~9×** | Fully preprocessed, no runtime overhead |
+| NumPy (preprocessed `.npz`) | ~2,900–10,000 | **~9×** | Fully preprocessed, direct loading |
 
 **Hardware notes:**
-- Local RTX 3500 Ada: numpy_full ~10K batches/sec, CSV ~130 batches/sec
-- Zeus L40S (node030): numpy_full ~2.9K batches/sec, CSV ~317 batches/sec
+- Local RTX 3500 Ada: NumPy ~10K batches/sec, CSV ~130 batches/sec
+- Zeus L40S (node030): NumPy ~2.9K batches/sec, CSV ~317 batches/sec
 - Zeus GTX 1080 Ti (node029): not benchmarked yet
 
-A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily fits in most server RAM.
+A 3.1M sample dataset preprocessed as NumPy is ~1.9 GB (int32) and easily fits in most server RAM.
 
 **Format selection guide:**
 
-| Need | Recommended format |
+| Need | Recommended option |
 |------|-------------------|
-| Maximum throughput, no augmentations | `numpy_full` |
-| Fast loading + runtime augmentations (shuffle, mutate) | `numpy_raw` |
-| Variable-length sequences | `numpy_raw_variable` |
-| Dataset too large for RAM | `tfrecord` |
+| Maximum throughput, no augmentations | `jaeger utils optimize-data --format translated` |
+| Need runtime augmentations (shuffle, mutate) | Convert with `--format translated` and configure `string_processor` to use integer sequences; one-hot tensors cannot be shuffled/mutated at runtime |
 | Quick experiments, small datasets | `csv` (default) |
 
 ### When to use
@@ -442,11 +435,10 @@ A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily f
 
 ### Caveats
 
-- **`numpy_full`**: No runtime augmentations (shuffle, mutate, frame_shuffle) are applied. All preprocessing is baked into the converted file. Use `numpy_raw` if you need runtime augmentations.
-- **`numpy_raw` / `numpy_raw_variable`**: Runtime augmentations (shuffle, mutate, frame_shuffle) are applied in TensorFlow during training. Slightly slower than `numpy_full` but more flexible.
-- Data augmentation (mutation, masking) must be applied **before** conversion for `numpy_full` format.
-- The conversion scripts do not shuffle — shuffle your CSV first if needed.
-- NumPy formats load the entire dataset into RAM; use TFRecord if memory is limited.
+- Runtime augmentations such as `shuffle`, `mutate`, and `frame_shuffle` depend on the representation stored in the `.npz` and on the config's `seq_onehot` and `nucleotide_onehot_map` settings. One-hot tensors cannot be shuffled or mutated at runtime; integer sequences can.
+- Live preprocessing is skipped for `numpy` inputs. Any mutation or masking must either be baked into the CSV before conversion or applied through runtime augmentation configured in `string_processor` with compatible integer representations.
+- The conversion command does not shuffle — shuffle your CSV first if needed.
+- NumPy `.npz` files load the entire dataset into RAM; use a smaller batch size or split the dataset if memory is limited.
 
 ---
 
@@ -467,8 +459,6 @@ A 3.1M sample dataset preprocessed as NumPy full is ~1.9 GB (int32) and easily f
 
 | Situation | Recommended option |
 |-----------|--------------------|
-| GPU utilization < 20%, epoch time dominated by data loading | Convert to `numpy_full` with `scripts/convert_to_numpy_full.py` |
-| Need runtime augmentations + fast loading | Convert to `numpy_raw` with `scripts/convert_to_numpy_fast.py` |
-| Variable-length sequences | Convert to `numpy_raw_variable` with `scripts/convert_to_numpy_variable.py` |
-| Dataset too large for RAM but still CPU-bound | Convert to TFRecord |
+| GPU utilization < 20%, epoch time dominated by data loading | Convert CSV to `.npz` with `jaeger utils optimize-data --format translated` |
+| Need runtime augmentations + fast loading | Convert with `--format translated` and configure `string_processor` for integer-based augmentation |
 | Quick experiments, small datasets | Stick with CSV (default) |

@@ -195,7 +195,7 @@ PY
             jaeger utils optimize-data \
                 -i "$CONVERTED_CSV" \
                 -o "$RUN_DIR/optimized.npz" \
-                --format numpy_full \
+                --format translated \
                 --crop-size 500
     else
         skip_cmd "jaeger utils optimize-data (converted CSV missing)"

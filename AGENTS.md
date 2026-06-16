@@ -99,7 +99,7 @@ Platform-specific TensorFlow extras are declared in `pyproject.toml`:
 │   │   ├── config.json         # Default model registry
 │   │   ├── models/             # Bundled models (default, experimental, test)
 │   │   ├── test/               # Small FASTA fixtures
-│   │   ├── loaders.py          # NumPy/TFRecord dataset loaders
+│   │   ├── loaders.py          # NumPy dataset loaders
 │   │   └── tfrecord.py         # TFRecord serialization
 │   └── utils/                  # Shared utilities
 │       ├── misc.py             # Common helpers, config loading, model discovery
@@ -243,7 +243,7 @@ Key sections in a training config:
 
 - `model.name`, `model.experiment`, `model.seed`
 - `model.embedding` — input type (`translated`, etc.), frames, strands, embedding size
-- `model.string_processor` — data format (`csv`, `tfrecord`, `numpy`), crop size, augmentation flags
+- `model.string_processor` — data format (`csv`, `numpy`), crop size, augmentation flags
 - `model.representation_learner` — stack of `masked_conv1d`, `residual_block`, `transformer`, etc.
 - `model.classifier` — classification head
 - `model.reliability` — optional reliability / OOD head
@@ -291,7 +291,7 @@ Modern models (e.g., `jaeger_38341_1.4M_fragment`) are downloaded separately via
 
 1. Load and render the YAML config with Jinja2.
 2. Build the model with `jaeger.nnlib.builder.DynamicModelBuilder`.
-3. Load data via the configured `string_processor.data_format` (CSV, TFRecord, or NumPy).
+3. Load data via the configured `string_processor.data_format` (CSV or NumPy).
 4. Train representation learner + classifier + optional reliability head.
 5. Save checkpoints and final SavedModel graphs.
 
