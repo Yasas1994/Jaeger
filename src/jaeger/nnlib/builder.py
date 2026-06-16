@@ -170,6 +170,11 @@ class DynamicModelBuilder:
             "nmd": NMDLayer,
             "dense": tf.keras.layers.Dense,
             "activation": tf.keras.layers.Activation,
+            "relu": tf.keras.layers.Activation,
+            "gelu": tf.keras.layers.Activation,
+            "sigmoid": tf.keras.layers.Activation,
+            "softmax": tf.keras.layers.Activation,
+            "tanh": tf.keras.layers.Activation,
             "dropout": tf.keras.layers.Dropout,
             "crop": tf.keras.layers.Cropping2D,
         }
@@ -566,6 +571,9 @@ class DynamicModelBuilder:
             layer_class = self._layers.get(layer_name)
             if layer_class is None:
                 raise ValueError(f"Unknown layer type: {layer_name}")
+
+            if layer_name in {"relu", "gelu", "sigmoid", "softmax", "tanh"}:
+                cfg_layer["activation"] = layer_name
 
             if "kernel_regularizer" in cfg_layer:
                 reg_name = cfg_layer.pop("kernel_regularizer")
@@ -990,6 +998,8 @@ class DynamicModelBuilder:
         poolers = {
             "max": tf.keras.layers.GlobalMaxPooling2D,
             "average": tf.keras.layers.GlobalAveragePooling2D,
+            "max1d": tf.keras.layers.GlobalMaxPooling1D,
+            "average1d": tf.keras.layers.GlobalAveragePooling1D,
             "masked_average": MaskedGlobalAvgPooling,
             "gatedframe": GatedFrameGlobalMaxPooling,
         }
