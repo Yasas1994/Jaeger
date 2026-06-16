@@ -664,16 +664,16 @@ class DynamicModelBuilder:
             pooler = self._get_pooler(pooling)
             has_nmd = len(nmd) > 0
             if has_nmd:
-                if nmd_merge is not None:
+                if len(nmd) == 1:
+                    nmd = nmd[0]
+                elif nmd_merge is not None:
                     merge_kwargs = dict(nmd_merge)
                     merge_kwargs.pop("name", None)
                     nmd = NMDMerge(name=f"{prefix}_nmd_merge", **merge_kwargs)(nmd)
-                elif len(nmd) > 1:
+                else:
                     nmd = tf.keras.layers.Concatenate(
                         axis=-1, name=f"{prefix}_nmd_concat"
                     )(nmd)
-                else:
-                    nmd = nmd[0]
             if "gated" not in pooling:
                 x = pooler(name=f"global_{pooling}pool")(x)
                 return (x, nmd) if has_nmd else x

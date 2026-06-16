@@ -44,7 +44,7 @@ Global Pooling
 ### Components
 
 1. **`NMDLayer`**
-   - A new Keras layer in `src/jaeger/nnlib/v2/layers.py`.
+   - A new Keras layer in `src/jaeger/nnlib/v2/nmd.py`.
    - Computes the same per-channel mean-difference statistic as `MaskedBatchNorm(return_nmd=True)`.
    - Inputs: a feature map of shape `(batch, length, channels)` or `(batch, length, frames, channels)`.
    - Outputs: a vector of shape `(batch, channels)`.
