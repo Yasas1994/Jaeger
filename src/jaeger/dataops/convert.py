@@ -9,17 +9,103 @@ Supported output representations:
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from functools import partial
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 
 import numpy as np
+import psutil
 
 from jaeger.utils.logging import get_logger
 
 logger = get_logger(log_file=None, log_path=None, level=3)
+
+
+# ---------------------------------------------------------------------------
+# Memory guard helpers (borrowed from the refactored converter)
+# ---------------------------------------------------------------------------
+def _count_lines(path: str) -> int:
+    """Count newline-terminated rows without loading the whole file."""
+    count = 0
+    with open(path, "rb") as f:
+        for _ in f:
+            count += 1
+    return count
+
+
+def _estimate_onehot_memory(
+    total_rows: int,
+    crop_size: int,
+    fmt: str,
+    one_hot: bool,
+    codon_map_len: int | None = None,
+) -> int:
+    """Return the estimated raw float32 bytes needed for one-hot output."""
+    if not one_hot:
+        return 0
+
+    total_rows = max(0, total_rows)
+    crop_size = max(0, crop_size)
+    estimated = 0
+
+    if fmt in ("nucleotide", "both"):
+        estimated += total_rows * 2 * crop_size * 4 * np.dtype(np.float32).itemsize
+
+    if fmt in ("translated", "both") and codon_map_len is not None:
+        vocab_size = codon_map_len + 1
+        max_codon_len = max(0, crop_size // 3 - 1)
+        estimated += (
+            total_rows * 6 * max_codon_len * vocab_size * np.dtype(np.float32).itemsize
+        )
+
+    return int(estimated)
+
+
+def _check_onehot_memory(
+    estimated_bytes: int,
+    available_bytes: int,
+    fraction: float = 0.75,
+) -> None:
+    """Raise MemoryError if the estimated one-hot buffer is too large."""
+    if estimated_bytes <= 0:
+        return
+
+    if estimated_bytes > available_bytes * fraction:
+        raise MemoryError(
+            f"Estimated one-hot output requires {estimated_bytes / (1024 ** 3):.1f} GiB, "
+            f"but only {available_bytes / (1024 ** 3):.1f} GiB RAM is available "
+            f"(safety fraction: {fraction:.0%}). "
+            "Avoid one-hot encoding for large files; use integer encoding instead "
+            "and let the dataloader convert to one-hot at training time."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fast compression helper
+# ---------------------------------------------------------------------------
+def _save_npz(output_path: str, data: dict[str, np.ndarray], compress: str) -> None:
+    """Save arrays to NPZ with the requested compression level."""
+    compress = compress.lower()
+    if compress == "default":
+        np.savez_compressed(output_path, **data)
+    elif compress == "none":
+        np.savez(output_path, **data)
+    elif compress == "fast":
+        with zipfile.ZipFile(
+            output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1
+        ) as zf:
+            for key, arr in data.items():
+                buf = io.BytesIO()
+                np.save(buf, arr)
+                zf.writestr(f"{key}.npy", buf.getvalue())
+    else:
+        raise ValueError(
+            f"Invalid compress: {compress}. Choose from: default, none, fast"
+        )
 
 # ---------------------------------------------------------------------------
 # Codon / nucleotide lookup helpers
@@ -905,10 +991,7 @@ def _convert_to_npz(
             save_dict["codon_map"] = codon_map_name
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    if compress == "none":
-        np.savez(output_path, **save_dict)
-    else:
-        np.savez_compressed(output_path, **save_dict)
+    _save_npz(output_path, save_dict, compress)
 
 
 # ---------------------------------------------------------------------------
@@ -1001,6 +1084,23 @@ def convert_dataset(
         f"Format: {format}, Crop sizes: {crop_sizes}, Stride: {stride}, "
         f"Num classes: {num_classes}"
     )
+
+    # Memory guard for one-hot outputs.
+    if one_hot:
+        total_lines = _count_lines(input_path)
+        max_crop = max(crop_sizes) if crop_sizes else 500
+        codon_map_len: int | None = None
+        if format in ("translated", "both"):
+            codon_map_arr = _get_codon_map(codon_map)
+            codon_map_len = len(codon_map_arr)
+        estimated = _estimate_onehot_memory(
+            total_rows=total_lines,
+            crop_size=max_crop,
+            fmt=format,
+            one_hot=one_hot,
+            codon_map_len=codon_map_len,
+        )
+        _check_onehot_memory(estimated, psutil.virtual_memory().available)
 
     _convert_to_npz(
         input_path=input_path,
