@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
 import tensorflow as tf
 
 from jaeger.nnlib.v2.layers import MaskedBatchNorm
-from jaeger.nnlib.v2.nmd import NMDLayer
+from jaeger.nnlib.v2.nmd import NMDLayer, NMDMerge
 
 
 class TestNMDLayer:
@@ -60,3 +61,36 @@ class TestNMDLayer:
         restored = NMDLayer.from_config(config)
         assert restored.epsilon == 1e-3
         assert restored.momentum == 0.95
+
+
+class TestNMDMerge:
+    @pytest.fixture
+    def nmd_tensors(self):
+        return [
+            tf.random.normal((4, 8)),
+            tf.random.normal((4, 16)),
+        ]
+
+    def test_concat(self, nmd_tensors):
+        merged = NMDMerge(mode="concat")(nmd_tensors)
+        assert list(merged.shape) == [4, 24]
+
+    def test_sum(self, nmd_tensors):
+        merged = NMDMerge(mode="sum", target_dim=8)(nmd_tensors)
+        assert list(merged.shape) == [4, 8]
+
+    def test_mean(self, nmd_tensors):
+        merged = NMDMerge(mode="mean", target_dim=8)(nmd_tensors)
+        assert list(merged.shape) == [4, 8]
+
+    def test_max(self, nmd_tensors):
+        merged = NMDMerge(mode="max", target_dim=8)(nmd_tensors)
+        assert list(merged.shape) == [4, 8]
+
+    def test_weighted(self, nmd_tensors):
+        merged = NMDMerge(mode="weighted", target_dim=8)(nmd_tensors)
+        assert list(merged.shape) == [4, 8]
+
+    def test_invalid_mode(self):
+        with pytest.raises(ValueError):
+            NMDMerge(mode="unsupported")
