@@ -1143,6 +1143,14 @@ class MultiScaleConv1D(tf.keras.layers.Layer):
         **kwargs,
     ):
         super().__init__(**kwargs)
+
+        if not isinstance(branches, list) or len(branches) == 0:
+            raise ValueError("branches must be a non-empty list of dicts")
+        if not all(isinstance(b, dict) for b in branches):
+            raise ValueError("branches must be a non-empty list of dicts")
+        if merge not in {"concat", "add"}:
+            raise ValueError(f"merge must be 'concat' or 'add', got {merge!r}")
+
         self.branches = list(branches)
         self.merge = merge.lower()
         self.kernel_initializer = kernel_initializer
@@ -1150,9 +1158,6 @@ class MultiScaleConv1D(tf.keras.layers.Layer):
         self.use_bias = use_bias
         self.supports_masking = True
         self._convs: list[MaskedConv1D] = []
-
-        if self.merge not in {"concat", "add"}:
-            raise ValueError(f"merge must be 'concat' or 'add', got {merge!r}")
 
     def _resolve(self, value, kind: str):
         """Convert string regularizer/initializer names to objects."""
@@ -1162,7 +1167,22 @@ class MultiScaleConv1D(tf.keras.layers.Layer):
             return tf.keras.initializers.get(value)
         return value
 
+    def _serialize_value(self, value):
+        """Serialize Keras objects that may appear in branch configs."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, tf.keras.initializers.Initializer):
+            return tf.keras.initializers.serialize(value)
+        if isinstance(value, tf.keras.regularizers.Regularizer):
+            return tf.keras.regularizers.serialize(value)
+        if callable(value):
+            # covers activation functions and custom callables
+            return tf.keras.utils.serialize_keras_object(value)
+        return value
+
     def build(self, input_shape):
+        self._convs = []
+
         if self.merge == "add":
             filters = [b.get("filters") for b in self.branches]
             if len(set(filters)) != 1:
@@ -1184,20 +1204,44 @@ class MultiScaleConv1D(tf.keras.layers.Layer):
                 self._resolve(self.kernel_regularizer, "regularizer"),
             )
             branch_cfg.setdefault("use_bias", self.use_bias)
+
+            if branch_cfg.get("padding", "same").lower() != "same":
+                raise ValueError(
+                    f"Branch {i}: padding must be 'same' to keep sequence length "
+                    f"aligned across branches, got {branch_cfg['padding']!r}"
+                )
+            if branch_cfg.get("strides", 1) != 1:
+                raise ValueError(
+                    f"Branch {i}: strides must be 1 to keep sequence length "
+                    f"aligned across branches, got {branch_cfg['strides']!r}"
+                )
+
             self._convs.append(MaskedConv1D(**branch_cfg))
         super().build(input_shape)
 
     def call(self, inputs, mask=None):
-        outputs = [conv(inputs, mask=mask) for conv in self._convs]
+        outputs = []
+        masks = []
+        for conv in self._convs:
+            out = conv(inputs, mask=mask)
+            outputs.append(out)
+            masks.append(conv.compute_mask(inputs, mask=mask))
+
         if self.merge == "concat":
             x = tf.concat(outputs, axis=-1)
         else:
             x = tf.add_n(outputs)
-        self._output_mask = mask
+
+        combined_mask = None
+        if masks and masks[0] is not None:
+            combined_mask = masks[0]
+            for m in masks[1:]:
+                combined_mask = tf.logical_and(combined_mask, m)
+        self._output_mask = combined_mask
         return x
 
     def compute_mask(self, inputs, mask=None):
-        return mask
+        return getattr(self, "_output_mask", mask)
 
     def compute_output_shape(self, input_shape):
         if self.merge == "concat":
@@ -1220,9 +1264,15 @@ class MultiScaleConv1D(tf.keras.layers.Layer):
                 return tf.keras.regularizers.serialize(value)
             return value
 
+        serialized_branches = []
+        for branch in self.branches:
+            serialized_branches.append(
+                {k: self._serialize_value(v) for k, v in branch.items()}
+            )
+
         config.update(
             {
-                "branches": self.branches,
+                "branches": serialized_branches,
                 "merge": self.merge,
                 "kernel_initializer": _serialize(
                     self._resolve(self.kernel_initializer, "initializer"), "initializer"
