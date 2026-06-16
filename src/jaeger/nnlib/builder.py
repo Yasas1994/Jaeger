@@ -408,7 +408,7 @@ class DynamicModelBuilder:
         # === 5. COMBINED MODEL ===
         rep_out = models["rep_model"].output
         has_reliability = "reliability_head" in models
-        if isinstance(rep_out, tuple):
+        if isinstance(rep_out, (list, tuple)):
             if len(rep_out) == 2:
                 x1, x2 = rep_out
                 class_ = models["classification_head"](x1)
@@ -542,7 +542,20 @@ class DynamicModelBuilder:
         prefix: str,
         nmd_merge: dict[str, Any] | None = None,
     ):
-        """Build a stack of layers from *cfg* and return the output tensor(s)."""
+        """Build a stack of layers from *cfg* and return the output tensor(s).
+
+        Parameters
+        ----------
+        x:
+            Input tensor.
+        cfg:
+            Layer configuration dictionary.
+        prefix:
+            Name prefix for layers.
+        nmd_merge:
+            Optional configuration for merging collected NMD tensors before
+            returning from the representation learner.
+        """
         nmd = []
         previous_channels = None
         for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
@@ -652,7 +665,9 @@ class DynamicModelBuilder:
             has_nmd = len(nmd) > 0
             if has_nmd:
                 if nmd_merge is not None:
-                    nmd = NMDMerge(name=f"{prefix}_nmd_merge", **nmd_merge)(nmd)
+                    merge_kwargs = dict(nmd_merge)
+                    merge_kwargs.pop("name", None)
+                    nmd = NMDMerge(name=f"{prefix}_nmd_merge", **merge_kwargs)(nmd)
                 elif len(nmd) > 1:
                     nmd = tf.keras.layers.Concatenate(
                         axis=-1, name=f"{prefix}_nmd_concat"
