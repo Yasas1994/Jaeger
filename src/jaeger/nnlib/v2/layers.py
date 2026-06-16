@@ -1779,10 +1779,8 @@ class AxialAttention(tf.keras.layers.Layer):
                     name=f"length_attn_{i}",
                 )
             )
-            self.layer_norms.append(
-                tf.keras.layers.LayerNormalization(
-                    epsilon=epsilon))
-            
+            self.layer_norms.append(tf.keras.layers.LayerNormalization(epsilon=epsilon))
+
             # Attention over frames (cross-frame)
             self.frame_attns.append(
                 CrossFrameAttention(
@@ -1797,14 +1795,16 @@ class AxialAttention(tf.keras.layers.Layer):
 
     def call(self, inputs, training=False):
         x = inputs
-        for length_attn, frame_attn, layer_norm in zip(self.length_attns, self.frame_attns, self.layer_norms):
+        for length_attn, frame_attn, layer_norm in zip(
+            self.length_attns, self.frame_attns, self.layer_norms
+        ):
             residual = x
             x = length_attn(x, training=training)
             x = frame_attn(x, training=training)
             x = layer_norm(x, training=training)
             x += residual
 
-        return x 
+        return x
 
     def get_config(self):
         cfg = super().get_config()

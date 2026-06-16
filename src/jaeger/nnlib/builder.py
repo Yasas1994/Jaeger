@@ -155,7 +155,7 @@ class DynamicModelBuilder:
             "masked_conv1d": MaskedConv1D,
             "conv1d": tf.keras.layers.Conv1D,
             "masked_batchnorm": MaskedBatchNorm,
-            "masked_layernorm":MaskedLayerNormalization,
+            "masked_layernorm": MaskedLayerNormalization,
             "layernorm": tf.keras.layers.LayerNormalization,
             "batchnorm": tf.keras.layers.BatchNormalization,
             "transformer_encoder": TransformerEncoder,
@@ -911,7 +911,7 @@ class DynamicModelBuilder:
     def _get_optimizer(self, name: str, kwargs: dict) -> Any:
         optimizers = {
             "adam": tf.keras.optimizers.Adam,
-            "adamw":tf.keras.optimizers.AdamW,
+            "adamw": tf.keras.optimizers.AdamW,
             "muon": tf.keras.optimizers.Muon,
             "sgd": tf.keras.optimizers.SGD,
             "rmsprop": tf.keras.optimizers.RMSprop,
