@@ -42,7 +42,6 @@ from jaeger.nnlib.v2.layers import (
     LocalAttention,
     MaskedBatchNorm,
     MaskedGlobalAvgPooling,
-    MaskedLayerNormalization,
     MaskedConv1D,
     MaskedLayerNormalization,
     MetricModel,
@@ -279,7 +278,11 @@ class DynamicModelBuilder:
                 "config"
             ].get("units")
 
-            x = models["rep_model"].output[0]
+            rep_output = models["rep_model"].output
+            if isinstance(rep_output, (list, tuple)):
+                x = rep_output[0]
+            else:
+                x = rep_output
             x = models["projection_head"](x)
             models["jaeger_projection"] = MetricModel(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_projection"
