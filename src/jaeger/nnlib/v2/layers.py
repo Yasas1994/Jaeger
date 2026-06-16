@@ -389,7 +389,7 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
             masked_sum = tf.reduce_sum(inputs, axis=[1, 2])
             mask_sum = tf.reduce_sum(mask, axis=[1, 2])
 
-            # Avoid division by zero
+            # Guard kept for clarity; divide_no_nan also handles all-zero masks.
             mask_sum = tf.maximum(mask_sum, tf.keras.backend.epsilon())
 
             # Compute the masked average
@@ -403,6 +403,10 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
             input_shape[0],
             input_shape[-1],
         )  # Output shape is (batch_size, num_channels)
+
+    def compute_mask(self, inputs, mask=None):
+        # Output is (B, C); there is no sequence dimension left to mask.
+        return None
 
     def get_config(self):
         return super().get_config()
@@ -1125,6 +1129,171 @@ class MaskedConv1D(tf.keras.layers.Layer):
             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
 
+class MultiScaleConv1D(tf.keras.layers.Layer):
+    """Parallel masked 1D convolutions at multiple scales.
+
+    Input shape: (batch, frames, length, channels)
+    Output shape: (batch, frames, length, total_filters) for merge="concat", or
+                  (batch, frames, length, branch_filters) for merge="add".
+
+    Each branch is configured by a dict passed to `MaskedConv1D`. Branch
+    sequence lengths must align, which is enforced by using ``padding="same"``
+    and ``strides=1`` by default.
+    """
+
+    def __init__(
+        self,
+        branches: list[dict],
+        merge: str = "concat",
+        kernel_initializer: str | tf.keras.initializers.Initializer = "glorot_uniform",
+        kernel_regularizer: str | tf.keras.regularizers.Regularizer | None = None,
+        use_bias: bool = True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        if not isinstance(branches, list) or len(branches) == 0:
+            raise ValueError("branches must be a non-empty list of dicts")
+        if not all(isinstance(b, dict) for b in branches):
+            raise ValueError("branches must be a non-empty list of dicts")
+        if merge not in {"concat", "add"}:
+            raise ValueError(f"merge must be 'concat' or 'add', got {merge!r}")
+
+        self.branches = list(branches)
+        self.merge = merge.lower()
+        self.kernel_initializer = kernel_initializer
+        self.kernel_regularizer = kernel_regularizer
+        self.use_bias = use_bias
+        self.supports_masking = True
+        self._convs: list[MaskedConv1D] = []
+
+    def _resolve(self, value, kind: str):
+        """Convert string regularizer/initializer names to objects."""
+        if kind == "regularizer" and isinstance(value, str):
+            return tf.keras.regularizers.get(value)
+        if kind == "initializer" and isinstance(value, str):
+            return tf.keras.initializers.get(value)
+        return value
+
+    def _serialize_value(self, value):
+        """Serialize Keras objects that may appear in branch configs."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, tf.keras.initializers.Initializer):
+            return tf.keras.initializers.serialize(value)
+        if isinstance(value, tf.keras.regularizers.Regularizer):
+            return tf.keras.regularizers.serialize(value)
+        if callable(value):
+            # covers activation functions and custom callables
+            return tf.keras.utils.serialize_keras_object(value)
+        return value
+
+    def build(self, input_shape):
+        self._convs = []
+
+        if self.merge == "add":
+            filters = [b.get("filters") for b in self.branches]
+            if len(set(filters)) != 1:
+                raise ValueError(
+                    "All branches must have the same filters when merge='add'"
+                )
+
+        for i, cfg in enumerate(self.branches):
+            branch_cfg = dict(cfg)
+            branch_cfg.setdefault("padding", "same")
+            branch_cfg.setdefault("strides", 1)
+            branch_cfg.setdefault("name", f"{self.name}_branch_{i}")
+            branch_cfg.setdefault(
+                "kernel_initializer",
+                self._resolve(self.kernel_initializer, "initializer"),
+            )
+            branch_cfg.setdefault(
+                "kernel_regularizer",
+                self._resolve(self.kernel_regularizer, "regularizer"),
+            )
+            branch_cfg.setdefault("use_bias", self.use_bias)
+
+            if branch_cfg.get("padding", "same").lower() != "same":
+                raise ValueError(
+                    f"Branch {i}: padding must be 'same' to keep sequence length "
+                    f"aligned across branches, got {branch_cfg['padding']!r}"
+                )
+            if branch_cfg.get("strides", 1) != 1:
+                raise ValueError(
+                    f"Branch {i}: strides must be 1 to keep sequence length "
+                    f"aligned across branches, got {branch_cfg['strides']!r}"
+                )
+
+            self._convs.append(MaskedConv1D(**branch_cfg))
+        super().build(input_shape)
+
+    def call(self, inputs, mask=None):
+        outputs = []
+        masks = []
+        for conv in self._convs:
+            out = conv(inputs, mask=mask)
+            outputs.append(out)
+            masks.append(conv.compute_mask(inputs, mask=mask))
+
+        if self.merge == "concat":
+            x = tf.concat(outputs, axis=-1)
+        else:
+            x = tf.add_n(outputs)
+
+        combined_mask = None
+        if masks and masks[0] is not None:
+            combined_mask = masks[0]
+            for m in masks[1:]:
+                combined_mask = tf.logical_and(combined_mask, m)
+        self._output_mask = combined_mask
+        return x
+
+    def compute_mask(self, inputs, mask=None):
+        return getattr(self, "_output_mask", mask)
+
+    def compute_output_shape(self, input_shape):
+        if self.merge == "concat":
+            total = sum(b.get("filters", 0) for b in self.branches)
+        else:
+            total = self.branches[0].get("filters", 0)
+        return (input_shape[0], input_shape[1], input_shape[2], total)
+
+    def get_config(self):
+        config = super().get_config()
+
+        def _serialize(value, kind):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if kind == "initializer":
+                return tf.keras.initializers.serialize(value)
+            if kind == "regularizer":
+                return tf.keras.regularizers.serialize(value)
+            return value
+
+        serialized_branches = []
+        for branch in self.branches:
+            serialized_branches.append(
+                {k: self._serialize_value(v) for k, v in branch.items()}
+            )
+
+        config.update(
+            {
+                "branches": serialized_branches,
+                "merge": self.merge,
+                "kernel_initializer": _serialize(
+                    self._resolve(self.kernel_initializer, "initializer"), "initializer"
+                ),
+                "kernel_regularizer": _serialize(
+                    self._resolve(self.kernel_regularizer, "regularizer"), "regularizer"
+                ),
+                "use_bias": self.use_bias,
+            }
+        )
+        return config
+
+
 # class ResidualBlock(tf.keras.layers.Layer):
 #     """The Residual block of ResNet models."""
 
@@ -1818,6 +1987,134 @@ class AxialAttention(tf.keras.layers.Layer):
             }
         )
         return cfg
+
+
+class LocalAttention(tf.keras.layers.Layer):
+    """Windowed self-attention along the sequence-length axis.
+
+    Input shape: (batch, frames, length, channels)
+    Output shape: (batch, frames, length, channels)
+
+    Each position attends only to neighbors within ``window_size // 2`` on
+    either side. This is cheaper and more appropriate than full self-attention
+    for short sequences where long-range dependencies are noisy.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        feed_forward_dim: int,
+        window_size: int,
+        dropout_rate: float = 0.1,
+        num_blocks: int = 1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if window_size <= 0:
+            raise ValueError(f"window_size must be positive, got {window_size}")
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.feed_forward_dim = feed_forward_dim
+        self.window_size = window_size
+        self.dropout_rate = dropout_rate
+        self.num_blocks = num_blocks
+        self.supports_masking = True
+
+        self.blocks = []
+        for i in range(num_blocks):
+            self.blocks.append(
+                {
+                    "ln1": tf.keras.layers.LayerNormalization(
+                        epsilon=1e-6, name=f"{self.name}_ln1_{i}"
+                    ),
+                    "mha": tf.keras.layers.MultiHeadAttention(
+                        num_heads=num_heads,
+                        key_dim=embed_dim // num_heads,
+                        dropout=dropout_rate,
+                        name=f"{self.name}_mha_{i}",
+                    ),
+                    "ln2": tf.keras.layers.LayerNormalization(
+                        epsilon=1e-6, name=f"{self.name}_ln2_{i}"
+                    ),
+                    "ffn1": tf.keras.layers.Dense(
+                        feed_forward_dim,
+                        activation="gelu",
+                        name=f"{self.name}_ffn1_{i}",
+                    ),
+                    "ffn2": tf.keras.layers.Dense(
+                        embed_dim, name=f"{self.name}_ffn2_{i}"
+                    ),
+                }
+            )
+
+    def _local_attention_mask(self, length: tf.Tensor):
+        """Return a boolean (1, length, length) mask for the local window."""
+        half_window = self.window_size // 2
+        row = tf.range(length)[:, None]
+        col = tf.range(length)[None, :]
+        mask = tf.abs(row - col) <= half_window
+        return mask[None, ...]
+
+    def call(self, inputs, mask=None, training=None):
+        if self.embed_dim % self.num_heads != 0:
+            raise ValueError(
+                f"embed_dim ({self.embed_dim}) must be divisible by num_heads ({self.num_heads})"
+            )
+
+        shape = tf.shape(inputs)
+        batch = shape[0]
+        frames = shape[1]
+        length = shape[2]
+        channels = shape[3]
+
+        # Reshape to (batch*frames, length, channels) for length-wise attention.
+        x = tf.reshape(inputs, [batch * frames, length, channels])
+
+        attn_mask = self._local_attention_mask(length)
+
+        if mask is not None:
+            # mask: (batch, frames, length) -> (batch*frames, length)
+            seq_mask = tf.reshape(mask, [batch * frames, length])
+            # Combine local window mask with sequence validity mask.
+            key_mask = seq_mask[:, None, :]  # (B*F, 1, L)
+            attn_mask = attn_mask & key_mask
+
+        for block in self.blocks:
+            x_norm = block["ln1"](x)
+            attn = block["mha"](
+                x_norm,
+                x_norm,
+                attention_mask=attn_mask,
+                training=training,
+            )
+            x = x + attn
+
+            x_norm = block["ln2"](x)
+            ffn = block["ffn2"](block["ffn1"](x_norm))
+            x = x + ffn
+
+        return tf.reshape(x, [batch, frames, length, channels])
+
+    def compute_mask(self, inputs, mask=None):
+        return mask
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "embed_dim": self.embed_dim,
+                "num_heads": self.num_heads,
+                "feed_forward_dim": self.feed_forward_dim,
+                "window_size": self.window_size,
+                "dropout_rate": self.dropout_rate,
+                "num_blocks": self.num_blocks,
+            }
+        )
+        return config
 
 
 def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):

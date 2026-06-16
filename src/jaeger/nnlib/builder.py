@@ -39,11 +39,14 @@ from jaeger.nnlib.v2.layers import (
     AxialAttention,
     CrossFrameAttention,
     GatedFrameGlobalMaxPooling,
+    LocalAttention,
     MaskedBatchNorm,
     MaskedGlobalAvgPooling,
     MaskedLayerNormalization,
     MaskedConv1D,
+    MaskedLayerNormalization,
     MetricModel,
+    MultiScaleConv1D,
     ResidualBlock_wrapper,
     TransformerEncoder,
 )
@@ -153,6 +156,7 @@ class DynamicModelBuilder:
 
         self._layers = {
             "masked_conv1d": MaskedConv1D,
+            "multi_scale_conv": MultiScaleConv1D,
             "conv1d": tf.keras.layers.Conv1D,
             "masked_batchnorm": MaskedBatchNorm,
             "masked_layernorm": MaskedLayerNormalization,
@@ -161,6 +165,7 @@ class DynamicModelBuilder:
             "transformer_encoder": TransformerEncoder,
             "cross_frame_attention": CrossFrameAttention,
             "axial_attention": AxialAttention,
+            "local_attention": LocalAttention,
             "residual_block": ResidualBlock_wrapper,
             "dense": tf.keras.layers.Dense,
             "activation": tf.keras.layers.Activation,
