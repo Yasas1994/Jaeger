@@ -1,5 +1,6 @@
 import tensorflow as tf
 
+from jaeger.nnlib.v2.layers import MaskedBatchNorm
 from jaeger.nnlib.v2.nmd import NMDLayer
 
 
@@ -16,6 +17,38 @@ class TestNMDLayer:
         layer = NMDLayer()
         out = layer(x, mask=mask)
         assert list(out.shape) == [2, 8]
+
+    def test_output_shape_3d_without_mask(self):
+        x = tf.random.normal((2, 12, 8))
+        layer = NMDLayer()
+        out = layer(x)
+        assert list(out.shape) == [2, 8]
+
+    def test_nmd_matches_masked_batch_norm_with_mask(self):
+        tf.random.set_seed(42)
+        x = tf.random.normal((4, 6, 32, 8))
+        # variable-length mask: first two examples are fully valid, last two are partially masked
+        mask = tf.concat(
+            [
+                tf.ones((2, 6, 32), dtype=tf.int32),
+                tf.random.stateless_binomial(
+                    shape=(2, 6, 32), seed=(12, 34), counts=1, probs=0.7
+                ),
+            ],
+            axis=0,
+        )
+        mask = tf.cast(mask, tf.bool)
+
+        nmd_layer = NMDLayer(epsilon=1e-5, momentum=0.9)
+        nmd_out = nmd_layer(x, mask=mask, training=False)
+
+        bn_layer = MaskedBatchNorm(return_nmd=True, epsilon=1e-5, momentum=0.9)
+        # Build the layer so moving statistics are created in the same initial state.
+        bn_layer(x, mask=mask, training=False)
+        _, bn_nmd = bn_layer(x, mask=mask, training=False)
+
+        max_diff = float(tf.reduce_max(tf.abs(nmd_out - bn_nmd)))
+        assert max_diff < 1e-5
 
     def test_get_config_roundtrip(self):
         layer = NMDLayer(epsilon=1e-3, momentum=0.95, dtype="float32")

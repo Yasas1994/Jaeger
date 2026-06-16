@@ -46,6 +46,7 @@ class NMDLayer(tf.keras.layers.Layer):
         if ndims is None:
             raise ValueError("Input rank must be statically known for NMDLayer.")
 
+        reduce_axes = list(range(0, max(ndims - 1, 0)))
         example_axes = list(range(1, max(ndims - 1, 1)))
 
         if mask is not None:
@@ -53,15 +54,19 @@ class NMDLayer(tf.keras.layers.Layer):
             if mask_f.shape.rank is None or mask_f.shape.rank < ndims:
                 mask_f = tf.expand_dims(mask_f, axis=-1)
             masked_inputs = x * mask_f
+
+            valid_elements = tf.reduce_sum(mask_f, axis=reduce_axes) + self.epsilon
+            mean_batch = tf.reduce_sum(masked_inputs, axis=reduce_axes) / valid_elements
+
             per_ex_sum = tf.reduce_sum(masked_inputs, axis=example_axes)
             per_ex_count = tf.reduce_sum(mask_f, axis=example_axes) + self.epsilon
             mean_channel = per_ex_sum / per_ex_count
         else:
+            mean_batch = tf.reduce_mean(x, axis=reduce_axes)
             mean_channel = tf.reduce_mean(x, axis=example_axes)
 
         mm = tf.cast(self.moving_mean, tf.float32)
         if training:
-            mean_batch = tf.reduce_mean(mean_channel, axis=0)
             new_mm = self.momentum * mm + (1.0 - self.momentum) * mean_batch
             self.moving_mean.assign(tf.cast(new_mm, self.moving_mean.dtype))
             mean_to_use = mean_batch
