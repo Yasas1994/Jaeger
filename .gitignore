@@ -67,3 +67,6 @@ train_config/nn_config_500bp_*_zeus_v2.yaml
 # Git worktrees
 .worktrees/
 
+# Superpowers brainstorming sessions
+.superpowers/
+
