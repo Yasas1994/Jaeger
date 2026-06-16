@@ -44,10 +44,16 @@ def base_config():
             },
             "representation_learner": {
                 "hidden_layers": [
-                    {"name": "masked_conv1d", "config": {"filters": 16, "kernel_size": 3}},
+                    {
+                        "name": "masked_conv1d",
+                        "config": {"filters": 16, "kernel_size": 3},
+                    },
                     {"name": "nmd", "config": {}},
                     {"name": "activation", "config": {"activation": "gelu"}},
-                    {"name": "masked_conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                    {
+                        "name": "masked_conv1d",
+                        "config": {"filters": 8, "kernel_size": 3},
+                    },
                     {"name": "nmd", "config": {}},
                     {"name": "activation", "config": {"activation": "gelu"}},
                 ],
@@ -56,7 +62,10 @@ def base_config():
             "classifier": {
                 "input_shape": 8,
                 "hidden_layers": [
-                    {"name": "dense", "config": {"units": 3, "activation": None, "dtype": "float32"}}
+                    {
+                        "name": "dense",
+                        "config": {"units": 3, "activation": None, "dtype": "float32"},
+                    }
                 ],
             },
         },
@@ -67,8 +76,14 @@ def base_config():
             "loss_params_classifier": {"from_logits": True},
             "metrics_classifier": [{"name": "categorical_accuracy", "params": None}],
             "callbacks": {"directories": []},
-            "model_saving": {"path": "/tmp/test_nmd_merge", "save_weights": False, "save_exec_graph": False},
-            "fragment_classifier_data": {"train": [{"class": ["chromosome"], "label": [0], "path": []}]},
+            "model_saving": {
+                "path": "/tmp/test_nmd_merge",
+                "save_weights": False,
+                "save_exec_graph": False,
+            },
+            "fragment_classifier_data": {
+                "train": [{"class": ["chromosome"], "label": [0], "path": []}]
+            },
         },
         "config_path": "/tmp/test_nmd_merge_config.yaml",
     }
@@ -79,7 +94,10 @@ def test_multiple_nmds_concat_merge(base_config):
         "merge": {"mode": "concat"},
         "input_shape": 24,
         "hidden_layers": [
-            {"name": "dense", "config": {"units": 1, "activation": None, "dtype": "float32"}}
+            {
+                "name": "dense",
+                "config": {"units": 1, "activation": None, "dtype": "float32"},
+            }
         ],
     }
     with tempfile.TemporaryDirectory() as tmp:

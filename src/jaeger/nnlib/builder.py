@@ -50,7 +50,7 @@ from jaeger.nnlib.v2.layers import (
     TransformerEncoder,
 )
 from jaeger.nnlib.v2.losses import ArcFaceLoss, HierarchicalLoss
-from jaeger.nnlib.v2.nmd import NMDLayer, NMDMerge  # noqa: F401
+from jaeger.nnlib.v2.nmd import NMDLayer, NMDMerge
 from jaeger.utils.logging import get_logger
 from jaeger.utils.misc import clear_directory
 
