@@ -258,8 +258,12 @@ class DynamicModelBuilder:
 
         # === 2. REPRESENTATION LEARNER ===
         if "representation_learner" in self.model_cfg:
+            merge_cfg = self.model_cfg.get("reliability_model", {}).get("merge")
             rep_out = self._build_block(
-                x, self.model_cfg["representation_learner"], prefix="rep"
+                x,
+                self.model_cfg["representation_learner"],
+                prefix="rep",
+                nmd_merge=merge_cfg,
             )
             models["rep_model"] = tf.keras.Model(
                 inputs=self.inputs, outputs=rep_out, name="rep_model"
@@ -511,10 +515,15 @@ class DynamicModelBuilder:
             case "sigmoid":
                 return _sigmoid(counts_dict)
 
-    def _build_block(self, x, cfg: dict[str, Any], prefix: str):
+    def _build_block(
+        self,
+        x,
+        cfg: dict[str, Any],
+        prefix: str,
+        nmd_merge: dict[str, Any] | None = None,
+    ):
         """Build a stack of layers from *cfg* and return the output tensor(s)."""
         nmd = []
-        nmd_con = tf.keras.layers.Concatenate(axis=-1)
         previous_channels = None
         for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
             layer_name = layer_cfg.get("name", "").lower()
@@ -621,10 +630,15 @@ class DynamicModelBuilder:
             pooling = cfg.get("pooling", "average").lower()
             pooler = self._get_pooler(pooling)
             has_nmd = len(nmd) > 0
-            if len(nmd) > 1:
-                nmd = nmd_con(nmd)
-            elif len(nmd) == 1:
-                nmd = nmd[0]
+            if has_nmd:
+                if nmd_merge is not None:
+                    nmd = NMDMerge(name=f"{prefix}_nmd_merge", **nmd_merge)(nmd)
+                elif len(nmd) > 1:
+                    nmd = tf.keras.layers.Concatenate(
+                        axis=-1, name=f"{prefix}_nmd_concat"
+                    )(nmd)
+                else:
+                    nmd = nmd[0]
             if "gated" not in pooling:
                 x = pooler(name=f"global_{pooling}pool")(x)
                 return (x, nmd) if has_nmd else x
