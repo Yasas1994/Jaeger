@@ -40,6 +40,7 @@ from jaeger.nnlib.v2.layers import (
     CrossFrameAttention,
     GatedFrameGlobalMaxPooling,
     MaskedBatchNorm,
+    MaskedGlobalAvgPooling,
     MaskedConv1D,
     MetricModel,
     MultiScaleConv1D,
@@ -919,6 +920,7 @@ class DynamicModelBuilder:
         poolers = {
             "max": tf.keras.layers.GlobalMaxPooling2D,
             "average": tf.keras.layers.GlobalAveragePooling2D,
+            "masked_average": MaskedGlobalAvgPooling,
             "gatedframe": GatedFrameGlobalMaxPooling,
         }
         return poolers[name]

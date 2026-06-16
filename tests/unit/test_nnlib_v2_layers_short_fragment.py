@@ -105,3 +105,32 @@ class TestMultiScaleConv1D:
         assert restored_out.shape.as_list() == original_shape
         assert restored.merge == layer.merge
         assert restored.branches == layer.branches
+
+
+class TestMaskedGlobalAvgPooling:
+    def test_masked_average_ignores_padding(self):
+        x = tf.constant(
+            [
+                [[[1.0, 2.0], [3.0, 4.0], [0.0, 0.0]]],
+                [[[5.0, 6.0], [0.0, 0.0], [0.0, 0.0]]],
+            ]
+        )  # (2, 1, 3, 2)
+        mask = tf.constant(
+            [
+                [[True, True, False]],
+                [[True, False, False]],
+            ]
+        )  # (2, 1, 3)
+        layer = layers.MaskedGlobalAvgPooling()
+        out = layer(x, mask=mask)
+        expected = tf.constant([[2.0, 3.0], [5.0, 6.0]])
+        np.testing.assert_allclose(out.numpy(), expected.numpy(), rtol=1e-5)
+
+    def test_pooler_registered_in_builder(self):
+        from jaeger.nnlib.builder import DynamicModelBuilder
+
+        builder = DynamicModelBuilder(
+            {"model": {}, "training": {"callbacks": {"directories": []}}}
+        )
+        pooler = builder._get_pooler("masked_average")
+        assert pooler is layers.MaskedGlobalAvgPooling

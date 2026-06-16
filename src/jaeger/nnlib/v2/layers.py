@@ -374,6 +374,7 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
 class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.supports_masking = True
 
     def call(self, inputs, mask=None):
         # Assuming inputs and mask have the same shape (batch_size, height, width, channels)
@@ -388,7 +389,7 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
             masked_sum = tf.reduce_sum(inputs, axis=[1, 2])
             mask_sum = tf.reduce_sum(mask, axis=[1, 2])
 
-            # Avoid division by zero
+            # Guard kept for clarity; divide_no_nan also handles all-zero masks.
             mask_sum = tf.maximum(mask_sum, tf.keras.backend.epsilon())
 
             # Compute the masked average
@@ -402,6 +403,13 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
             input_shape[0],
             input_shape[-1],
         )  # Output shape is (batch_size, num_channels)
+
+    def compute_mask(self, inputs, mask=None):
+        # Output is (B, C); there is no sequence dimension left to mask.
+        return None
+
+    def get_config(self):
+        return super().get_config()
 
 
 class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
