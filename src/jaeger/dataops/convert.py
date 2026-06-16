@@ -673,7 +673,9 @@ def _process_chunk_npz(
                         comp_lut,
                         ascii_lut,
                     )
-                    actual_lengths = _single_codon_actual_lengths(lengths_arr, crop_size)
+                    actual_lengths = _single_codon_actual_lengths(
+                        lengths_arr, crop_size
+                    )
                 else:
                     seq_len = max(0, crop_size // 3 - 2)
                     encoded = _process_batch_numba_dicodon(
@@ -697,11 +699,7 @@ def _process_chunk_npz(
         else:
             # Keep per-crop-size list length consistent across workers.
             if fmt in ("nucleotide", "both"):
-                empty_shape = (
-                    (0, 2, crop_size, 4)
-                    if one_hot
-                    else (0, 2, crop_size)
-                )
+                empty_shape = (0, 2, crop_size, 4) if one_hot else (0, 2, crop_size)
                 empty_dtype = np.float32 if one_hot else np.int32
                 nucleotide_arrays.append(np.empty(empty_shape, dtype=empty_dtype))
             if fmt in ("translated", "both"):
