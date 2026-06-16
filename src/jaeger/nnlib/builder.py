@@ -42,6 +42,7 @@ from jaeger.nnlib.v2.layers import (
     LocalAttention,
     MaskedBatchNorm,
     MaskedGlobalAvgPooling,
+    MaskedLayerNormalization,
     MaskedConv1D,
     MaskedLayerNormalization,
     MetricModel,
@@ -159,6 +160,7 @@ class DynamicModelBuilder:
             "conv1d": tf.keras.layers.Conv1D,
             "masked_batchnorm": MaskedBatchNorm,
             "masked_layernorm": MaskedLayerNormalization,
+            "layernorm": tf.keras.layers.LayerNormalization,
             "batchnorm": tf.keras.layers.BatchNormalization,
             "transformer_encoder": TransformerEncoder,
             "cross_frame_attention": CrossFrameAttention,
@@ -914,6 +916,8 @@ class DynamicModelBuilder:
     def _get_optimizer(self, name: str, kwargs: dict) -> Any:
         optimizers = {
             "adam": tf.keras.optimizers.Adam,
+            "adamw": tf.keras.optimizers.AdamW,
+            "muon": tf.keras.optimizers.Muon,
             "sgd": tf.keras.optimizers.SGD,
             "rmsprop": tf.keras.optimizers.RMSprop,
             "adagrad": tf.keras.optimizers.Adagrad,
