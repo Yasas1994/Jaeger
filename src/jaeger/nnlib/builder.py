@@ -388,7 +388,6 @@ class DynamicModelBuilder:
             if len(rep_out) == 2:
                 x1, x2 = rep_out
                 class_ = models["classification_head"](x1)
-                class_ = tf.keras.layers.Identity(name="prediction")(class_)
                 outputs: dict[str, Any] = {
                     "prediction": class_,
                     "embedding": x1,
@@ -404,7 +403,6 @@ class DynamicModelBuilder:
             elif len(rep_out) == 3:
                 x1, x2, g = rep_out
                 class_ = models["classification_head"](x1)
-                class_ = tf.keras.layers.Identity(name="prediction")(class_)
                 outputs = {
                     "prediction": class_,
                     "embedding": x1,
@@ -420,7 +418,6 @@ class DynamicModelBuilder:
                 )
         else:
             class_ = models["classification_head"](rep_out)
-            class_ = tf.keras.layers.Identity(name="prediction")(class_)
             models["jaeger_model"] = tf.keras.Model(
                 inputs=models["rep_model"].input,
                 outputs={"prediction": class_, "embedding": rep_out},

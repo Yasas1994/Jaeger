@@ -132,7 +132,10 @@ def test_builder_knows_nmd_layer():
             },
             "representation_learner": {
                 "hidden_layers": [
-                    {"name": "masked_conv1d", "config": {"filters": 16, "kernel_size": 3}},
+                    {
+                        "name": "masked_conv1d",
+                        "config": {"filters": 16, "kernel_size": 3},
+                    },
                     {"name": "nmd", "config": {}},
                     {"name": "activation", "config": {"activation": "gelu"}},
                 ],
@@ -141,7 +144,10 @@ def test_builder_knows_nmd_layer():
             "classifier": {
                 "input_shape": 16,
                 "hidden_layers": [
-                    {"name": "dense", "config": {"units": 3, "activation": None, "dtype": "float32"}}
+                    {
+                        "name": "dense",
+                        "config": {"units": 3, "activation": None, "dtype": "float32"},
+                    }
                 ],
             },
         },
@@ -152,12 +158,18 @@ def test_builder_knows_nmd_layer():
             "loss_params_classifier": {"from_logits": True},
             "metrics_classifier": [{"name": "categorical_accuracy", "params": None}],
             "callbacks": {"directories": []},
-            "model_saving": {"path": "/tmp/test_nmd_registration", "save_weights": False, "save_exec_graph": False},
-            "fragment_classifier_data": {"train": [{"class": ["chromosome"], "label": [0], "path": []}]},
+            "model_saving": {
+                "path": "/tmp/test_nmd_registration",
+                "save_weights": False,
+                "save_exec_graph": False,
+            },
+            "fragment_classifier_data": {
+                "train": [{"class": ["chromosome"], "label": [0], "path": []}]
+            },
         },
         "config_path": "/tmp/test_nmd_registration_config.yaml",
     }
     builder = DynamicModelBuilder(config)
     models = builder.build_fragment_classifier()
     assert "nmd" in builder._layers
-    assert "prediction" in models["jaeger_model"].output_names
+    assert "prediction" in models["jaeger_model"].output
