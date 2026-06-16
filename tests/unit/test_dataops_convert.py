@@ -194,3 +194,161 @@ class TestCropHelpers:
         arr = np.ones((2, 3), dtype=np.int32)
         padded = convert._pad_array(arr, 2, 0)
         assert padded.shape == (2, 2)
+
+
+class TestConvertToNpz:
+    def _csv(self, tmp_path: Path, lines: list[str]) -> str:
+        path = tmp_path / "input.csv"
+        path.write_text("\n".join(lines))
+        return str(path)
+
+    def test_nucleotide_integer(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGC", "1,GGGGGGGGGGGG"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            stride=0,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        assert out.exists()
+        data = np.load(out)
+        assert "nucleotide" in data
+        assert "labels" in data
+        assert data["labels"].tolist() == [0, 1]
+        assert data["nucleotide"].shape[0] == 2
+
+    def test_translated_integer(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGCATGCATGCATGC"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="translated",
+            crop_sizes=[24],
+            stride=0,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        assert "translated" in data
+        assert "codon_map" in data
+        assert data["translated"].shape[1] == 6
+
+    def test_both(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGCATGCATGCATGC"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="both",
+            crop_sizes=[24],
+            stride=0,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        assert "nucleotide" in data
+        assert "translated" in data
+
+    def test_one_hot_nucleotide(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGC"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[4],
+            stride=0,
+            num_classes=2,
+            num_workers=1,
+            one_hot=True,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        assert data["nucleotide"].ndim == 4
+        assert data["nucleotide"].dtype == np.float32
+
+    def test_multi_crop_and_stride(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0," + "A" * 25])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[20, 10],
+            stride=10,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        # 25-mer with crop 20 (2 crops: 0,5) and crop 10 (3 crops: 0,10,15)
+        assert data["labels"].shape[0] == 5
+
+    def test_dicodon(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGCATGCATGCATGC"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="translated",
+            crop_sizes=[24],
+            stride=0,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="cod_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        assert data["codon_map"] == "cod_id"
+        assert data["translated"].shape[1] == 6
+        # first dicodon position should be encoded (value > 0)
+        assert np.any(data["translated"][0, 0] > 0)
+
+    def test_invalid_format(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGC"])
+        out = tmp_path / "out.npz"
+        with pytest.raises(ValueError):
+            convert._convert_to_npz(
+                input_path=csv,
+                output_path=str(out),
+                fmt="unknown",
+                crop_sizes=[4],
+                stride=0,
+                num_classes=2,
+                num_workers=1,
+                one_hot=False,
+                pad_int=0,
+                codon_map_name="codon_id",
+                nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+                compress="default",
+            )

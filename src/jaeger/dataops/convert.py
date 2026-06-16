@@ -216,6 +216,38 @@ def _generate_crops(seq_len: int, crop_sizes: list[int], stride: int):
             yield crop_size, start, length
 
 
+def _pad_axis(
+    arr: np.ndarray, target_len: int, axis: int = -1, pad_value: int | float = 0
+) -> np.ndarray:
+    """Pad or truncate ``arr`` along any axis.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Input array.
+    target_len : int
+        Desired length along ``axis``.
+    axis : int, optional
+        Axis to pad or truncate (default: last axis).
+    pad_value : int | float, optional
+        Value used for padding (default: 0).
+
+    Returns
+    -------
+    np.ndarray
+        Array with shape ``(..., target_len, ...)`` along ``axis``.
+    """
+    axis = axis % arr.ndim
+    if arr.shape[axis] >= target_len:
+        slices = [slice(None)] * arr.ndim
+        slices[axis] = slice(None, target_len)
+        return arr[tuple(slices)]
+    pad_shape = list(arr.shape)
+    pad_shape[axis] = target_len - arr.shape[axis]
+    pad = np.full(pad_shape, pad_value, dtype=arr.dtype)
+    return np.concatenate([arr, pad], axis=axis)
+
+
 def _pad_array(arr: np.ndarray, target_len: int, pad_value: int | float) -> np.ndarray:
     """Pad a variable-length encoded array along its last axis.
 
@@ -233,12 +265,196 @@ def _pad_array(arr: np.ndarray, target_len: int, pad_value: int | float) -> np.n
     np.ndarray
         Array with shape ``(..., target_len)``.
     """
-    if arr.shape[-1] >= target_len:
-        return arr[..., :target_len]
-    pad_shape = list(arr.shape)
-    pad_shape[-1] = target_len - arr.shape[-1]
-    pad = np.full(pad_shape, pad_value, dtype=arr.dtype)
-    return np.concatenate([arr, pad], axis=-1)
+    return _pad_axis(arr, target_len, axis=-1, pad_value=pad_value)
+
+
+# ---------------------------------------------------------------------------
+# Codon / dicodon lookup helpers
+# ---------------------------------------------------------------------------
+_STANDARD_CODON_LUT3 = None
+
+
+def _build_codon_lut(codon_map: list[int]) -> np.ndarray:
+    """Build a flat 5-base lookup table mapping triplets to ``codon_map`` values.
+
+    Unknown/invalid triplets map to ``-1``.
+    """
+    from jaeger.seqops.maps import CODONS
+
+    lut = np.full(125, -1, dtype=np.int32)
+    bases = ["A", "T", "G", "C", "N"]
+    codon_to_id = {c: i for i, c in enumerate(CODONS)}
+    for i in range(5):
+        for j in range(5):
+            for k in range(5):
+                codon = bases[i] + bases[j] + bases[k]
+                cid = codon_to_id.get(codon, -1)
+                if cid >= 0:
+                    lut[i * 25 + j * 5 + k] = codon_map[cid]
+    return lut
+
+
+def _build_standard_codon_lut3() -> np.ndarray:
+    """Build a flat 5-base lookup table mapping valid triplets to CODONS indices.
+
+    N-containing triplets map to ``-1``. The result is cached globally.
+    """
+    global _STANDARD_CODON_LUT3
+    if _STANDARD_CODON_LUT3 is not None:
+        return _STANDARD_CODON_LUT3
+
+    from jaeger.seqops.maps import CODONS
+
+    lut = np.full(125, -1, dtype=np.int32)
+    bases = ["A", "T", "G", "C", "N"]
+    codon_to_id = {c: i for i, c in enumerate(CODONS)}
+    for i in range(5):
+        for j in range(5):
+            for k in range(5):
+                codon = bases[i] + bases[j] + bases[k]
+                cid = codon_to_id.get(codon, -1)
+                if cid >= 0:
+                    lut[i * 25 + j * 5 + k] = cid
+    _STANDARD_CODON_LUT3 = lut
+    return lut
+
+
+def _build_dicodon_lut(codon_map: list[int]) -> np.ndarray:
+    """Build a lookup table of dicodon map values.
+
+    For ``DICODON_ID`` the returned table is the identity mapping ``0..4095``.
+    """
+    return np.array(codon_map, dtype=np.int32)
+
+
+@njit(cache=False)
+def _single_codon_actual_lengths(lengths, crop_size):
+    """Return the number of valid codons in the shortest frame per crop."""
+    n = len(lengths)
+    out = np.zeros(n, dtype=np.int32)
+    max_len = crop_size // 3 - 1
+    for s in range(n):
+        length = min(lengths[s], crop_size)
+        if length < 3:
+            continue
+        offset = [-2, -1, 0][length % 3]
+        ngrams_len = length - 3 + 1
+        end_f1 = ngrams_len - 3 + offset
+        end_f2 = ngrams_len - 2 + offset
+        end_f3 = ngrams_len - 1 + offset
+        nf1 = max(0, (end_f1 + 2) // 3)
+        nf2 = max(0, (end_f2 + 1) // 3)
+        nf3 = max(0, end_f3 // 3)
+        min_len = min(nf1, nf2, nf3)
+        if min_len <= 0:
+            continue
+        out[s] = min(min_len, max_len)
+    return out
+
+
+@njit(cache=False)
+def _dicodon_actual_lengths(lengths, crop_size):
+    """Return the number of valid overlapping dicodons per crop."""
+    single = _single_codon_actual_lengths(lengths, crop_size)
+    max_len = max(0, crop_size // 3 - 2)
+    n = len(single)
+    out = np.zeros(n, dtype=np.int32)
+    for i in range(n):
+        val = single[i] - 1
+        if val < 0:
+            out[i] = 0
+        elif val > max_len:
+            out[i] = max_len
+        else:
+            out[i] = val
+    return out
+
+
+def _one_hot_integer(indices: np.ndarray, depth: int) -> np.ndarray:
+    """Convert an integer array to a float32 one-hot array along a new last axis.
+
+    Only indices in ``[1, depth - 1]`` produce a one-hot vector; index ``0`` and
+    negative values stay all-zero.
+    """
+    out = np.zeros(indices.shape + (depth,), dtype=np.float32)
+    valid_mask = (indices > 0) & (indices < depth)
+    if not np.any(valid_mask):
+        return out
+    coords = np.where(valid_mask)
+    channel_indices = indices[valid_mask] - 1
+    out[coords + (channel_indices,)] = 1.0
+    return out
+
+
+@njit(cache=False)
+def _process_batch_numba_dicodon(
+    sequences, lengths, crop_size, seq_len, codon_lut3, dicodon_lut, comp_lut, ascii_lut
+):
+    """Process a batch of DNA sequences to 6-frame dicodon embeddings."""
+    n = len(lengths)
+    out = np.zeros((n, 6, seq_len), dtype=np.int32)
+
+    for s in range(n):
+        length = min(lengths[s], crop_size)
+        if length < 6:
+            continue
+
+        bases = np.empty(length, dtype=np.int8)
+        for i in range(length):
+            bases[i] = ascii_lut[sequences[s, i]]
+
+        rev_bases = np.empty(length, dtype=np.int8)
+        for i in range(length):
+            rev_bases[i] = comp_lut[bases[length - 1 - i]]
+
+        offset = [-2, -1, 0][length % 3]
+        ngrams_len = length - 3 + 1
+        end_f1 = ngrams_len - 3 + offset
+        end_f2 = ngrams_len - 2 + offset
+        end_f3 = ngrams_len - 1 + offset
+        nf1 = max(0, (end_f1 + 2) // 3)
+        nf2 = max(0, (end_f2 + 1) // 3)
+        nf3 = max(0, end_f3 // 3)
+        min_len = min(nf1, nf2, nf3)
+        if min_len <= 1:
+            continue
+        dicodon_len = min(min_len - 1, seq_len)
+
+        for f in range(3):
+            for j in range(dicodon_len):
+                start1 = f + j * 3
+                start2 = start1 + 3
+                idx0 = bases[start1]
+                idx1 = bases[start1 + 1]
+                idx2 = bases[start1 + 2]
+                c1 = codon_lut3[idx0 * 25 + idx1 * 5 + idx2]
+                idx0 = bases[start2]
+                idx1 = bases[start2 + 1]
+                idx2 = bases[start2 + 2]
+                c2 = codon_lut3[idx0 * 25 + idx1 * 5 + idx2]
+                if c1 < 0 or c2 < 0:
+                    continue
+                dicodon_idx = c1 * 64 + c2
+                out[s, f, j] = dicodon_lut[dicodon_idx] + 1
+
+        for f in range(3):
+            for j in range(dicodon_len):
+                start1 = f + j * 3
+                start2 = start1 + 3
+                idx0 = rev_bases[start1]
+                idx1 = rev_bases[start1 + 1]
+                idx2 = rev_bases[start1 + 2]
+                c1 = codon_lut3[idx0 * 25 + idx1 * 5 + idx2]
+                idx0 = rev_bases[start2]
+                idx1 = rev_bases[start2 + 1]
+                idx2 = rev_bases[start2 + 2]
+                c2 = codon_lut3[idx0 * 25 + idx1 * 5 + idx2]
+                if c1 < 0 or c2 < 0:
+                    continue
+                dicodon_idx = c1 * 64 + c2
+                out[s, f + 3, j] = dicodon_lut[dicodon_idx] + 1
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -909,6 +1125,271 @@ def _convert_to_numpy_raw_variable(
     print(
         f"Saved: sequences={seq_mb:.1f}MB, lengths={length_mb:.1f}MB, labels={label_mb:.1f}MB"
     )
+
+
+# ---------------------------------------------------------------------------
+# npz converter (nucleotide / translated / dicodon)
+# ---------------------------------------------------------------------------
+
+
+def _process_chunk_npz(
+    lines,
+    fmt,
+    crop_sizes,
+    stride,
+    one_hot,
+    nucleotide_lookups,
+    codon_lut,
+    codon_map_len,
+    standard_codon_lut3,
+    dicodon_lut,
+    ascii_lut,
+    comp_lut,
+):
+    """Process a chunk of CSV lines into encoded crops for ``.npz`` output.
+
+    Returns a dict with per-crop ``nucleotide``, ``translated``, ``labels``,
+    ``lengths``, and ``translated_lengths``.
+    """
+    ascii_to_user, comp_user, ascii_to_oh, comp_oh = nucleotide_lookups
+    parsed = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        comma_idx = line.find(",")
+        if comma_idx == -1:
+            continue
+        label = int(line[:comma_idx])
+        seq = line[comma_idx + 1 :]
+        comma2 = seq.find(",")
+        if comma2 != -1:
+            seq = seq[:comma2]
+        seq = seq.strip()
+        parsed.append((label, seq))
+
+    nucleotide_arrays = []
+    translated_arrays = []
+    all_labels = []
+    all_lengths = []
+    all_translated_lengths = []
+
+    for crop_size in crop_sizes:
+        batch_seqs = []
+        batch_lengths = []
+        batch_labels = []
+
+        for label, seq in parsed:
+            seq_bytes = seq.encode()
+            seq_len = len(seq_bytes)
+            starts = _crop_starts(seq_len, crop_size, stride)
+            for start in starts:
+                length = min(crop_size, seq_len - start)
+                crop = np.full(crop_size, ord("N"), dtype=np.uint8)
+                crop[:length] = np.frombuffer(
+                    seq_bytes[start : start + length], dtype=np.uint8
+                )
+                batch_seqs.append(crop)
+                batch_lengths.append(length)
+                batch_labels.append(label)
+
+        if not batch_seqs:
+            continue
+
+        batch = np.stack(batch_seqs, axis=0)
+        lengths_arr = np.array(batch_lengths, dtype=np.int32)
+
+        if fmt in ("nucleotide", "both"):
+            encoded = _encode_nucleotide_batch(
+                batch,
+                lengths_arr,
+                crop_size,
+                ascii_to_user,
+                comp_user,
+                ascii_to_oh,
+                comp_oh,
+                one_hot,
+            )
+            for i in range(encoded.shape[0]):
+                nucleotide_arrays.append(encoded[i, :, : lengths_arr[i]])
+
+        if fmt in ("translated", "both"):
+            if codon_map_len != 4096:
+                seq_len = crop_size // 3 - 1
+                encoded = _process_batch_numba(
+                    batch,
+                    lengths_arr,
+                    crop_size,
+                    seq_len,
+                    codon_lut,
+                    comp_lut,
+                    ascii_lut,
+                )
+                actual_lengths = _single_codon_actual_lengths(lengths_arr, crop_size)
+            else:
+                seq_len = max(0, crop_size // 3 - 2)
+                encoded = _process_batch_numba_dicodon(
+                    batch,
+                    lengths_arr,
+                    crop_size,
+                    seq_len,
+                    standard_codon_lut3,
+                    dicodon_lut,
+                    comp_lut,
+                    ascii_lut,
+                )
+                actual_lengths = _dicodon_actual_lengths(lengths_arr, crop_size)
+            for i in range(encoded.shape[0]):
+                translated_arrays.append(encoded[i, :, : actual_lengths[i]])
+            all_translated_lengths.extend(actual_lengths.tolist())
+        else:
+            all_translated_lengths.extend([0] * len(batch_labels))
+
+        all_labels.extend(batch_labels)
+        all_lengths.extend(batch_lengths)
+
+    return {
+        "nucleotide": nucleotide_arrays,
+        "translated": translated_arrays,
+        "labels": np.array(all_labels, dtype=np.int32),
+        "lengths": np.array(all_lengths, dtype=np.int32),
+        "translated_lengths": np.array(all_translated_lengths, dtype=np.int32),
+    }
+
+
+def _convert_to_npz(
+    input_path: str,
+    output_path: str,
+    fmt: str,
+    crop_sizes: list[int],
+    stride: int,
+    num_classes: int,
+    num_workers: int | None,
+    one_hot: bool,
+    pad_int: int,
+    codon_map_name: str,
+    nucleotide_map: dict[str, int],
+    compress: str,
+) -> None:
+    """Convert a CSV dataset to an ``.npz`` file.
+
+    Supports ``nucleotide``, ``translated``, and ``both`` output formats, with
+    optional one-hot encoding and multiple crop sizes sharing one stride.
+    """
+    import warnings
+
+    valid_fmts = ["nucleotide", "translated", "both"]
+    if fmt not in valid_fmts:
+        raise ValueError(f"Invalid format: {fmt}. Choose from: {', '.join(valid_fmts)}")
+
+    if not output_path.endswith(".npz"):
+        warnings.warn(
+            f"Output path {output_path!r} does not end with '.npz'", stacklevel=2
+        )
+
+    with open(input_path) as f:
+        lines = f.readlines()
+    if not lines:
+        raise ValueError(f"Input file is empty: {input_path}")
+
+    nucleotide_lookups = _build_nucleotide_lookups(nucleotide_map)
+    _, ascii_lut, comp_lut = _build_numba_lookups()
+
+    codon_map = _get_codon_map(codon_map_name)
+    codon_map_len = len(codon_map)
+    if codon_map_len == 4096:
+        standard_codon_lut3 = _build_standard_codon_lut3()
+        dicodon_lut = _build_dicodon_lut(codon_map)
+        codon_lut = np.empty(0, dtype=np.int32)
+    else:
+        codon_lut = _build_codon_lut(codon_map)
+        standard_codon_lut3 = np.empty(0, dtype=np.int32)
+        dicodon_lut = np.empty(0, dtype=np.int32)
+
+    worker_kwargs = {
+        "fmt": fmt,
+        "crop_sizes": crop_sizes,
+        "stride": stride,
+        "one_hot": one_hot,
+        "nucleotide_lookups": nucleotide_lookups,
+        "codon_lut": codon_lut,
+        "codon_map_len": codon_map_len,
+        "standard_codon_lut3": standard_codon_lut3,
+        "dicodon_lut": dicodon_lut,
+        "ascii_lut": ascii_lut,
+        "comp_lut": comp_lut,
+    }
+
+    if num_workers is None or num_workers <= 1:
+        result = _process_chunk_npz(lines, **worker_kwargs)
+    else:
+        chunk_size = max(1, len(lines) // num_workers)
+        chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
+        process_fn = partial(_process_chunk_npz, **worker_kwargs)
+        with Pool(num_workers) as pool:
+            results = pool.map(process_fn, chunks)
+        result = {
+            "nucleotide": sum((r["nucleotide"] for r in results), []),
+            "translated": sum((r["translated"] for r in results), []),
+            "labels": np.concatenate([r["labels"] for r in results], axis=0),
+            "lengths": np.concatenate([r["lengths"] for r in results], axis=0),
+            "translated_lengths": np.concatenate(
+                [r["translated_lengths"] for r in results], axis=0
+            ),
+        }
+
+    save_dict: dict[str, np.ndarray | str] = {
+        "lengths": result["lengths"],
+        "labels": result["labels"],
+        "pad_int": np.int32(pad_int),
+        "crop_sizes": np.array(crop_sizes, dtype=np.int32),
+        "stride": np.int32(stride),
+    }
+
+    if fmt in ("nucleotide", "both"):
+        arrays = result["nucleotide"]
+        if arrays:
+            max_len = max(a.shape[-1] for a in arrays)
+            if one_hot:
+                padded = [_pad_axis(a, max_len, axis=-1, pad_value=0.0) for a in arrays]
+                nucleotide_arr = np.stack(padded, axis=0)
+            else:
+                padded = [
+                    _pad_axis(a, max_len, axis=-1, pad_value=pad_int) for a in arrays
+                ]
+                nucleotide_arr = np.stack(padded, axis=0)
+            save_dict["nucleotide"] = nucleotide_arr
+            save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
+        else:
+            save_dict["nucleotide"] = np.empty(
+                (0,), dtype=np.float32 if one_hot else np.int32
+            )
+            save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
+
+    if fmt in ("translated", "both"):
+        arrays = result["translated"]
+        if arrays:
+            max_len = max(a.shape[-1] for a in arrays)
+            if one_hot:
+                padded = [_pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays]
+                stacked = np.stack(padded, axis=0)
+                translated_arr = _one_hot_integer(stacked, codon_map_len + 1)
+            else:
+                padded = [_pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays]
+                translated_arr = np.stack(padded, axis=0)
+            save_dict["translated"] = translated_arr
+            save_dict["codon_map"] = codon_map_name
+        else:
+            save_dict["translated"] = np.empty(
+                (0,), dtype=np.float32 if one_hot else np.int32
+            )
+            save_dict["codon_map"] = codon_map_name
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    if compress == "none":
+        np.savez(output_path, **save_dict)
+    else:
+        np.savez_compressed(output_path, **save_dict)
 
 
 # ---------------------------------------------------------------------------
