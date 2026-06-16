@@ -150,3 +150,47 @@ class TestNucleotideEncoder:
         assert out.shape == (1, 2, 4, 4)
         assert out[0, 0, 0].tolist() == [1.0, 0.0, 0.0, 0.0]  # A
         assert out[0, 0, 2].tolist() == [0.0, 1.0, 0.0, 0.0]  # G
+
+
+class TestCropHelpers:
+    def test_crop_starts_single_short_sequence(self):
+        assert convert._crop_starts(10, 20, 5) == [0]
+
+    def test_crop_starts_zero_stride(self):
+        assert convert._crop_starts(100, 20, 0) == [0]
+
+    def test_crop_starts_exact_fit(self):
+        assert convert._crop_starts(60, 20, 20) == [0, 20, 40]
+
+    def test_crop_starts_with_tail_window(self):
+        starts = convert._crop_starts(55, 20, 20)
+        assert starts == [0, 20, 35]
+        assert starts[-1] + 20 == 55
+
+    def test_generate_crops_multiple_sizes(self):
+        crops = list(convert._generate_crops(25, [20, 10], 10))
+        expected = [
+            (20, 0, 20),
+            (20, 5, 20),
+            (10, 0, 10),
+            (10, 10, 10),
+            (10, 15, 10),
+        ]
+        assert crops == expected
+
+    def test_pad_array_int_rank3(self):
+        arr = np.ones((2, 3, 2), dtype=np.int32)
+        padded = convert._pad_array(arr, 5, 0)
+        assert padded.shape == (2, 3, 5)
+        assert np.all(padded[..., 2:] == 0)
+
+    def test_pad_array_float_rank4(self):
+        arr = np.ones((1, 2, 3, 2), dtype=np.float32)
+        padded = convert._pad_array(arr, 4, 0.0)
+        assert padded.shape == (1, 2, 3, 4)
+        assert np.all(padded[..., 2:] == 0.0)
+
+    def test_pad_array_truncate(self):
+        arr = np.ones((2, 3), dtype=np.int32)
+        padded = convert._pad_array(arr, 2, 0)
+        assert padded.shape == (2, 2)

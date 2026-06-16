@@ -186,6 +186,62 @@ def _encode_nucleotide_batch(
 
 
 # ---------------------------------------------------------------------------
+# Crop generation and padding helpers
+# ---------------------------------------------------------------------------
+def _crop_starts(seq_len: int, crop_size: int, stride: int) -> list[int]:
+    """Return start indices for sliding-window crops.
+
+    If ``stride`` is 0 or the sequence fits in one crop, a single start at 0 is
+    returned. Otherwise the sequence is tiled with overlapping crops of
+    ``crop_size``; a final tail window is appended when needed so the last base
+    is covered.
+    """
+    if stride == 0 or seq_len <= crop_size:
+        return [0]
+    starts = list(range(0, seq_len - crop_size + 1, stride))
+    if starts[-1] + crop_size < seq_len:
+        starts.append(seq_len - crop_size)
+    return starts
+
+
+def _generate_crops(seq_len: int, crop_sizes: list[int], stride: int):
+    """Generate (crop_size, start, length) tuples for one sequence.
+
+    Yields one record per crop, ordered by ``crop_sizes`` then by start index.
+    """
+    for crop_size in crop_sizes:
+        starts = _crop_starts(seq_len, crop_size, stride)
+        for start in starts:
+            length = min(crop_size, seq_len - start)
+            yield crop_size, start, length
+
+
+def _pad_array(arr: np.ndarray, target_len: int, pad_value: int | float) -> np.ndarray:
+    """Pad a variable-length encoded array along its last axis.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Encoded crop with shape ``(..., length)``.
+    target_len : int
+        Desired length of the last axis.
+    pad_value : int | float
+        Value used for padding; must match ``arr.dtype``.
+
+    Returns
+    -------
+    np.ndarray
+        Array with shape ``(..., target_len)``.
+    """
+    if arr.shape[-1] >= target_len:
+        return arr[..., :target_len]
+    pad_shape = list(arr.shape)
+    pad_shape[-1] = target_len - arr.shape[-1]
+    pad = np.full(pad_shape, pad_value, dtype=arr.dtype)
+    return np.concatenate([arr, pad], axis=-1)
+
+
+# ---------------------------------------------------------------------------
 # TFRecord helpers
 # ---------------------------------------------------------------------------
 def _int64_feature(value):
