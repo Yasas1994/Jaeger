@@ -71,6 +71,7 @@ def _load_numpy_dataset(
     nucleotide_onehot_map: dict[str, list[float]] | None = None,
     num_classes: int | None = None,
     one_hot_labels: bool = True,
+    buffer_size: int | None = None,
 ) -> tf.data.Dataset:
     """Load a unified NPZ file and return a ``tf.data.Dataset``.
 
@@ -82,7 +83,7 @@ def _load_numpy_dataset(
         One of ``"translated"``, ``"nucleotide"``, or ``"both"``.
     seq_onehot:
         If True and the stored sequence array is integer-encoded, convert it to
-        one-hot floats on the fly.
+        one-hot floats.
     codon_depth:
         Depth to use for translated one-hot conversion. If None, the depth is
         inferred from the ``codon_map`` entry stored in the NPZ.
@@ -94,6 +95,11 @@ def _load_numpy_dataset(
         ``one_hot_labels`` is True.
     one_hot_labels:
         Convert integer labels to one-hot float vectors.
+    buffer_size:
+        If provided and positive, integer-to-one-hot conversion is performed
+        batch-wise in the ``tf.data`` pipeline instead of materialising the
+        whole one-hot array in memory. This mirrors the CSV loader's
+        sample-by-sample preprocessing and avoids OOM for large NPZs.
 
     Returns
     -------
@@ -109,6 +115,8 @@ def _load_numpy_dataset(
         )
 
     features: dict[str, np.ndarray] = {}
+    onehot_keys: list[str] = []
+    use_batchwise_onehot = buffer_size is not None and buffer_size > 0
 
     if input_type in ("translated", "both"):
         translated = data["translated"]
@@ -118,13 +126,21 @@ def _load_numpy_dataset(
                     codon_map_name = str(data["codon_map"])
                     codon_map = _get_codon_map(codon_map_name)
                     codon_depth = len(codon_map) + 1
-                translated = _one_hot_integer_np(translated, codon_depth)
+                if use_batchwise_onehot:
+                    features["translated"] = translated
+                    onehot_keys.append("translated")
+                else:
+                    translated = _one_hot_integer_np(translated, codon_depth)
+                    features["translated"] = translated
+            else:
+                features["translated"] = translated
         elif translated.ndim != 4:
             raise ValueError(
                 f"Unexpected translated array ndim: {translated.ndim} "
                 "(expected 3 for integer or 4 for one-hot)"
             )
-        features["translated"] = translated
+        else:
+            features["translated"] = translated
 
     if input_type in ("nucleotide", "both"):
         nucleotide = data["nucleotide"]
@@ -134,13 +150,21 @@ def _load_numpy_dataset(
                 lookup = _build_nucleotide_onehot_lookup(
                     nucleotide_map, nucleotide_onehot_map
                 )
-                nucleotide = lookup[nucleotide]
+                if use_batchwise_onehot:
+                    features["nucleotide"] = nucleotide
+                    onehot_keys.append("nucleotide")
+                else:
+                    nucleotide = lookup[nucleotide]
+                    features["nucleotide"] = nucleotide
+            else:
+                features["nucleotide"] = nucleotide
         elif nucleotide.ndim != 4:
             raise ValueError(
                 f"Unexpected nucleotide array ndim: {nucleotide.ndim} "
                 "(expected 3 for integer or 4 for one-hot)"
             )
-        features["nucleotide"] = nucleotide
+        else:
+            features["nucleotide"] = nucleotide
 
     if "labels" in data:
         labels = data["labels"]
@@ -163,7 +187,49 @@ def _load_numpy_dataset(
     if labels.ndim == 1 and num_classes == 1:
         labels = labels[:, np.newaxis]
 
-    # Force the in-memory dataset to live on CPU; otherwise TensorFlow may try to
-    # place the full arrays on the default (GPU) device and OOM for large NPZs.
+    # Keep the source arrays on CPU; the GPU only sees training batches.
     with tf.device("/CPU:0"):
-        return tf.data.Dataset.from_tensor_slices((features, labels))
+        ds = tf.data.Dataset.from_tensor_slices((features, labels))
+
+    if onehot_keys and use_batchwise_onehot:
+        convert_fns: dict[str, tf.types.experimental.PolymorphicFunction] = {}
+
+        if "translated" in onehot_keys:
+            depth = int(codon_depth)  # type: ignore[arg-type]
+
+            def _convert_translated(t: tf.Tensor, depth: int = depth) -> tf.Tensor:
+                t = tf.cast(t, tf.int32)
+                t = tf.where(t < depth, t, 0)
+                mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
+                oh = tf.one_hot(t, depth=depth, dtype=tf.float32)
+                return oh * mask
+
+            convert_fns["translated"] = _convert_translated
+
+        if "nucleotide" in onehot_keys:
+            lookup_t = tf.constant(lookup, dtype=tf.float32)  # type: ignore[possibly-undefined]
+
+            def _convert_nucleotide(
+                n: tf.Tensor, lut: tf.Tensor = lookup_t
+            ) -> tf.Tensor:
+                n = tf.cast(n, tf.int32)
+                return tf.gather(lut, n)
+
+            convert_fns["nucleotide"] = _convert_nucleotide
+
+        def _map_fn(
+            feats: dict[str, tf.Tensor], lbl: tf.Tensor
+        ) -> tuple[dict[str, tf.Tensor], tf.Tensor]:
+            out: dict[str, tf.Tensor] = {}
+            for key, value in feats.items():
+                fn = convert_fns.get(key)
+                out[key] = fn(value) if fn is not None else value
+            return out, lbl
+
+        ds = (
+            ds.batch(buffer_size)
+            .map(_map_fn, num_parallel_calls=tf.data.AUTOTUNE)
+            .unbatch()
+        )
+
+    return ds

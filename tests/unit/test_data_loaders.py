@@ -238,3 +238,86 @@ class TestLoadNumpyDataset:
         assert label.shape == (1,)
         assert label.dtype == tf.float32
         assert set(label.numpy().tolist()).issubset({0.0, 1.0})
+
+    def test_translated_integer_to_onehot_batchwise(
+        self, translated_integer_npz: str
+    ):
+        ds_batch = loaders._load_numpy_dataset(
+            translated_integer_npz,
+            input_type="translated",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+            buffer_size=2,
+        )
+        features, _ = next(iter(ds_batch))
+        assert features["translated"].shape == (6, SEQ_LEN, CODON_DEPTH)
+        assert features["translated"].dtype == tf.float32
+
+    def test_nucleotide_integer_default_onehot_batchwise(
+        self, nucleotide_integer_npz: str
+    ):
+        ds_full = loaders._load_numpy_dataset(
+            nucleotide_integer_npz,
+            input_type="nucleotide",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+        )
+        ds_batch = loaders._load_numpy_dataset(
+            nucleotide_integer_npz,
+            input_type="nucleotide",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+            buffer_size=2,
+        )
+        full_features, _ = next(iter(ds_full))
+        batch_features, _ = next(iter(ds_batch))
+        assert batch_features["nucleotide"].shape == full_features["nucleotide"].shape
+        assert np.allclose(
+            batch_features["nucleotide"].numpy(),
+            full_features["nucleotide"].numpy(),
+        )
+
+    def test_nucleotide_integer_custom_onehot_batchwise(self, tmp_path: Path):
+        path = tmp_path / "nucleotide_custom_batch.npz"
+        nucleotide = np.zeros((NUM_SAMPLES, 2, SEQ_LEN), dtype=np.int32)
+        nucleotide[:, 0, 0] = 1  # A token
+        labels = np.random.randint(0, NUM_CLASSES, size=NUM_SAMPLES, dtype=np.int32)
+        np.savez(
+            path,
+            nucleotide=nucleotide,
+            labels=labels,
+            nucleotide_map='{"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}',
+        )
+
+        custom_map = {
+            "A": [0.0, 1.0, 0.0, 0.0],
+            "G": [1.0, 0.0, 0.0, 0.0],
+            "T": [0.0, 0.0, 0.0, 1.0],
+            "C": [0.0, 0.0, 1.0, 0.0],
+            "N": [0.0, 0.0, 0.0, 0.0],
+        }
+        ds_batch = loaders._load_numpy_dataset(
+            str(path),
+            input_type="nucleotide",
+            seq_onehot=True,
+            nucleotide_onehot_map=custom_map,
+            num_classes=NUM_CLASSES,
+            buffer_size=2,
+        )
+        features, _ = next(iter(ds_batch))
+        assert features["nucleotide"].shape == (2, SEQ_LEN, 4)
+        assert np.allclose(features["nucleotide"].numpy()[0, 0, :], [0.0, 1.0, 0.0, 0.0])
+
+    def test_both_input_type_batchwise(self, both_npz: str):
+        ds_batch = loaders._load_numpy_dataset(
+            both_npz,
+            input_type="both",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+            buffer_size=2,
+        )
+        features, _ = next(iter(ds_batch))
+        assert "translated" in features
+        assert "nucleotide" in features
+        assert features["translated"].shape == (6, SEQ_LEN, CODON_DEPTH)
+        assert features["nucleotide"].shape == (2, SEQ_LEN, 4)

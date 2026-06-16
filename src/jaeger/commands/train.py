@@ -226,6 +226,9 @@ def train_fragment_core(**kwargs):
                         "NumPy format only supports a single .npz file per split; using first: %s",
                         paths[0],
                     )
+                _onehot_buffer = (
+                    _buffer_size if _buffer_size is not None and _buffer_size > 0 else None
+                )
                 _data = _load_numpy_dataset(
                     paths[0],
                     input_type=string_processor_config.get("input_type"),
@@ -236,6 +239,7 @@ def train_fragment_core(**kwargs):
                     ),
                     num_classes=builder.classifier_out_dim,
                     one_hot_labels=True,
+                    buffer_size=_onehot_buffer,
                 )
                 padded_shapes = (
                     tf.nest.map_structure(
@@ -243,9 +247,11 @@ def train_fragment_core(**kwargs):
                     ),
                     _data.element_spec[1].shape,
                 )
+                ds = _data
+                if _onehot_buffer is None:
+                    ds = ds.cache()
                 train_data[k] = (
-                    _data.cache()
-                    .shuffle(
+                    ds.shuffle(
                         buffer_size=_buffer_size if _buffer_size != -1 else 100000,
                     )
                     .padded_batch(
@@ -389,6 +395,9 @@ def train_fragment_core(**kwargs):
                         "NumPy format only supports a single .npz file per split; using first: %s",
                         paths[0],
                     )
+                _onehot_buffer = (
+                    _buffer_size if _buffer_size is not None and _buffer_size > 0 else None
+                )
                 _data = _load_numpy_dataset(
                     paths[0],
                     input_type=string_processor_config.get("input_type"),
@@ -399,6 +408,7 @@ def train_fragment_core(**kwargs):
                     ),
                     num_classes=builder.reliability_out_dim,
                     one_hot_labels=True,
+                    buffer_size=_onehot_buffer,
                 )
                 padded_shapes = (
                     tf.nest.map_structure(
@@ -406,9 +416,11 @@ def train_fragment_core(**kwargs):
                     ),
                     _data.element_spec[1].shape,
                 )
+                ds = _data
+                if _onehot_buffer is None:
+                    ds = ds.cache()
                 rel_train_data[k] = (
-                    _data.cache()
-                    .shuffle(
+                    ds.shuffle(
                         buffer_size=_buffer_size if _buffer_size != -1 else 100000,
                     )
                     .padded_batch(
