@@ -110,7 +110,7 @@ class NMDMerge(tf.keras.layers.Layer):
         self.mode = mode
         self.axis = axis
         self.target_dim = target_dim
-        self.projection_kwargs = projection_kwargs or {}
+        self.projection_kwargs = dict(projection_kwargs or {})
 
     def build(self, input_shape):
         if not isinstance(input_shape, list):
