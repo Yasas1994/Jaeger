@@ -1978,6 +1978,134 @@ class AxialAttention(tf.keras.layers.Layer):
         return cfg
 
 
+class LocalAttention(tf.keras.layers.Layer):
+    """Windowed self-attention along the sequence-length axis.
+
+    Input shape: (batch, frames, length, channels)
+    Output shape: (batch, frames, length, channels)
+
+    Each position attends only to neighbors within ``window_size // 2`` on
+    either side. This is cheaper and more appropriate than full self-attention
+    for short sequences where long-range dependencies are noisy.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        feed_forward_dim: int,
+        window_size: int,
+        dropout_rate: float = 0.1,
+        num_blocks: int = 1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if window_size <= 0:
+            raise ValueError(f"window_size must be positive, got {window_size}")
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.feed_forward_dim = feed_forward_dim
+        self.window_size = window_size
+        self.dropout_rate = dropout_rate
+        self.num_blocks = num_blocks
+        self.supports_masking = True
+
+        self.blocks = []
+        for i in range(num_blocks):
+            self.blocks.append(
+                {
+                    "ln1": tf.keras.layers.LayerNormalization(
+                        epsilon=1e-6, name=f"{self.name}_ln1_{i}"
+                    ),
+                    "mha": tf.keras.layers.MultiHeadAttention(
+                        num_heads=num_heads,
+                        key_dim=embed_dim // num_heads,
+                        dropout=dropout_rate,
+                        name=f"{self.name}_mha_{i}",
+                    ),
+                    "ln2": tf.keras.layers.LayerNormalization(
+                        epsilon=1e-6, name=f"{self.name}_ln2_{i}"
+                    ),
+                    "ffn1": tf.keras.layers.Dense(
+                        feed_forward_dim,
+                        activation="gelu",
+                        name=f"{self.name}_ffn1_{i}",
+                    ),
+                    "ffn2": tf.keras.layers.Dense(
+                        embed_dim, name=f"{self.name}_ffn2_{i}"
+                    ),
+                }
+            )
+
+    def _local_attention_mask(self, length: tf.Tensor):
+        """Return a boolean (1, length, length) mask for the local window."""
+        half_window = self.window_size // 2
+        row = tf.range(length)[:, None]
+        col = tf.range(length)[None, :]
+        mask = tf.abs(row - col) <= half_window
+        return mask[None, ...]
+
+    def call(self, inputs, mask=None, training=None):
+        if self.embed_dim % self.num_heads != 0:
+            raise ValueError(
+                f"embed_dim ({self.embed_dim}) must be divisible by num_heads ({self.num_heads})"
+            )
+
+        shape = tf.shape(inputs)
+        batch = shape[0]
+        frames = shape[1]
+        length = shape[2]
+        channels = shape[3]
+
+        # Reshape to (batch*frames, length, channels) for length-wise attention.
+        x = tf.reshape(inputs, [batch * frames, length, channels])
+
+        attn_mask = self._local_attention_mask(length)
+
+        if mask is not None:
+            # mask: (batch, frames, length) -> (batch*frames, length)
+            seq_mask = tf.reshape(mask, [batch * frames, length])
+            # Combine local window mask with sequence validity mask.
+            key_mask = seq_mask[:, None, :]  # (B*F, 1, L)
+            attn_mask = attn_mask & key_mask
+
+        for block in self.blocks:
+            x_norm = block["ln1"](x)
+            attn = block["mha"](
+                x_norm,
+                x_norm,
+                attention_mask=attn_mask,
+                training=training,
+            )
+            x = x + attn
+
+            x_norm = block["ln2"](x)
+            ffn = block["ffn2"](block["ffn1"](x_norm))
+            x = x + ffn
+
+        return tf.reshape(x, [batch, frames, length, channels])
+
+    def compute_mask(self, inputs, mask=None):
+        return mask
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "embed_dim": self.embed_dim,
+                "num_heads": self.num_heads,
+                "feed_forward_dim": self.feed_forward_dim,
+                "window_size": self.window_size,
+                "dropout_rate": self.dropout_rate,
+                "num_blocks": self.num_blocks,
+            }
+        )
+        return config
+
+
 def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
     """
     Build a sequential stack of ResidualBlock layers as a Keras functional submodel.

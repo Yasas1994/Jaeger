@@ -134,3 +134,37 @@ class TestMaskedGlobalAvgPooling:
         )
         pooler = builder._get_pooler("masked_average")
         assert pooler is layers.MaskedGlobalAvgPooling
+
+
+class TestLocalAttention:
+    def test_output_shape(self):
+        x = tf.random.normal((2, 6, 64, 16))
+        mask = tf.ones((2, 6, 64), dtype=tf.bool)
+        layer = layers.LocalAttention(
+            embed_dim=16, num_heads=4, feed_forward_dim=32, window_size=16, num_blocks=2
+        )
+        out = layer(x, mask=mask)
+        assert out.shape.as_list() == [2, 6, 64, 16]
+
+    def test_gradient_flow(self):
+        x = tf.random.normal((2, 6, 32, 8))
+        mask = tf.ones((2, 6, 32), dtype=tf.bool)
+        layer = layers.LocalAttention(
+            embed_dim=8, num_heads=2, feed_forward_dim=16, window_size=8, num_blocks=1
+        )
+        with tf.GradientTape() as tape:
+            tape.watch(x)
+            out = layer(x, mask=mask)
+            loss = tf.reduce_mean(out ** 2)
+        grads = tape.gradient(loss, x)
+        assert grads is not None
+        assert np.all(np.isfinite(grads.numpy()))
+
+    def test_invalid_config_raises(self):
+        x = tf.random.normal((2, 6, 32, 8))
+        mask = tf.ones((2, 6, 32), dtype=tf.bool)
+        layer = layers.LocalAttention(
+            embed_dim=8, num_heads=3, feed_forward_dim=16, window_size=8
+        )
+        with pytest.raises(ValueError):
+            layer(x, mask=mask)
