@@ -108,3 +108,44 @@ def test_multiple_nmds_concat_merge(base_config):
         assert list(nmd_out.shape) == [None, 24]
         rel_in = models["reliability_head"].input
         assert list(rel_in.shape) == [None, 24]
+
+
+def test_reliability_input_shape_mismatch_raises(base_config):
+    base_config["model"]["reliability_model"] = {
+        "merge": {"mode": "sum", "target_dim": 8},
+        "input_shape": 999,
+        "hidden_layers": [
+            {
+                "name": "dense",
+                "config": {"units": 1, "activation": None, "dtype": "float32"},
+            }
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        base_config["training"]["model_saving"]["path"] = tmp
+        builder = DynamicModelBuilder(base_config)
+        with pytest.raises(ValueError, match="does not match"):
+            builder.build_fragment_classifier()
+
+
+def test_missing_nmd_raises_when_reliability_configured(base_config):
+    base_config["model"]["representation_learner"]["hidden_layers"] = [
+        {"name": "masked_conv1d", "config": {"filters": 16, "kernel_size": 3}},
+        {"name": "activation", "config": {"activation": "gelu"}},
+    ]
+    base_config["model"]["classifier"]["input_shape"] = 16
+    base_config["model"]["reliability_model"] = {
+        "merge": {"mode": "concat"},
+        "input_shape": 16,
+        "hidden_layers": [
+            {
+                "name": "dense",
+                "config": {"units": 1, "activation": None, "dtype": "float32"},
+            }
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        base_config["training"]["model_saving"]["path"] = tmp
+        builder = DynamicModelBuilder(base_config)
+        with pytest.raises(ValueError, match="no NMD tensor"):
+            builder.build_fragment_classifier()

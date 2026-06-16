@@ -346,16 +346,36 @@ class DynamicModelBuilder:
 
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
-            input_shape = (self.model_cfg["reliability_model"].get("input_shape"),)
+            reliability_cfg = self.model_cfg["reliability_model"]
+            input_shape = (reliability_cfg.get("input_shape"),)
             inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
             x_reliability = self._build_block(
-                inputs, self.model_cfg["reliability_model"], prefix="reliability"
+                inputs, reliability_cfg, prefix="reliability"
             )
             models["reliability_head"] = tf.keras.Model(
                 inputs=inputs, outputs=x_reliability, name="reliability_head"
             )
-            x = models["rep_model"].output[1]
-            x = models["reliability_head"](x)
+
+            rep_out = models["rep_model"].output
+            if not isinstance(rep_out, (list, tuple)) or len(rep_out) < 2:
+                raise ValueError(
+                    "reliability_model is configured but the representation learner "
+                    "produced no NMD tensor. Add an `nmd` layer or set "
+                    "return_nmd: true on a layer that supports it."
+                )
+            nmd = rep_out[1]
+            expected_dim = reliability_cfg.get("input_shape")
+            actual_dim = tf.keras.backend.int_shape(nmd)[-1]
+            if (
+                expected_dim is not None
+                and actual_dim is not None
+                and actual_dim != expected_dim
+            ):
+                raise ValueError(
+                    f"Merged NMD dimension ({actual_dim}) does not match "
+                    f"reliability_model.input_shape ({expected_dim})."
+                )
+            x = models["reliability_head"](nmd)
             models["jaeger_reliability"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_reliability"
             )
