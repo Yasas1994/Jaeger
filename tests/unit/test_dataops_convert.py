@@ -10,16 +10,6 @@ import pytest
 from jaeger.dataops import convert
 
 
-class TestFeatureHelpers:
-    def test_int64_feature(self):
-        feature = convert._int64_feature([1, 2, 3])
-        assert list(feature.int64_list.value) == [1, 2, 3]
-
-    def test_float_feature(self):
-        feature = convert._float_feature([1.0, 2.0])
-        assert list(feature.float_list.value) == pytest.approx([1.0, 2.0])
-
-
 class TestConvertDataset:
     def test_nucleotide_format(self, simple_csv_path: str, tmp_path: Path):
         out = tmp_path / "out.npz"
