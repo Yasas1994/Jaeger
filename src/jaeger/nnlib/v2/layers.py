@@ -1121,6 +1121,121 @@ class MaskedConv1D(tf.keras.layers.Layer):
             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
 
+class MultiScaleConv1D(tf.keras.layers.Layer):
+    """Parallel masked 1D convolutions at multiple scales.
+
+    Input shape: (batch, frames, length, channels)
+    Output shape: (batch, frames, length, total_filters) for merge="concat", or
+                  (batch, frames, length, branch_filters) for merge="add".
+
+    Each branch is configured by a dict passed to `MaskedConv1D`. Branch
+    sequence lengths must align, which is enforced by using ``padding="same"``
+    and ``strides=1`` by default.
+    """
+
+    def __init__(
+        self,
+        branches: list[dict],
+        merge: str = "concat",
+        kernel_initializer: str | tf.keras.initializers.Initializer = "glorot_uniform",
+        kernel_regularizer: str | tf.keras.regularizers.Regularizer | None = None,
+        use_bias: bool = True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.branches = list(branches)
+        self.merge = merge.lower()
+        self.kernel_initializer = kernel_initializer
+        self.kernel_regularizer = kernel_regularizer
+        self.use_bias = use_bias
+        self.supports_masking = True
+        self._convs: list[MaskedConv1D] = []
+
+        if self.merge not in {"concat", "add"}:
+            raise ValueError(f"merge must be 'concat' or 'add', got {merge!r}")
+
+    def _resolve(self, value, kind: str):
+        """Convert string regularizer/initializer names to objects."""
+        if kind == "regularizer" and isinstance(value, str):
+            return tf.keras.regularizers.get(value)
+        if kind == "initializer" and isinstance(value, str):
+            return tf.keras.initializers.get(value)
+        return value
+
+    def build(self, input_shape):
+        if self.merge == "add":
+            filters = [b.get("filters") for b in self.branches]
+            if len(set(filters)) != 1:
+                raise ValueError(
+                    "All branches must have the same filters when merge='add'"
+                )
+
+        for i, cfg in enumerate(self.branches):
+            branch_cfg = dict(cfg)
+            branch_cfg.setdefault("padding", "same")
+            branch_cfg.setdefault("strides", 1)
+            branch_cfg.setdefault("name", f"{self.name}_branch_{i}")
+            branch_cfg.setdefault(
+                "kernel_initializer",
+                self._resolve(self.kernel_initializer, "initializer"),
+            )
+            branch_cfg.setdefault(
+                "kernel_regularizer",
+                self._resolve(self.kernel_regularizer, "regularizer"),
+            )
+            branch_cfg.setdefault("use_bias", self.use_bias)
+            self._convs.append(MaskedConv1D(**branch_cfg))
+        super().build(input_shape)
+
+    def call(self, inputs, mask=None):
+        outputs = [conv(inputs, mask=mask) for conv in self._convs]
+        if self.merge == "concat":
+            x = tf.concat(outputs, axis=-1)
+        else:
+            x = tf.add_n(outputs)
+        self._output_mask = mask
+        return x
+
+    def compute_mask(self, inputs, mask=None):
+        return mask
+
+    def compute_output_shape(self, input_shape):
+        if self.merge == "concat":
+            total = sum(b.get("filters", 0) for b in self.branches)
+        else:
+            total = self.branches[0].get("filters", 0)
+        return (input_shape[0], input_shape[1], input_shape[2], total)
+
+    def get_config(self):
+        config = super().get_config()
+
+        def _serialize(value, kind):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if kind == "initializer":
+                return tf.keras.initializers.serialize(value)
+            if kind == "regularizer":
+                return tf.keras.regularizers.serialize(value)
+            return value
+
+        config.update(
+            {
+                "branches": self.branches,
+                "merge": self.merge,
+                "kernel_initializer": _serialize(
+                    self._resolve(self.kernel_initializer, "initializer"), "initializer"
+                ),
+                "kernel_regularizer": _serialize(
+                    self._resolve(self.kernel_regularizer, "regularizer"), "regularizer"
+                ),
+                "use_bias": self.use_bias,
+            }
+        )
+        return config
+
+
 # class ResidualBlock(tf.keras.layers.Layer):
 #     """The Residual block of ResNet models."""
 
