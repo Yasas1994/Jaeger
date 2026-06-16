@@ -72,7 +72,7 @@ class TestConvertDataset:
 
 
 class TestMapHelpers:
-    def test_get_codon_map_codom_id(self):
+    def test_get_codon_map_codon_id(self):
         from jaeger.dataops.convert import _get_codon_map
 
         mapping = _get_codon_map("codon_id")
