@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from functools import partial
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import numpy as np
@@ -734,6 +734,12 @@ def _convert_to_npz(
     if not lines:
         raise ValueError(f"Input file is empty: {input_path}")
 
+    if num_workers is None:
+        num_workers = cpu_count()
+    if len(lines) < 1000:
+        num_workers = 1
+    num_workers = max(1, min(num_workers, len(lines)))
+
     nucleotide_lookups = _build_nucleotide_lookups(nucleotide_map)
     _, ascii_lut, comp_lut = _build_numba_lookups()
 
@@ -880,8 +886,10 @@ def convert_dataset(
     num_classes : int, optional
         Number of output classes (default: 3).
     num_workers : int | None, optional
-        Number of parallel workers for CPU-bound encoding. ``None`` processes
-        the file in a single worker (default: None).
+        Number of parallel workers for CPU-bound encoding. ``None`` uses all
+        CPUs (default: None). For very small datasets (< 1000 samples) the
+        converter falls back to a single worker to avoid multiprocessing
+        overhead.
     one_hot : bool, optional
         Encode nucleotide crops as one-hot float tensors instead of integer
         tokens (default: False).
