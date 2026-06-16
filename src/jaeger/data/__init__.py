@@ -41,11 +41,7 @@ from jaeger.seqops.io import fragment_generator, fragment_generator_lib
 from jaeger.seqops.encode import process_string_train, process_string_inference
 
 # Dataset loaders
-from jaeger.data.loaders import (
-    _load_numpy_full_dataset as load_numpy_full,
-    _load_numpy_raw_dataset as load_numpy_raw,
-    _load_numpy_raw_variable_dataset as load_numpy_raw_variable,
-)
+from jaeger.data.loaders import _load_numpy_dataset as load_numpy_dataset
 
 # Public converter API
 from jaeger.dataops.convert import convert_dataset
@@ -79,9 +75,7 @@ __all__ = [
     "process_string_train",
     "process_string_inference",
     # Loaders
-    "load_numpy_full",
-    "load_numpy_raw",
-    "load_numpy_raw_variable",
+    "load_numpy_dataset",
     # Converters
     "convert_dataset",
 ]

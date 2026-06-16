@@ -23,12 +23,7 @@ from jaeger.nnlib.builder import DynamicModelBuilder, check_files
 from jaeger.seqops.encode import process_string_train
 from jaeger.utils.misc import load_model_config, numerize
 from jaeger.utils.logging import get_logger
-from jaeger.data.tfrecord import _make_parse_tfrecord_fn
-from jaeger.data.loaders import (
-    _load_numpy_raw_dataset,
-    _load_numpy_raw_variable_dataset,
-    _load_numpy_full_dataset,
-)
+from jaeger.data.loaders import _load_numpy_dataset
 
 try:
     from icecream import ic
@@ -224,48 +219,29 @@ def train_fragment_core(**kwargs):
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
-            elif data_format == "tfrecord":
-                logger.info(f"Loading {k} data from TFRecord: {paths}")
-                _data = tf.data.TFRecordDataset(
-                    paths, num_parallel_reads=tf.data.AUTOTUNE
-                )
-                parse_fn = _make_parse_tfrecord_fn(
+            elif data_format == "numpy":
+                logger.info(f"Loading {k} data from NumPy: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_dataset(
+                    paths[0],
                     input_type=string_processor_config.get("input_type"),
-                    use_embedding_layer=string_processor_config.get(
-                        "use_embedding_layer", False
-                    ),
+                    seq_onehot=string_processor_config.get("seq_onehot"),
                     codon_depth=string_processor_config.get("codon_depth"),
-                    crop_size=string_processor_config.get("crop_size"),
+                    nucleotide_onehot_map=string_processor_config.get(
+                        "nucleotide_onehot_map"
+                    ),
                     num_classes=builder.classifier_out_dim,
+                    one_hot_labels=True,
                 )
-                train_data[k] = (
-                    _data.map(parse_fn, num_parallel_calls=tf.data.AUTOTUNE)
-                    .cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy_raw":
-                logger.info(f"Loading {k} data from NumPy raw: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy raw format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_raw_dataset(
-                    paths[0],
-                    crop_size=string_processor_config.get("crop_size"),
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    num_classes=builder.classifier_out_dim,
-                    shuffle=string_processor_config.get("shuffle"),
-                    mutate=string_processor_config.get("mutate"),
-                    mutation_rate=string_processor_config.get("mutation_rate"),
-                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
+                padded_shapes = (
+                    tf.nest.map_structure(
+                        lambda spec: spec.shape, _data.element_spec[0]
+                    ),
+                    _data.element_spec[1].shape,
                 )
                 train_data[k] = (
                     _data.cache()
@@ -274,71 +250,14 @@ def train_fragment_core(**kwargs):
                     )
                     .padded_batch(
                         batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            {"translated": [6, None]},
-                            [builder.classifier_out_dim],
-                        ),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy_raw_variable":
-                logger.info(f"Loading {k} data from NumPy raw variable: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy raw variable format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_raw_variable_dataset(
-                    paths[0],
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    num_classes=builder.classifier_out_dim,
-                    shuffle=string_processor_config.get("shuffle"),
-                    mutate=string_processor_config.get("mutate"),
-                    mutation_rate=string_processor_config.get("mutation_rate"),
-                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
-                )
-                train_data[k] = (
-                    _data.cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            {"translated": [6, None]},
-                            [builder.classifier_out_dim],
-                        ),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy_full":
-                logger.info(f"Loading {k} data from NumPy full: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy full format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_full_dataset(paths[0])
-                train_data[k] = (
-                    _data.cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            {"translated": [6, None]},
-                            [builder.classifier_out_dim],
-                        ),
+                        padded_shapes=padded_shapes,
                         drop_remainder=multi_gpu,
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
             else:
                 raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy_raw', 'numpy_raw_variable', or 'numpy_full'."
+                    f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
                 )
 
         # ============ check convergence & train classifier ===========
@@ -463,48 +382,29 @@ def train_fragment_core(**kwargs):
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
-            elif data_format == "tfrecord":
-                logger.info(f"Loading reliability {k} data from TFRecord: {paths}")
-                _data = tf.data.TFRecordDataset(
-                    paths, num_parallel_reads=tf.data.AUTOTUNE
-                )
-                parse_fn = _make_parse_tfrecord_fn(
+            elif data_format == "numpy":
+                logger.info(f"Loading reliability {k} data from NumPy: {paths}")
+                if len(paths) > 1:
+                    logger.warning(
+                        "NumPy format only supports a single .npz file per split; using first: %s",
+                        paths[0],
+                    )
+                _data = _load_numpy_dataset(
+                    paths[0],
                     input_type=string_processor_config.get("input_type"),
-                    use_embedding_layer=string_processor_config.get(
-                        "use_embedding_layer", False
-                    ),
+                    seq_onehot=string_processor_config.get("seq_onehot"),
                     codon_depth=string_processor_config.get("codon_depth"),
-                    crop_size=string_processor_config.get("crop_size"),
+                    nucleotide_onehot_map=string_processor_config.get(
+                        "nucleotide_onehot_map"
+                    ),
                     num_classes=builder.reliability_out_dim,
+                    one_hot_labels=True,
                 )
-                rel_train_data[k] = (
-                    _data.map(parse_fn, num_parallel_calls=tf.data.AUTOTUNE)
-                    .cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy_raw":
-                logger.info(f"Loading reliability {k} data from NumPy raw: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy raw format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_raw_dataset(
-                    paths[0],
-                    crop_size=string_processor_config.get("crop_size"),
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    num_classes=builder.reliability_out_dim,
-                    shuffle=string_processor_config.get("shuffle"),
-                    mutate=string_processor_config.get("mutate"),
-                    mutation_rate=string_processor_config.get("mutation_rate"),
-                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
+                padded_shapes = (
+                    tf.nest.map_structure(
+                        lambda spec: spec.shape, _data.element_spec[0]
+                    ),
+                    _data.element_spec[1].shape,
                 )
                 rel_train_data[k] = (
                     _data.cache()
@@ -513,73 +413,14 @@ def train_fragment_core(**kwargs):
                     )
                     .padded_batch(
                         batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            {"translated": [6, None]},
-                            [builder.reliability_out_dim],
-                        ),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy_raw_variable":
-                logger.info(
-                    f"Loading reliability {k} data from NumPy raw variable: {paths}"
-                )
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy raw variable format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_raw_variable_dataset(
-                    paths[0],
-                    ngram_width=string_processor_config.get("ngram_width"),
-                    num_classes=builder.reliability_out_dim,
-                    shuffle=string_processor_config.get("shuffle"),
-                    mutate=string_processor_config.get("mutate"),
-                    mutation_rate=string_processor_config.get("mutation_rate"),
-                    shuffle_frames=string_processor_config.get("shuffle_frames", False),
-                )
-                rel_train_data[k] = (
-                    _data.cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            {"translated": [6, None]},
-                            [builder.reliability_out_dim],
-                        ),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy_full":
-                logger.info(f"Loading reliability {k} data from NumPy full: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy full format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _data = _load_numpy_full_dataset(paths[0])
-                rel_train_data[k] = (
-                    _data.cache()
-                    .shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            {"translated": [6, None]},
-                            [builder.reliability_out_dim],
-                        ),
+                        padded_shapes=padded_shapes,
                         drop_remainder=multi_gpu,
                     )
                     .prefetch(tf.data.AUTOTUNE)
                 )
             else:
                 raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv', 'tfrecord', 'numpy_raw', 'numpy_raw_variable', or 'numpy_full'."
+                    f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
                 )
 
         # ============== check convergence & train reliability ========

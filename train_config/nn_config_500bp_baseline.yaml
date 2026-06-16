@@ -27,9 +27,8 @@ model:
     embedding_regularizer: l2
     embedding_regularizer_w: 1.0e-05
   string_processor:
-    # data_format: csv | tfrecord | numpy
+    # data_format: csv | numpy
     # csv: live preprocessing from CSV (default, backward compatible)
-    # tfrecord: preprocessed TFRecord files (faster loading)
     # numpy: preprocessed NumPy .npz files (fastest, in-memory)
     data_format: csv
     seq_onehot: false

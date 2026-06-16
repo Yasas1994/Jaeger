@@ -122,7 +122,7 @@ def test_builder_knows_nmd_layer():
                 "embedding_regularizer_w": 1e-05,
             },
             "string_processor": {
-                "data_format": "numpy_full",
+                "data_format": "numpy",
                 "seq_onehot": False,
                 "codon": "CODON",
                 "codon_id": "CODON_ID",

@@ -957,6 +957,7 @@ class DynamicModelBuilder:
         }
         _config = dict(self.model_cfg.get("embedding", {}))
         _config.update(self.model_cfg.get("string_processor", {}))
+        _config["data_format"] = _config.get("data_format", "csv")
         _config["seq_onehot"] = _config.get("seq_onehot", False)
         if _config["input_type"] == "translated":
             _config["codon"] = _map.get(_config.get("codon"))

@@ -37,7 +37,7 @@ def base_config():
                 "embedding_regularizer_w": 1.0e-05,
             },
             "string_processor": {
-                "data_format": "numpy_full",
+                "data_format": "numpy",
                 "seq_onehot": False,
                 "codon": "CODON",
                 "codon_id": "CODON_ID",

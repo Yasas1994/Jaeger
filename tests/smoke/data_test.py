@@ -38,9 +38,7 @@ from jaeger.data import (
     fragment_generator_lib,
     # Preprocessing
     process_string_train,
-    load_numpy_full,
-    load_numpy_raw,
-    load_numpy_raw_variable,
+    load_numpy_dataset,
 )
 from jaeger.seqops.encode import (
     _build_codon_lookup_table,
@@ -102,7 +100,9 @@ with tempfile.NamedTemporaryFile(mode="w", suffix=".fasta", delete=False) as f:
     fasta_path = f.name
 
 try:
-    gen = fragment_generator(fasta_path, fragsize=10, stride=5, num=2, no_progress=True, dustmask=False)
+    gen = fragment_generator(
+        fasta_path, fragsize=10, stride=5, num=2, no_progress=True, dustmask=False
+    )
     frags = list(gen)
     assert len(frags) > 0, "fragment_generator yielded no fragments"
     print(f"✓ FASTA: fragment_generator yielded {len(frags)} fragments")
@@ -153,9 +153,7 @@ assert lookup.dtype == tf.int32
 print("✓ Raw processors: codon lookup table shape correct")
 
 # _make_process_raw_sequence_fn
-process_fn = _make_process_raw_sequence_fn(
-    crop_size=500, ngram_width=3, num_classes=3
-)
+process_fn = _make_process_raw_sequence_fn(crop_size=500, ngram_width=3, num_classes=3)
 seq_int8 = np.zeros(500, dtype=np.int8)
 seq_int8[:12] = [0, 3, 2, 1, 0, 3, 2, 1, 0, 3, 2, 1]  # ATGCATGCATGC
 label = np.array([1.0, 0.0, 0.0], dtype=np.float32)
@@ -166,9 +164,7 @@ assert out_label.shape == (3,)
 print("✓ Raw processors: _make_process_raw_sequence_fn works")
 
 # _make_process_variable_sequence_fn
-process_var_fn = _make_process_variable_sequence_fn(
-    ngram_width=3, num_classes=3
-)
+process_var_fn = _make_process_variable_sequence_fn(ngram_width=3, num_classes=3)
 seq_int8_var = np.zeros(500, dtype=np.int8)
 seq_int8_var[:12] = [0, 3, 2, 1, 0, 3, 2, 1, 0, 3, 2, 1]
 features_var, out_label_var = process_var_fn(seq_int8_var, 12, label)
@@ -201,59 +197,57 @@ print("✓ TFRecord: parse function created")
 
 # ─── Test 7: NumPy loaders ───────────────────────────────────────────────
 
-# Create a minimal numpy_full dataset
+# Create a minimal unified NPZ dataset with integer translated features
 seq_len = 500 // 3 - 1  # 165
 n_samples = 10
 seqs = np.random.randint(1, 65, size=(n_samples, 6, seq_len), dtype=np.int32)
-labels = np.eye(3, dtype=np.float32)[np.random.randint(0, 3, n_samples)]
+labels = np.random.randint(0, 3, size=n_samples, dtype=np.int32)
 
 with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
     npz_path = f.name
-np.savez_compressed(npz_path, translated=seqs, label=labels)
+np.savez_compressed(npz_path, translated=seqs, labels=labels, codon_map="codon_id")
 
 try:
-    ds = load_numpy_full(npz_path)
+    ds = load_numpy_dataset(
+        npz_path,
+        input_type="translated",
+        seq_onehot=False,
+        num_classes=3,
+    )
     sample = next(iter(ds))
     assert "translated" in sample[0]
     assert sample[1].shape == (3,)
-    print("✓ Loaders: load_numpy_full works")
+    print("✓ Loaders: load_numpy_dataset works")
 finally:
     os.unlink(npz_path)
 
-# Create a minimal numpy_raw dataset
-raw_seqs = np.random.randint(0, 5, size=(n_samples, 500), dtype=np.int8)
-raw_labels = np.eye(3, dtype=np.float32)[np.random.randint(0, 3, n_samples)]
+# Create a minimal unified NPZ dataset with integer nucleotide features
+nuc_seqs = np.random.randint(0, 5, size=(n_samples, 2, 500), dtype=np.int32)
+nuc_labels = np.random.randint(0, 3, size=n_samples, dtype=np.int32)
 
 with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
-    npz_raw_path = f.name
-np.savez_compressed(npz_raw_path, sequences=raw_seqs, labels=raw_labels)
+    npz_nuc_path = f.name
+np.savez_compressed(
+    npz_nuc_path,
+    nucleotide=nuc_seqs,
+    labels=nuc_labels,
+    nucleotide_map='{"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}',
+)
 
 try:
-    ds_raw = load_numpy_raw(npz_raw_path, crop_size=500, ngram_width=3, num_classes=3)
-    sample_raw = next(iter(ds_raw))
-    assert "translated" in sample_raw[0]
-    assert sample_raw[1].shape == (3,)
-    print("✓ Loaders: load_numpy_raw works")
+    ds_nuc = load_numpy_dataset(
+        npz_nuc_path,
+        input_type="nucleotide",
+        seq_onehot=True,
+        num_classes=3,
+    )
+    sample_nuc = next(iter(ds_nuc))
+    assert "nucleotide" in sample_nuc[0]
+    assert sample_nuc[0]["nucleotide"].shape == (2, 500, 4)
+    assert sample_nuc[1].shape == (3,)
+    print("✓ Loaders: load_numpy_dataset nucleotide works")
 finally:
-    os.unlink(npz_raw_path)
-
-# Create a minimal numpy_raw_variable dataset
-var_seqs = np.random.randint(0, 5, size=(n_samples, 500), dtype=np.int8)
-var_lengths = np.random.randint(100, 500, size=n_samples, dtype=np.int32)
-var_labels = np.eye(3, dtype=np.float32)[np.random.randint(0, 3, n_samples)]
-
-with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
-    npz_var_path = f.name
-np.savez_compressed(npz_var_path, sequences=var_seqs, lengths=var_lengths, labels=var_labels)
-
-try:
-    ds_var = load_numpy_raw_variable(npz_var_path, ngram_width=3, num_classes=3)
-    sample_var = next(iter(ds_var))
-    assert "translated" in sample_var[0]
-    assert sample_var[1].shape == (3,)
-    print("✓ Loaders: load_numpy_raw_variable works")
-finally:
-    os.unlink(npz_var_path)
+    os.unlink(npz_nuc_path)
 
 # ─── Test 8: OOD utilities ─────────────────────────────────────────────────
 
