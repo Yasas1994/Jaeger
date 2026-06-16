@@ -218,3 +218,23 @@ class TestLoadNumpyDataset:
         )
         _, label = next(iter(ds))
         assert label.shape == (NUM_CLASSES,)
+
+    def test_binary_labels_num_classes_one(self, tmp_path: Path):
+        """Binary reliability heads need scalar float labels, not one-hot."""
+        path = tmp_path / "binary.npz"
+        translated = np.random.randint(
+            0, CODON_DEPTH, size=(NUM_SAMPLES, 6, SEQ_LEN), dtype=np.int32
+        )
+        labels = np.array([0, 1, 0, 1], dtype=np.int32)
+        np.savez(path, translated=translated, labels=labels, codon_map="codon_id")
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=1,
+            one_hot_labels=True,
+        )
+        _, label = next(iter(ds))
+        assert label.shape == (1,)
+        assert label.dtype == tf.float32
+        assert set(label.numpy().tolist()).issubset({0.0, 1.0})

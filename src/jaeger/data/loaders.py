@@ -152,8 +152,15 @@ def _load_numpy_dataset(
     if (
         one_hot_labels
         and num_classes is not None
+        and num_classes > 1
         and (labels.ndim == 1 or np.issubdtype(labels.dtype, np.integer))
     ):
         labels = np.eye(num_classes, dtype=np.float32)[labels]
+    else:
+        labels = labels.astype(np.float32)
+
+    # Binary heads expect shape (N, 1), multi-class heads expect (N, num_classes).
+    if labels.ndim == 1 and num_classes == 1:
+        labels = labels[:, np.newaxis]
 
     return tf.data.Dataset.from_tensor_slices((features, labels))
