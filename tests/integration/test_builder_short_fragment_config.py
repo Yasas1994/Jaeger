@@ -5,10 +5,10 @@ from __future__ import annotations
 from jaeger.nnlib.builder import DynamicModelBuilder
 
 
-def test_multiscale_layer_registered():
+def test_local_attention_layer_registered():
     config = {
         "model": {
-            "name": "test_multiscale",
+            "name": "test_local_attention",
             "experiment": "test",
             "seed": 42,
             "classifier_out_dim": 3,
@@ -51,8 +51,20 @@ def test_multiscale_layer_registered():
                     },
                     {"name": "masked_batchnorm", "config": {"return_nmd": False}},
                     {"name": "activation", "config": {"activation": "gelu"}},
+                    {
+                        "name": "local_attention",
+                        "config": {
+                            "embed_dim": 16,
+                            "num_heads": 2,
+                            "feed_forward_dim": 32,
+                            "window_size": 16,
+                            "dropout_rate": 0.1,
+                            "num_blocks": 1,
+                        },
+                    },
+                    {"name": "masked_layernorm"},
                 ],
-                "pooling": "average",
+                "pooling": "masked_average",
             },
             "classifier": {
                 "input_shape": 16,
