@@ -945,19 +945,18 @@ def convert(**kwargs):
 @utils.command(
     context_settings=dict(ignore_unknown_options=True, show_default=True),
     help="""
-            Convert training data to optimized formats for faster loading.
+            Convert training data to an optimized NPZ dataset for faster loading.
             Preprocesses CSV data once so training can skip live preprocessing.
 
             usage
             -----
 
-            jaeger utils optimize-data -i train.csv -o train.npz --format numpy_full
+            jaeger utils optimize-data -i train.csv -o train.npz --format translated
 
             Supported formats:
-              tfrecord            - TFRecord with preprocessed tensors
-              numpy_raw           - int8 sequences + TF preprocessing at train time
-              numpy_full          - fully preprocessed, fastest loading
-              numpy_raw_variable  - variable-length int8 sequences
+              nucleotide  - 2-strand integer or one-hot nucleotide encoding
+              translated  - 6-frame integer or one-hot codon encoding
+              both        - store both nucleotide and translated arrays
         """,
 )
 @click.option(
@@ -965,30 +964,38 @@ def convert(**kwargs):
     "--input",
     type=click.Path(exists=True),
     required=True,
-    help="Path to input CSV file",
+    help="Path to input CSV file (label,sequence)",
 )
 @click.option(
     "-o",
     "--output",
     type=str,
     required=True,
-    help="Path to output file",
+    help="Path to output .npz file",
 )
 @click.option(
     "--format",
     type=click.Choice(
-        ["tfrecord", "numpy_raw", "numpy_full", "numpy_raw_variable"],
+        ["nucleotide", "translated", "both"],
         case_sensitive=False,
     ),
     required=True,
-    help="Output format",
+    help="Output representation",
 )
 @click.option(
     "--crop-size",
     type=int,
-    default=500,
+    multiple=True,
+    default=(500,),
     show_default=True,
-    help="Sequence crop size",
+    help="Crop length(s); can be given multiple times",
+)
+@click.option(
+    "--stride",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Step between crops (0 = one crop per sequence)",
 )
 @click.option(
     "--num-classes",
@@ -1004,20 +1011,54 @@ def convert(**kwargs):
     help="Number of parallel workers (default: all CPUs)",
 )
 @click.option(
-    "--use-embedding-layer/--no-embedding-layer",
-    default=True,
+    "--one-hot",
+    is_flag=True,
+    default=False,
     show_default=True,
-    help="Use embedding layer (int indices) vs one-hot (tfrecord only)",
+    help="Output float one-hot tensors instead of integer indices",
+)
+@click.option(
+    "--pad-int",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Padding value for integer outputs",
+)
+@click.option(
+    "--codon-map",
+    type=click.Choice(
+        ["codon_id", "aa_id", "pc5_id", "murphy10_id", "cod_id", "pc2_id"],
+        case_sensitive=False,
+    ),
+    default="codon_id",
+    show_default=True,
+    help="Codon mapping for translated output",
+)
+@click.option(
+    "--nucleotide-map",
+    type=str,
+    default=None,
+    help='JSON mapping for A, C, G, T, N (default: {"A":1,"G":2,"T":3,"C":4,"N":0})',
+)
+@click.option(
+    "--compress",
+    type=click.Choice(
+        ["fast", "default", "none"],
+        case_sensitive=False,
+    ),
+    default="fast",
+    show_default=True,
+    help="NPZ compression level",
 )
 @click.option(
     "--max-length",
     type=int,
     default=5000,
     show_default=True,
-    help="Maximum sequence length (numpy_raw_variable only)",
+    help="Deprecated and ignored",
 )
 def optimize_data(**kwargs):
-    """Convert CSV training data to optimized formats"""
+    """Convert CSV training data to an optimized NPZ dataset."""
     from jaeger.commands.utils import optimize_data_core
 
     optimize_data_core(
@@ -1025,12 +1066,16 @@ def optimize_data(**kwargs):
         output_path=kwargs.get("output"),
         format=kwargs.get("format"),
         crop_size=kwargs.get("crop_size"),
+        stride=kwargs.get("stride"),
         num_classes=kwargs.get("num_classes"),
         num_workers=kwargs.get("num_workers"),
-        use_embedding_layer=kwargs.get("use_embedding_layer"),
+        one_hot=kwargs.get("one_hot"),
+        pad_int=kwargs.get("pad_int"),
+        codon_map=kwargs.get("codon_map"),
+        nucleotide_map=kwargs.get("nucleotide_map"),
+        compress=kwargs.get("compress"),
         max_length=kwargs.get("max_length"),
     )
-    pass
 
 
 @utils.command(
