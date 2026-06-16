@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import json
 from functools import partial
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 
 import numpy as np
+
+from jaeger.utils.logging import get_logger
+
+logger = get_logger(log_file=None, log_path=None, level=3)
 
 # ---------------------------------------------------------------------------
 # Codon / nucleotide lookup helpers
@@ -124,10 +129,11 @@ def _encode_nucleotide_batch_int(
     crop_size,
     ascii_to_user,
     comp_user,
+    pad_int,
 ):
     """Encode a batch of DNA crops to integer nucleotide arrays."""
     n = len(lengths)
-    out = np.zeros((n, 2, crop_size), dtype=np.int32)
+    out = np.full((n, 2, crop_size), pad_int, dtype=np.int32)
 
     for s in range(n):
         length = min(lengths[s], crop_size)
@@ -171,6 +177,7 @@ def _encode_nucleotide_batch(
     ascii_to_oh,
     comp_oh,
     one_hot,
+    pad_int,
 ):
     """Encode a batch of DNA crops to nucleotide integer or one-hot arrays."""
     if one_hot:
@@ -178,7 +185,7 @@ def _encode_nucleotide_batch(
             sequences, lengths, crop_size, ascii_to_oh, comp_oh
         )
     return _encode_nucleotide_batch_int(
-        sequences, lengths, crop_size, ascii_to_user, comp_user
+        sequences, lengths, crop_size, ascii_to_user, comp_user, pad_int
     )
 
 
@@ -580,6 +587,7 @@ def _process_chunk_npz(
     crop_sizes,
     stride,
     one_hot,
+    pad_int,
     nucleotide_lookups,
     codon_lut,
     codon_map_len,
@@ -635,60 +643,73 @@ def _process_chunk_npz(
                 batch_lengths.append(length)
                 batch_labels.append(label)
 
-        if not batch_seqs:
-            continue
+        if batch_seqs:
+            batch = np.stack(batch_seqs, axis=0)
+            lengths_arr = np.array(batch_lengths, dtype=np.int32)
 
-        batch = np.stack(batch_seqs, axis=0)
-        lengths_arr = np.array(batch_lengths, dtype=np.int32)
-
-        if fmt in ("nucleotide", "both"):
-            encoded = _encode_nucleotide_batch(
-                batch,
-                lengths_arr,
-                crop_size,
-                ascii_to_user,
-                comp_user,
-                ascii_to_oh,
-                comp_oh,
-                one_hot,
-            )
-            for i in range(encoded.shape[0]):
-                nucleotide_arrays.append(encoded[i, :, : lengths_arr[i]])
-
-        if fmt in ("translated", "both"):
-            if codon_map_len != 4096:
-                seq_len = crop_size // 3 - 1
-                encoded = _process_batch_numba(
+            if fmt in ("nucleotide", "both"):
+                encoded = _encode_nucleotide_batch(
                     batch,
                     lengths_arr,
                     crop_size,
-                    seq_len,
-                    codon_lut,
-                    comp_lut,
-                    ascii_lut,
+                    ascii_to_user,
+                    comp_user,
+                    ascii_to_oh,
+                    comp_oh,
+                    one_hot,
+                    pad_int,
                 )
-                actual_lengths = _single_codon_actual_lengths(lengths_arr, crop_size)
+                nucleotide_arrays.append(encoded)
+
+            if fmt in ("translated", "both"):
+                if codon_map_len != 4096:
+                    seq_len = crop_size // 3 - 1
+                    encoded = _process_batch_numba(
+                        batch,
+                        lengths_arr,
+                        crop_size,
+                        seq_len,
+                        codon_lut,
+                        comp_lut,
+                        ascii_lut,
+                    )
+                    actual_lengths = _single_codon_actual_lengths(lengths_arr, crop_size)
+                else:
+                    seq_len = max(0, crop_size // 3 - 2)
+                    encoded = _process_batch_numba_dicodon(
+                        batch,
+                        lengths_arr,
+                        crop_size,
+                        seq_len,
+                        standard_codon_lut3,
+                        dicodon_lut,
+                        comp_lut,
+                        ascii_lut,
+                    )
+                    actual_lengths = _dicodon_actual_lengths(lengths_arr, crop_size)
+                translated_arrays.append(encoded)
+                all_translated_lengths.extend(actual_lengths.tolist())
             else:
-                seq_len = max(0, crop_size // 3 - 2)
-                encoded = _process_batch_numba_dicodon(
-                    batch,
-                    lengths_arr,
-                    crop_size,
-                    seq_len,
-                    standard_codon_lut3,
-                    dicodon_lut,
-                    comp_lut,
-                    ascii_lut,
-                )
-                actual_lengths = _dicodon_actual_lengths(lengths_arr, crop_size)
-            for i in range(encoded.shape[0]):
-                translated_arrays.append(encoded[i, :, : actual_lengths[i]])
-            all_translated_lengths.extend(actual_lengths.tolist())
-        else:
-            all_translated_lengths.extend([0] * len(batch_labels))
+                all_translated_lengths.extend([0] * len(batch_labels))
 
-        all_labels.extend(batch_labels)
-        all_lengths.extend(batch_lengths)
+            all_labels.extend(batch_labels)
+            all_lengths.extend(batch_lengths)
+        else:
+            # Keep per-crop-size list length consistent across workers.
+            if fmt in ("nucleotide", "both"):
+                empty_shape = (
+                    (0, 2, crop_size, 4)
+                    if one_hot
+                    else (0, 2, crop_size)
+                )
+                empty_dtype = np.float32 if one_hot else np.int32
+                nucleotide_arrays.append(np.empty(empty_shape, dtype=empty_dtype))
+            if fmt in ("translated", "both"):
+                if codon_map_len != 4096:
+                    seq_len = max(0, crop_size // 3 - 1)
+                else:
+                    seq_len = max(0, crop_size // 3 - 2)
+                translated_arrays.append(np.empty((0, 6, seq_len), dtype=np.int32))
 
     return {
         "nucleotide": nucleotide_arrays,
@@ -739,6 +760,7 @@ def _convert_to_npz(
     if len(lines) < 1000:
         num_workers = 1
     num_workers = max(1, min(num_workers, len(lines)))
+    logger.info(f"Using {num_workers} workers")
 
     nucleotide_lookups = _build_nucleotide_lookups(nucleotide_map)
     _, ascii_lut, comp_lut = _build_numba_lookups()
@@ -754,11 +776,50 @@ def _convert_to_npz(
         standard_codon_lut3 = np.empty(0, dtype=np.int32)
         dicodon_lut = np.empty(0, dtype=np.int32)
 
+    # Warm up Numba functions in the parent process so worker threads use
+    # already-compiled code and don't each pay the compilation cost.
+    if HAS_NUMBA and num_workers > 1:
+        _crop_size = max(crop_sizes) if crop_sizes else 500
+        _warmup = np.full((1, _crop_size), ord("A"), dtype=np.uint8)
+        _warmup_len = np.array([_crop_size], dtype=np.int32)
+        if fmt in ("nucleotide", "both"):
+            _encode_nucleotide_batch(
+                _warmup,
+                _warmup_len,
+                _crop_size,
+                *nucleotide_lookups,
+                one_hot,
+                pad_int,
+            )
+        if fmt in ("translated", "both"):
+            if codon_map_len == 4096:
+                _process_batch_numba_dicodon(
+                    _warmup,
+                    _warmup_len,
+                    _crop_size,
+                    max(0, _crop_size // 3 - 2),
+                    standard_codon_lut3,
+                    dicodon_lut,
+                    comp_lut,
+                    ascii_lut,
+                )
+            else:
+                _process_batch_numba(
+                    _warmup,
+                    _warmup_len,
+                    _crop_size,
+                    _crop_size // 3 - 1,
+                    codon_lut,
+                    comp_lut,
+                    ascii_lut,
+                )
+
     worker_kwargs = {
         "fmt": fmt,
         "crop_sizes": crop_sizes,
         "stride": stride,
         "one_hot": one_hot,
+        "pad_int": pad_int,
         "nucleotide_lookups": nucleotide_lookups,
         "codon_lut": codon_lut,
         "codon_map_len": codon_map_len,
@@ -768,17 +829,29 @@ def _convert_to_npz(
         "comp_lut": comp_lut,
     }
 
-    if num_workers is None or num_workers <= 1:
+    if num_workers <= 1:
         result = _process_chunk_npz(lines, **worker_kwargs)
     else:
         chunk_size = max(1, len(lines) // num_workers)
         chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
         process_fn = partial(_process_chunk_npz, **worker_kwargs)
-        with Pool(num_workers) as pool:
+        with ThreadPool(num_workers) as pool:
             results = pool.map(process_fn, chunks)
         result = {
-            "nucleotide": sum((r["nucleotide"] for r in results), []),
-            "translated": sum((r["translated"] for r in results), []),
+            "nucleotide": [
+                np.concatenate(
+                    [r["nucleotide"][i] for r in results],
+                    axis=0,
+                )
+                for i in range(len(results[0]["nucleotide"]))
+            ],
+            "translated": [
+                np.concatenate(
+                    [r["translated"][i] for r in results],
+                    axis=0,
+                )
+                for i in range(len(results[0]["translated"]))
+            ],
             "labels": np.concatenate([r["labels"] for r in results], axis=0),
             "lengths": np.concatenate([r["lengths"] for r in results], axis=0),
             "translated_lengths": np.concatenate(
@@ -800,12 +873,12 @@ def _convert_to_npz(
             max_len = max(a.shape[-1] for a in arrays)
             if one_hot:
                 padded = [_pad_axis(a, max_len, axis=-1, pad_value=0.0) for a in arrays]
-                nucleotide_arr = np.stack(padded, axis=0)
+                nucleotide_arr = np.concatenate(padded, axis=0)
             else:
                 padded = [
                     _pad_axis(a, max_len, axis=-1, pad_value=pad_int) for a in arrays
                 ]
-                nucleotide_arr = np.stack(padded, axis=0)
+                nucleotide_arr = np.concatenate(padded, axis=0)
             save_dict["nucleotide"] = nucleotide_arr
             save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
         else:
@@ -820,11 +893,11 @@ def _convert_to_npz(
             max_len = max(a.shape[-1] for a in arrays)
             if one_hot:
                 padded = [_pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays]
-                stacked = np.stack(padded, axis=0)
+                stacked = np.concatenate(padded, axis=0)
                 translated_arr = _one_hot_integer(stacked, codon_map_len + 1)
             else:
                 padded = [_pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays]
-                translated_arr = np.stack(padded, axis=0)
+                translated_arr = np.concatenate(padded, axis=0)
             save_dict["translated"] = translated_arr
             save_dict["codon_map"] = codon_map_name
         else:
@@ -925,8 +998,8 @@ def convert_dataset(
 
     nucleotide_map_dict = _parse_nucleotide_map(nucleotide_map)
 
-    print(f"Converting {input_path} -> {output_path}")
-    print(
+    logger.info(f"Converting {input_path} -> {output_path}")
+    logger.info(
         f"Format: {format}, Crop sizes: {crop_sizes}, Stride: {stride}, "
         f"Num classes: {num_classes}"
     )

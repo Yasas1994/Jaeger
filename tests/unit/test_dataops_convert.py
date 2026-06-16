@@ -120,7 +120,7 @@ class TestNucleotideEncoder:
             user_map
         )
         out = _encode_nucleotide_batch(
-            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, False
+            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, False, 0
         )
         assert out.shape == (1, 2, 4)
         # forward strand: A=1, T=3, G=2, C=4
@@ -140,7 +140,7 @@ class TestNucleotideEncoder:
             user_map
         )
         out = _encode_nucleotide_batch(
-            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, True
+            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, True, 0
         )
         assert out.shape == (1, 2, 4, 4)
         assert out[0, 0, 0].tolist() == [1.0, 0.0, 0.0, 0.0]  # A
