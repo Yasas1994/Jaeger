@@ -76,8 +76,8 @@ def _check_onehot_memory(
 
     if estimated_bytes > available_bytes * fraction:
         raise MemoryError(
-            f"Estimated one-hot output requires {estimated_bytes / (1024 ** 3):.1f} GiB, "
-            f"but only {available_bytes / (1024 ** 3):.1f} GiB RAM is available "
+            f"Estimated one-hot output requires {estimated_bytes / (1024**3):.1f} GiB, "
+            f"but only {available_bytes / (1024**3):.1f} GiB RAM is available "
             f"(safety fraction: {fraction:.0%}). "
             "Avoid one-hot encoding for large files; use integer encoding instead "
             "and let the dataloader convert to one-hot at training time."
