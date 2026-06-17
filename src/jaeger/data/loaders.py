@@ -63,6 +63,84 @@ def _build_nucleotide_onehot_lookup(
     return lookup
 
 
+def _is_ragged(data: np.lib.npyio.NpzFile, input_type: str) -> bool:
+    for key in ("nucleotide", "translated"):
+        if input_type in (key, "both") and key in data:
+            arr = data[key]
+            if arr.ndim == 1 and arr.dtype == object:
+                return True
+    return False
+
+
+def _load_ragged_numpy_dataset(
+    data: np.lib.npyio.NpzFile,
+    input_type: str,
+    seq_onehot: bool,
+    codon_depth: int | None,
+    nucleotide_onehot_map: dict[str, list[float]] | None,
+    num_classes: int | None,
+    one_hot_labels: bool,
+) -> tf.data.Dataset:
+    """Load an NPZ where feature arrays are 1-D object arrays of crops."""
+    lookup = None
+    if input_type in ("nucleotide", "both") and seq_onehot:
+        nucleotide_map = json.loads(str(data["nucleotide_map"]))
+        lookup = _build_nucleotide_onehot_lookup(nucleotide_map, nucleotide_onehot_map)
+
+    n = len(data["labels"])
+
+    def _sample_features(i: int) -> dict[str, np.ndarray]:
+        features: dict[str, np.ndarray] = {}
+        if input_type in ("nucleotide", "both"):
+            nuc = data["nucleotide"][i]
+            if seq_onehot and nuc.ndim == 3 and lookup is not None:
+                nuc = lookup[nuc]
+            features["nucleotide"] = nuc
+        if input_type in ("translated", "both"):
+            trans = data["translated"][i]
+            if seq_onehot and trans.ndim == 2 and codon_depth is not None:
+                t = tf.cast(trans, tf.int32)
+                mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
+                oh = tf.one_hot(t, depth=codon_depth, dtype=tf.float32)
+                trans = (oh * mask).numpy()
+            features["translated"] = trans
+        return features
+
+    sample = _sample_features(0)
+    output_signature = (
+        {
+            key: tf.TensorSpec(shape=[None] * arr.ndim, dtype=tf.as_dtype(arr.dtype))
+            for key, arr in sample.items()
+        },
+        tf.TensorSpec(
+            shape=(num_classes,)
+            if one_hot_labels and num_classes and num_classes > 1
+            else (1,)
+            if num_classes == 1
+            else (),
+            dtype=tf.float32,
+        ),
+    )
+
+    def generator():
+        for i in range(n):
+            features = _sample_features(i)
+            label = int(data["labels"][i])
+            if one_hot_labels and num_classes is not None and num_classes > 1:
+                label_arr = np.eye(num_classes, dtype=np.float32)[label]
+            elif num_classes == 1:
+                label_arr = np.array([float(label)], dtype=np.float32)
+            else:
+                label_arr = np.float32(label)
+            yield features, label_arr
+
+    with tf.device("/CPU:0"):
+        ds = tf.data.Dataset.from_generator(
+            generator, output_signature=output_signature
+        )
+    return ds
+
+
 def _load_numpy_dataset(
     path: str,
     input_type: str = "translated",
@@ -105,7 +183,18 @@ def _load_numpy_dataset(
     -------
     ``tf.data.Dataset`` yielding ``(features, labels)`` tuples.
     """
-    data = np.load(path, allow_pickle=False)
+    data = np.load(path, allow_pickle=True)
+
+    if _is_ragged(data, input_type):
+        return _load_ragged_numpy_dataset(
+            data,
+            input_type=input_type,
+            seq_onehot=seq_onehot,
+            codon_depth=codon_depth,
+            nucleotide_onehot_map=nucleotide_onehot_map,
+            num_classes=num_classes,
+            one_hot_labels=one_hot_labels,
+        )
 
     valid_input_types = {"translated", "nucleotide", "both"}
     if input_type not in valid_input_types:

@@ -239,9 +239,7 @@ class TestLoadNumpyDataset:
         assert label.dtype == tf.float32
         assert set(label.numpy().tolist()).issubset({0.0, 1.0})
 
-    def test_translated_integer_to_onehot_batchwise(
-        self, translated_integer_npz: str
-    ):
+    def test_translated_integer_to_onehot_batchwise(self, translated_integer_npz: str):
         ds_batch = loaders._load_numpy_dataset(
             translated_integer_npz,
             input_type="translated",
@@ -306,7 +304,9 @@ class TestLoadNumpyDataset:
         )
         features, _ = next(iter(ds_batch))
         assert features["nucleotide"].shape == (2, SEQ_LEN, 4)
-        assert np.allclose(features["nucleotide"].numpy()[0, 0, :], [0.0, 1.0, 0.0, 0.0])
+        assert np.allclose(
+            features["nucleotide"].numpy()[0, 0, :], [0.0, 1.0, 0.0, 0.0]
+        )
 
     def test_both_input_type_batchwise(self, both_npz: str):
         ds_batch = loaders._load_numpy_dataset(
@@ -321,3 +321,54 @@ class TestLoadNumpyDataset:
         assert "nucleotide" in features
         assert features["translated"].shape == (6, SEQ_LEN, CODON_DEPTH)
         assert features["nucleotide"].shape == (2, SEQ_LEN, 4)
+
+
+@pytest.fixture
+def ragged_nucleotide_npz(tmp_path: Path) -> str:
+    path = tmp_path / "ragged_nuc.npz"
+    crops = [
+        np.array([[1, 2, 3, 4], [4, 3, 2, 1]], dtype=np.int32),
+        np.array([[1, 2], [2, 1]], dtype=np.int32),
+    ]
+    arr = np.empty(len(crops), dtype=object)
+    arr[:] = crops
+    labels = np.array([0, 1], dtype=np.int32)
+    np.savez(
+        path,
+        nucleotide=arr,
+        labels=labels,
+        lengths=np.array([4, 2], dtype=np.int32),
+        translated_lengths=np.array([0, 0], dtype=np.int32),
+        nucleotide_map='{"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}',
+        crop_sizes=np.array([4], dtype=np.int32),
+        strides=np.array([0], dtype=np.int32),
+        pad_int=np.int32(0),
+        padded=np.bool_(False),
+    )
+    return str(path)
+
+
+class TestRaggedLoaders:
+    def test_ragged_nucleotide_integer(self, ragged_nucleotide_npz: str):
+        ds = loaders._load_numpy_dataset(
+            ragged_nucleotide_npz,
+            input_type="nucleotide",
+            seq_onehot=False,
+            num_classes=NUM_CLASSES,
+        )
+        features, label = next(iter(ds))
+        assert features["nucleotide"].shape == (2, 4)
+        assert label.shape == (NUM_CLASSES,)
+
+    def test_ragged_padded_batch(self, ragged_nucleotide_npz: str):
+        ds = loaders._load_numpy_dataset(
+            ragged_nucleotide_npz,
+            input_type="nucleotide",
+            seq_onehot=False,
+            num_classes=NUM_CLASSES,
+        )
+        batched = ds.padded_batch(
+            2, padded_shapes=({"nucleotide": [2, None]}, [NUM_CLASSES])
+        )
+        features, labels = next(iter(batched))
+        assert features["nucleotide"].shape == (2, 2, 4)
