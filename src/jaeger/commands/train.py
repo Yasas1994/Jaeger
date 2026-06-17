@@ -97,6 +97,14 @@ def train_fragment(
 # ------------------------------------------------------------------
 
 
+def _is_ragged_dataset(ds: tf.data.Dataset) -> bool:
+    feat_spec = ds.element_spec[0]
+    for spec in tf.nest.flatten(feat_spec):
+        if any(d is None for d in spec.shape.as_list()):
+            return True
+    return False
+
+
 def train_fragment_core(**kwargs):
     """Train fragment classification and reliability models."""
     gpus = tf.config.list_physical_devices("GPU")
@@ -121,13 +129,6 @@ def train_fragment_core(**kwargs):
         tf.keras.mixed_precision.set_global_policy(policy)
 
     multi_gpu = strategy.num_replicas_in_sync > 1
-
-    def _is_ragged_dataset(ds: tf.data.Dataset) -> bool:
-        feat_spec = ds.element_spec[0]
-        for spec in tf.nest.flatten(feat_spec):
-            if any(d is None for d in spec.shape.as_list()):
-                return True
-        return False
 
     with strategy.scope():
         logger.info("initializing model")
@@ -158,127 +159,6 @@ def train_fragment_core(**kwargs):
         data_format = string_processor_config.get("data_format", "csv")
         _buffer_size = string_processor_config.get("buffer_size")
 
-        for k, v in _train_data.items():
-            paths = check_files(v.get("paths"))
-            if not paths:
-                logger.warning("no valid files in paths=%r %r", k, v.get("paths"))
-                exit(1)
-
-            if data_format == "csv":
-                _data = tf.data.TextLineDataset(
-                    paths, num_parallel_reads=len(paths), buffer_size=200
-                )
-                if string_processor_config.get("input_type") == "translated":
-                    padded_shape = {
-                        "translated": [6, None]
-                        if string_processor_config.get("use_embedding_layer") is True
-                        else [
-                            6,
-                            None,
-                            string_processor_config.get("codon_depth"),
-                        ]
-                    }
-                elif string_processor_config.get("input_type") == "nucleotide":
-                    padded_shape = {
-                        "nucleotide": [2, string_processor_config.get("crop_size"), 4]
-                    }
-                train_data[k] = (
-                    _data.map(
-                        process_string_train(
-                            codons=string_processor_config.get("codon"),
-                            codon_num=string_processor_config.get("codon_id"),
-                            codon_depth=string_processor_config.get("codon_depth"),
-                            label_original=string_processor_config.get(
-                                "classifier_labels", None
-                            ),
-                            label_alternative=string_processor_config.get(
-                                "classifier_labels_map", None
-                            ),
-                            ngram_width=string_processor_config.get("ngram_width"),
-                            seq_onehot=string_processor_config.get("seq_onehot"),
-                            crop_size=string_processor_config.get("crop_size"),
-                            input_type=string_processor_config.get("input_type"),
-                            masking=string_processor_config.get("masking"),
-                            mutate=string_processor_config.get("mutate"),
-                            mutation_rate=string_processor_config.get("mutation_rate"),
-                            num_classes=builder.classifier_out_dim,
-                            class_label_onehot=False
-                            if "binary"
-                            in builder.train_cfg.get(
-                                "loss_classifier", "categorical_crossentropy"
-                            ).lower()
-                            else True,
-                            shuffle=string_processor_config.get("shuffle"),
-                            shuffle_frames=string_processor_config.get(
-                                "shuffle_frames", False
-                            ),
-                        ),
-                        num_parallel_calls=tf.data.AUTOTUNE,
-                    )
-                    .shuffle(
-                        buffer_size=_data.cardinality()
-                        if _buffer_size == -1
-                        else _buffer_size,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            padded_shape,
-                            [builder.classifier_out_dim],
-                        ),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy":
-                logger.info(f"Loading {k} data from NumPy: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _onehot_buffer = (
-                    _buffer_size
-                    if _buffer_size is not None and _buffer_size > 0
-                    else None
-                )
-                _data = _load_numpy_dataset(
-                    paths[0],
-                    input_type=string_processor_config.get("input_type"),
-                    seq_onehot=string_processor_config.get("seq_onehot"),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    nucleotide_onehot_map=string_processor_config.get(
-                        "nucleotide_onehot_map"
-                    ),
-                    num_classes=builder.classifier_out_dim,
-                    one_hot_labels=True,
-                    buffer_size=_onehot_buffer,
-                )
-                padded_shapes = (
-                    tf.nest.map_structure(
-                        lambda spec: spec.shape, _data.element_spec[0]
-                    ),
-                    _data.element_spec[1].shape,
-                )
-                ds = _data
-                if _onehot_buffer is None and not _is_ragged_dataset(_data):
-                    ds = ds.cache()
-                train_data[k] = (
-                    ds.shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=padded_shapes,
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            else:
-                raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
-                )
-
         # ============ check convergence & train classifier ===========
         checkpoint = builder._checkpoints
         cls_converged = checkpoint and checkpoint.get("classifier", {}).get(
@@ -302,6 +182,147 @@ def train_fragment_core(**kwargs):
                     "only_heads", False
                 ):
                     models.get("rep_model").trainable = False
+
+                # load train data here
+                for k, v in _train_data.items():
+                    paths = check_files(v.get("paths"))
+                    if not paths:
+                        logger.warning(
+                            "no valid files in paths=%r %r", k, v.get("paths")
+                        )
+                        exit(1)
+
+                    if data_format == "csv":
+                        _data = tf.data.TextLineDataset(
+                            paths, num_parallel_reads=len(paths), buffer_size=200
+                        )
+                        if string_processor_config.get("input_type") == "translated":
+                            padded_shape = {
+                                "translated": [6, None]
+                                if string_processor_config.get("use_embedding_layer")
+                                is True
+                                else [
+                                    6,
+                                    None,
+                                    string_processor_config.get("codon_depth"),
+                                ]
+                            }
+                        elif string_processor_config.get("input_type") == "nucleotide":
+                            padded_shape = {
+                                "nucleotide": [
+                                    2,
+                                    string_processor_config.get("crop_size"),
+                                    4,
+                                ]
+                            }
+                        train_data[k] = (
+                            _data.map(
+                                process_string_train(
+                                    codons=string_processor_config.get("codon"),
+                                    codon_num=string_processor_config.get("codon_id"),
+                                    codon_depth=string_processor_config.get(
+                                        "codon_depth"
+                                    ),
+                                    label_original=string_processor_config.get(
+                                        "classifier_labels", None
+                                    ),
+                                    label_alternative=string_processor_config.get(
+                                        "classifier_labels_map", None
+                                    ),
+                                    ngram_width=string_processor_config.get(
+                                        "ngram_width"
+                                    ),
+                                    seq_onehot=string_processor_config.get(
+                                        "seq_onehot"
+                                    ),
+                                    crop_size=string_processor_config.get("crop_size"),
+                                    input_type=string_processor_config.get(
+                                        "input_type"
+                                    ),
+                                    masking=string_processor_config.get("masking"),
+                                    mutate=string_processor_config.get("mutate"),
+                                    mutation_rate=string_processor_config.get(
+                                        "mutation_rate"
+                                    ),
+                                    num_classes=builder.classifier_out_dim,
+                                    class_label_onehot=False
+                                    if "binary"
+                                    in builder.train_cfg.get(
+                                        "loss_classifier", "categorical_crossentropy"
+                                    ).lower()
+                                    else True,
+                                    shuffle=string_processor_config.get("shuffle"),
+                                    shuffle_frames=string_processor_config.get(
+                                        "shuffle_frames", False
+                                    ),
+                                ),
+                                num_parallel_calls=tf.data.AUTOTUNE,
+                            )
+                            .shuffle(
+                                buffer_size=_data.cardinality()
+                                if _buffer_size == -1
+                                else _buffer_size,
+                            )
+                            .padded_batch(
+                                batch_size=builder.train_cfg.get("batch_size"),
+                                padded_shapes=(
+                                    padded_shape,
+                                    [builder.classifier_out_dim],
+                                ),
+                                drop_remainder=multi_gpu,
+                            )
+                            .prefetch(tf.data.AUTOTUNE)
+                        )
+                    elif data_format == "numpy":
+                        logger.info(f"Loading {k} data from NumPy: {paths}")
+                        if len(paths) > 1:
+                            logger.warning(
+                                "NumPy format only supports a single .npz file per split; using first: %s",
+                                paths[0],
+                            )
+                        _onehot_buffer = (
+                            _buffer_size
+                            if _buffer_size is not None and _buffer_size > 0
+                            else None
+                        )
+                        _data = _load_numpy_dataset(
+                            paths[0],
+                            input_type=string_processor_config.get("input_type"),
+                            seq_onehot=string_processor_config.get("seq_onehot"),
+                            codon_depth=string_processor_config.get("codon_depth"),
+                            nucleotide_onehot_map=string_processor_config.get(
+                                "nucleotide_onehot_map"
+                            ),
+                            num_classes=builder.classifier_out_dim,
+                            one_hot_labels=True,
+                            buffer_size=_onehot_buffer,
+                        )
+                        padded_shapes = (
+                            tf.nest.map_structure(
+                                lambda spec: spec.shape, _data.element_spec[0]
+                            ),
+                            _data.element_spec[1].shape,
+                        )
+                        ds = _data
+                        if _onehot_buffer is None and not _is_ragged_dataset(_data):
+                            ds = ds.cache()
+                        train_data[k] = (
+                            ds.shuffle(
+                                buffer_size=_buffer_size
+                                if _buffer_size != -1
+                                else 100000,
+                            )
+                            .padded_batch(
+                                batch_size=builder.train_cfg.get("batch_size"),
+                                padded_shapes=padded_shapes,
+                                drop_remainder=multi_gpu,
+                            )
+                            .prefetch(tf.data.AUTOTUNE)
+                        )
+                    else:
+                        raise ValueError(
+                            f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
+                        )
 
                 # self-supervised pre-training
                 if kwargs.get("self_supervised_pretraining", False):
@@ -341,114 +362,6 @@ def train_fragment_core(**kwargs):
 
         _rel_train_data = builder._get_reliability_fragment_paths()
         rel_train_data = {"train": None, "validation": None}
-        for k, v in _rel_train_data.items():
-            paths = check_files(v.get("paths"))
-            if not paths:
-                logger.warning("no valid files in paths=%r", k, v.get("paths"))
-                exit(1)
-
-            if data_format == "csv":
-                _data = tf.data.TextLineDataset(
-                    v.get("paths"),
-                    num_parallel_reads=len(v.get("paths")),
-                    buffer_size=200,
-                )
-                if string_processor_config.get("input_type") == "translated":
-                    padded_shape = {
-                        "translated": [6, None]
-                        if string_processor_config.get("use_embedding_layer") is True
-                        else [
-                            6,
-                            string_processor_config.get("crop_size") // 3 - 1,
-                            string_processor_config.get("codon_depth"),
-                        ]
-                    }
-                elif string_processor_config.get("input_type") == "nucleotide":
-                    padded_shape = {
-                        "nucleotide": [2, string_processor_config.get("crop_size"), 4]
-                    }
-                rel_train_data[k] = (
-                    _data.map(
-                        process_string_train(
-                            codons=string_processor_config.get("codon"),
-                            codon_num=string_processor_config.get("codon_id"),
-                            codon_depth=string_processor_config.get("codon_depth"),
-                            ngram_width=string_processor_config.get("ngram_width"),
-                            seq_onehot=string_processor_config.get("seq_onehot"),
-                            crop_size=string_processor_config.get("crop_size"),
-                            input_type=string_processor_config.get("input_type"),
-                            masking=string_processor_config.get("masking"),
-                            num_classes=builder.reliability_out_dim,
-                            class_label_onehot=False,
-                            shuffle_frames=string_processor_config.get(
-                                "shuffle_frames", False
-                            ),
-                        ),
-                        num_parallel_calls=tf.data.AUTOTUNE,
-                    )
-                    .shuffle(
-                        buffer_size=_data.cardinality()
-                        if _buffer_size == -1
-                        else _buffer_size,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=(
-                            padded_shape,
-                            [builder.reliability_out_dim],
-                        ),
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            elif data_format == "numpy":
-                logger.info(f"Loading reliability {k} data from NumPy: {paths}")
-                if len(paths) > 1:
-                    logger.warning(
-                        "NumPy format only supports a single .npz file per split; using first: %s",
-                        paths[0],
-                    )
-                _onehot_buffer = (
-                    _buffer_size
-                    if _buffer_size is not None and _buffer_size > 0
-                    else None
-                )
-                _data = _load_numpy_dataset(
-                    paths[0],
-                    input_type=string_processor_config.get("input_type"),
-                    seq_onehot=string_processor_config.get("seq_onehot"),
-                    codon_depth=string_processor_config.get("codon_depth"),
-                    nucleotide_onehot_map=string_processor_config.get(
-                        "nucleotide_onehot_map"
-                    ),
-                    num_classes=builder.reliability_out_dim,
-                    one_hot_labels=True,
-                    buffer_size=_onehot_buffer,
-                )
-                padded_shapes = (
-                    tf.nest.map_structure(
-                        lambda spec: spec.shape, _data.element_spec[0]
-                    ),
-                    _data.element_spec[1].shape,
-                )
-                ds = _data
-                if _onehot_buffer is None and not _is_ragged_dataset(_data):
-                    ds = ds.cache()
-                rel_train_data[k] = (
-                    ds.shuffle(
-                        buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                    )
-                    .padded_batch(
-                        batch_size=builder.train_cfg.get("batch_size"),
-                        padded_shapes=padded_shapes,
-                        drop_remainder=multi_gpu,
-                    )
-                    .prefetch(tf.data.AUTOTUNE)
-                )
-            else:
-                raise ValueError(
-                    f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
-                )
 
         # ============== check convergence & train reliability ========
         checkpoint = builder._checkpoints
@@ -461,6 +374,131 @@ def train_fragment_core(**kwargs):
                 and not kwargs.get("only_classification_head", False)
                 and models.get("jaeger_reliability") is not None
             ):
+                # load reliability model data
+                for k, v in _rel_train_data.items():
+                    paths = check_files(v.get("paths"))
+                    if not paths:
+                        logger.warning("no valid files in paths=%r", k, v.get("paths"))
+                        exit(1)
+
+                    if data_format == "csv":
+                        _data = tf.data.TextLineDataset(
+                            v.get("paths"),
+                            num_parallel_reads=len(v.get("paths")),
+                            buffer_size=200,
+                        )
+                        if string_processor_config.get("input_type") == "translated":
+                            padded_shape = {
+                                "translated": [6, None]
+                                if string_processor_config.get("use_embedding_layer")
+                                is True
+                                else [
+                                    6,
+                                    string_processor_config.get("crop_size") // 3 - 1,
+                                    string_processor_config.get("codon_depth"),
+                                ]
+                            }
+                        elif string_processor_config.get("input_type") == "nucleotide":
+                            padded_shape = {
+                                "nucleotide": [
+                                    2,
+                                    string_processor_config.get("crop_size"),
+                                    4,
+                                ]
+                            }
+                        rel_train_data[k] = (
+                            _data.map(
+                                process_string_train(
+                                    codons=string_processor_config.get("codon"),
+                                    codon_num=string_processor_config.get("codon_id"),
+                                    codon_depth=string_processor_config.get(
+                                        "codon_depth"
+                                    ),
+                                    ngram_width=string_processor_config.get(
+                                        "ngram_width"
+                                    ),
+                                    seq_onehot=string_processor_config.get(
+                                        "seq_onehot"
+                                    ),
+                                    crop_size=string_processor_config.get("crop_size"),
+                                    input_type=string_processor_config.get(
+                                        "input_type"
+                                    ),
+                                    masking=string_processor_config.get("masking"),
+                                    num_classes=builder.reliability_out_dim,
+                                    class_label_onehot=False,
+                                    shuffle_frames=string_processor_config.get(
+                                        "shuffle_frames", False
+                                    ),
+                                ),
+                                num_parallel_calls=tf.data.AUTOTUNE,
+                            )
+                            .shuffle(
+                                buffer_size=_data.cardinality()
+                                if _buffer_size == -1
+                                else _buffer_size,
+                            )
+                            .padded_batch(
+                                batch_size=builder.train_cfg.get("batch_size"),
+                                padded_shapes=(
+                                    padded_shape,
+                                    [builder.reliability_out_dim],
+                                ),
+                                drop_remainder=multi_gpu,
+                            )
+                            .prefetch(tf.data.AUTOTUNE)
+                        )
+                    elif data_format == "numpy":
+                        logger.info(f"Loading reliability {k} data from NumPy: {paths}")
+                        if len(paths) > 1:
+                            logger.warning(
+                                "NumPy format only supports a single .npz file per split; using first: %s",
+                                paths[0],
+                            )
+                        _onehot_buffer = (
+                            _buffer_size
+                            if _buffer_size is not None and _buffer_size > 0
+                            else None
+                        )
+                        _data = _load_numpy_dataset(
+                            paths[0],
+                            input_type=string_processor_config.get("input_type"),
+                            seq_onehot=string_processor_config.get("seq_onehot"),
+                            codon_depth=string_processor_config.get("codon_depth"),
+                            nucleotide_onehot_map=string_processor_config.get(
+                                "nucleotide_onehot_map"
+                            ),
+                            num_classes=builder.reliability_out_dim,
+                            one_hot_labels=True,
+                            buffer_size=_onehot_buffer,
+                        )
+                        padded_shapes = (
+                            tf.nest.map_structure(
+                                lambda spec: spec.shape, _data.element_spec[0]
+                            ),
+                            _data.element_spec[1].shape,
+                        )
+                        ds = _data
+                        if _onehot_buffer is None and not _is_ragged_dataset(_data):
+                            ds = ds.cache()
+                        rel_train_data[k] = (
+                            ds.shuffle(
+                                buffer_size=_buffer_size
+                                if _buffer_size != -1
+                                else 100000,
+                            )
+                            .padded_batch(
+                                batch_size=builder.train_cfg.get("batch_size"),
+                                padded_shapes=padded_shapes,
+                                drop_remainder=multi_gpu,
+                            )
+                            .prefetch(tf.data.AUTOTUNE)
+                        )
+                    else:
+                        raise ValueError(
+                            f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
+                        )
+
                 rel_train = rel_train_data.get("train")
                 rel_val = rel_train_data.get("validation")
                 if rel_train is None or rel_val is None:
