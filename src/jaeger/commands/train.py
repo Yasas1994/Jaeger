@@ -166,18 +166,6 @@ def train_fragment_core(**kwargs):
         )
         if kwargs.get("only_save", False) is False:
             if not cls_converged and not kwargs.get("only_reliability_head", False):
-                train_args = {
-                    "validation_data": train_data.get("validation").take(
-                        builder.train_cfg.get("classifier_validation_steps")
-                    ),
-                    "epochs": builder.train_cfg.get("classifier_epochs"),
-                    "callbacks": builder.get_callbacks(branch="classifier"),
-                }
-                if checkpoint:
-                    train_args["initial_epoch"] = checkpoint.get("classifier", {}).get(
-                        "epoch", 0
-                    )
-
                 if kwargs.get("only_classification_head", False) or kwargs.get(
                     "only_heads", False
                 ):
@@ -326,6 +314,18 @@ def train_fragment_core(**kwargs):
                         raise ValueError(
                             f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
                         )
+
+                train_args = {
+                    "validation_data": train_data.get("validation").take(
+                        builder.train_cfg.get("classifier_validation_steps")
+                    ),
+                    "epochs": builder.train_cfg.get("classifier_epochs"),
+                    "callbacks": builder.get_callbacks(branch="classifier"),
+                }
+                if checkpoint:
+                    train_args["initial_epoch"] = checkpoint.get("classifier", {}).get(
+                        "epoch", 0
+                    )
 
                 # self-supervised pre-training
                 if kwargs.get("self_supervised_pretraining", False):
