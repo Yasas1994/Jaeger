@@ -10,6 +10,7 @@ This module is a thin Click wrapper that orchestrates:
 
 from __future__ import annotations
 
+import gc
 import os
 
 # temporary fix
@@ -357,6 +358,11 @@ def train_fragment_core(**kwargs):
                     class_weight=builder.train_cfg.get("classifier_class_weights"),
                     **train_args,
                 )
+
+                # unload classifier data before loading reliability data
+                logger.info("unloading classifier training data")
+                train_data = {"train": None, "validation": None}
+                gc.collect()
             else:
                 logger.info("Skipping training — classification model")
 
