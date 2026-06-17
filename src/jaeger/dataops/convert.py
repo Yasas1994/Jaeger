@@ -1276,12 +1276,15 @@ def convert_dataset(
     compress: str = "default",
     max_length: int = 5000,  # deprecated, ignored
     use_embedding_layer: bool = True,  # deprecated, ignored
+    max_memory_mb: int | None = None,
+    pad: bool = False,
 ) -> None:
     """Convert a CSV dataset to a compressed NumPy ``.npz`` file.
 
-    This function is a thin dispatcher around :func:`_convert_to_npz`. It
-    supports three output representations: ``nucleotide``, ``translated``, and
-    ``both``. The resulting ``.npz`` archive contains encoded crops, labels,
+    This function dispatches to either :func:`_convert_to_npz` or
+    :func:`_convert_to_npz_streaming` depending on the available memory budget.
+    It supports three output representations: ``nucleotide``, ``translated``,
+    and ``both``. The resulting ``.npz`` archive contains encoded crops, labels,
     crop metadata, and (depending on the format) the nucleotide/codon mapping
     used during encoding.
 
@@ -1329,6 +1332,14 @@ def convert_dataset(
     use_embedding_layer : bool, optional
         Deprecated and ignored. Kept for backward compatibility with old CLI
         calls.
+    max_memory_mb : int | None, optional
+        Memory budget in megabytes used to decide whether to use the streaming
+        converter. ``None`` uses 75% of available RAM. ``0`` or negative values
+        disable the budget check and always use the fast path.
+    pad : bool, optional
+        If True, pad all crops to the maximum crop length (legacy behavior).
+        If False, trim each crop to its actual length and store as object
+        arrays.
     """
     if isinstance(crop_size, int):
         crop_sizes = [crop_size]
@@ -1354,44 +1365,77 @@ def convert_dataset(
     logger.info(f"Converting {input_path} -> {output_path}")
     logger.info(
         f"Format: {format}, Crop sizes: {crop_sizes}, Strides: {strides}, "
-        f"Num classes: {num_classes}"
+        f"Num classes: {num_classes}, Pad: {pad}"
     )
 
-    # Memory guard for one-hot outputs.
-    if one_hot:
-        total_lines = _count_lines(input_path)
-        if crop_sizes:
-            max_crop_idx = int(np.argmax(crop_sizes))
-            max_crop = crop_sizes[max_crop_idx]
-            max_crop_stride = strides[max_crop_idx]
-        else:
-            max_crop = 500
-            max_crop_stride = 0
-        codon_map_len: int | None = None
-        if format in ("translated", "both"):
-            codon_map_arr = _get_codon_map(codon_map)
-            codon_map_len = len(codon_map_arr)
+    total_lines = _count_lines(input_path)
+    max_crop_idx = int(np.argmax(crop_sizes))
+    max_crop = crop_sizes[max_crop_idx]
+    max_stride = strides[max_crop_idx]
+    multiplier = 1
+    if max_stride > 0 and max_crop > 0:
+        multiplier = math.ceil(max_crop / max_stride)
+    total_rows = total_lines * multiplier
+
+    codon_map_len: int | None = None
+    if format in ("translated", "both"):
+        codon_map_arr = _get_codon_map(codon_map)
+        codon_map_len = len(codon_map_arr)
+
+    if max_memory_mb is not None and max_memory_mb > 0:
+        budget = max_memory_mb * 1024 * 1024
+    elif max_memory_mb is None:
+        budget = int(psutil.virtual_memory().available * 0.75)
+    else:
+        budget = None
+
+    stream = False
+    if budget is not None:
+        per_row = _estimate_output_bytes_per_row(
+            max_crop, format, one_hot, codon_map_len
+        )
+        stream = total_rows * per_row > budget
+
+    if one_hot and not stream:
         estimated = _estimate_onehot_memory(
             total_rows=total_lines,
             crop_size=max_crop,
             fmt=format,
             one_hot=one_hot,
             codon_map_len=codon_map_len,
-            stride=max_crop_stride,
+            stride=max_stride,
         )
         _check_onehot_memory(estimated, psutil.virtual_memory().available)
 
-    _convert_to_npz(
-        input_path=input_path,
-        output_path=output_path,
-        fmt=format,
-        crop_sizes=crop_sizes,
-        strides=strides,
-        num_classes=num_classes,
-        num_workers=num_workers,
-        one_hot=one_hot,
-        pad_int=pad_int,
-        codon_map_name=codon_map,
-        nucleotide_map=nucleotide_map_dict,
-        compress=compress,
-    )
+    if stream:
+        _convert_to_npz_streaming(
+            input_path=input_path,
+            output_path=output_path,
+            fmt=format,
+            crop_sizes=crop_sizes,
+            strides=strides,
+            num_classes=num_classes,
+            one_hot=one_hot,
+            pad_int=pad_int,
+            codon_map_name=codon_map,
+            nucleotide_map=nucleotide_map_dict,
+            compress=compress,
+            max_memory_bytes=budget,
+            pad=pad,
+        )
+    else:
+        _convert_to_npz(
+            input_path=input_path,
+            output_path=output_path,
+            fmt=format,
+            crop_sizes=crop_sizes,
+            strides=strides,
+            num_classes=num_classes,
+            num_workers=num_workers,
+            one_hot=one_hot,
+            pad_int=pad_int,
+            codon_map_name=codon_map,
+            nucleotide_map=nucleotide_map_dict,
+            compress=compress,
+            pad=pad,
+        )
