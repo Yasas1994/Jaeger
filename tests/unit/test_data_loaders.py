@@ -372,3 +372,55 @@ class TestRaggedLoaders:
         )
         features, labels = next(iter(batched))
         assert features["nucleotide"].shape == (2, 2, 4)
+
+    def test_ragged_nucleotide_integer_to_onehot(self, ragged_nucleotide_npz: str):
+        ds = loaders._load_numpy_dataset(
+            ragged_nucleotide_npz,
+            input_type="nucleotide",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+        )
+        features, _ = next(iter(ds))
+        assert features["nucleotide"].shape == (2, 4, 4)
+        assert features["nucleotide"].dtype == tf.float32
+
+    def test_ragged_translated_integer_to_onehot(self, tmp_path: Path):
+        path = tmp_path / "ragged_trans.npz"
+        crops = [
+            np.array(
+                [
+                    [1, 2, 3, 4],
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 0],
+                ],
+                dtype=np.int32,
+            ),
+            np.array([[1, 2], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], dtype=np.int32),
+        ]
+        arr = np.empty(len(crops), dtype=object)
+        arr[:] = crops
+        labels = np.array([0, 1], dtype=np.int32)
+        np.savez(
+            path,
+            translated=arr,
+            labels=labels,
+            lengths=np.array([0, 0], dtype=np.int32),
+            translated_lengths=np.array([4, 2], dtype=np.int32),
+            codon_map="codon_id",
+            crop_sizes=np.array([4], dtype=np.int32),
+            strides=np.array([0], dtype=np.int32),
+            pad_int=np.int32(0),
+            padded=np.bool_(False),
+        )
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+        )
+        features, _ = next(iter(ds))
+        assert features["translated"].shape == (6, 4, 65)
+        assert features["translated"].dtype == tf.float32

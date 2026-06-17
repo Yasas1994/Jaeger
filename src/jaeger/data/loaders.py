@@ -82,6 +82,11 @@ def _load_ragged_numpy_dataset(
     one_hot_labels: bool,
 ) -> tf.data.Dataset:
     """Load an NPZ where feature arrays are 1-D object arrays of crops."""
+    if input_type in ("translated", "both") and codon_depth is None:
+        codon_map_name = str(data["codon_map"])
+        codon_map = _get_codon_map(codon_map_name)
+        codon_depth = len(codon_map) + 1
+
     lookup = None
     if input_type in ("nucleotide", "both") and seq_onehot:
         nucleotide_map = json.loads(str(data["nucleotide_map"]))
@@ -93,7 +98,7 @@ def _load_ragged_numpy_dataset(
         features: dict[str, np.ndarray] = {}
         if input_type in ("nucleotide", "both"):
             nuc = data["nucleotide"][i]
-            if seq_onehot and nuc.ndim == 3 and lookup is not None:
+            if seq_onehot and nuc.ndim == 2 and lookup is not None:
                 nuc = lookup[nuc]
             features["nucleotide"] = nuc
         if input_type in ("translated", "both"):
