@@ -122,6 +122,13 @@ def train_fragment_core(**kwargs):
 
     multi_gpu = strategy.num_replicas_in_sync > 1
 
+    def _is_ragged_dataset(ds: tf.data.Dataset) -> bool:
+        feat_spec = ds.element_spec[0]
+        for spec in tf.nest.flatten(feat_spec):
+            if any(d is None for d in spec.shape.as_list()):
+                return True
+        return False
+
     with strategy.scope():
         logger.info("initializing model")
         config = load_model_config(Path(kwargs.get("config")))
@@ -254,7 +261,7 @@ def train_fragment_core(**kwargs):
                     _data.element_spec[1].shape,
                 )
                 ds = _data
-                if _onehot_buffer is None:
+                if _onehot_buffer is None and not _is_ragged_dataset(_data):
                     ds = ds.cache()
                 train_data[k] = (
                     ds.shuffle(
@@ -425,7 +432,7 @@ def train_fragment_core(**kwargs):
                     _data.element_spec[1].shape,
                 )
                 ds = _data
-                if _onehot_buffer is None:
+                if _onehot_buffer is None and not _is_ragged_dataset(_data):
                     ds = ds.cache()
                 rel_train_data[k] = (
                     ds.shuffle(
