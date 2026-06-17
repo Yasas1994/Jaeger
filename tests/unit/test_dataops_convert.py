@@ -120,7 +120,15 @@ class TestNucleotideEncoder:
             user_map
         )
         out = _encode_nucleotide_batch(
-            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, False, 0
+            sequences,
+            lengths,
+            4,
+            ascii_to_user,
+            comp_user,
+            ascii_to_oh,
+            comp_oh,
+            False,
+            0,
         )
         assert out.shape == (1, 2, 4)
         # forward strand: A=1, T=3, G=2, C=4
@@ -140,7 +148,15 @@ class TestNucleotideEncoder:
             user_map
         )
         out = _encode_nucleotide_batch(
-            sequences, lengths, 4, ascii_to_user, comp_user, ascii_to_oh, comp_oh, True, 0
+            sequences,
+            lengths,
+            4,
+            ascii_to_user,
+            comp_user,
+            ascii_to_oh,
+            comp_oh,
+            True,
+            0,
         )
         assert out.shape == (1, 2, 4, 4)
         assert out[0, 0, 0].tolist() == [1.0, 0.0, 0.0, 0.0]  # A
@@ -403,3 +419,25 @@ class TestConvertToNpz:
                 nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
                 compress="default",
             )
+
+
+class TestMemoryEstimate:
+    def test_per_row_nucleotide_integer(self):
+        b = convert._estimate_output_bytes_per_row(
+            12, "nucleotide", one_hot=False, codon_map_len=None
+        )
+        assert b == 2 * 12 * 4
+
+    def test_per_row_nucleotide_onehot(self):
+        b = convert._estimate_output_bytes_per_row(
+            12, "nucleotide", one_hot=True, codon_map_len=None
+        )
+        assert b == 2 * 12 * 4 * 4
+
+    def test_per_row_both(self):
+        b = convert._estimate_output_bytes_per_row(
+            12, "both", one_hot=False, codon_map_len=64
+        )
+        seq_len = 12 // 3 - 1
+        expected = 2 * 12 * 4 + 6 * seq_len * 4
+        assert b == expected

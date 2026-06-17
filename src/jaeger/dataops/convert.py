@@ -10,6 +10,7 @@ Supported output representations:
 from __future__ import annotations
 
 import io
+import itertools  # noqa: F401
 import json
 import math
 import zipfile
@@ -71,6 +72,32 @@ def _estimate_onehot_memory(
         )
 
     return int(estimated)
+
+
+def _estimate_output_bytes_per_row(
+    crop_size: int,
+    fmt: str,
+    one_hot: bool,
+    codon_map_len: int | None,
+) -> int:
+    """Safe upper-bound bytes for one output crop, assuming worst-case length."""
+    crop_size = max(0, crop_size)
+    per_row = 0
+    if fmt in ("nucleotide", "both"):
+        if one_hot:
+            per_row += 2 * crop_size * 4 * np.dtype(np.float32).itemsize
+        else:
+            per_row += 2 * crop_size * np.dtype(np.int32).itemsize
+
+    if fmt in ("translated", "both") and codon_map_len is not None:
+        # Use codon length (crop_size // 3 - 1) because it is >= dicodon length.
+        seq_len = max(0, crop_size // 3 - 1)
+        if one_hot:
+            per_row += 6 * seq_len * (codon_map_len + 1) * np.dtype(np.float32).itemsize
+        else:
+            per_row += 6 * seq_len * np.dtype(np.int32).itemsize
+
+    return max(1, per_row)
 
 
 def _check_onehot_memory(
