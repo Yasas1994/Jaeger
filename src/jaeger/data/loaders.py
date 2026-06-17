@@ -186,8 +186,7 @@ def _load_sharded_numpy_dataset(
 
     def _sample_features(i: int) -> dict[str, np.ndarray]:
         return {
-            key: _convert_feature(first_features[key][i], key)
-            for key in feature_keys
+            key: _convert_feature(first_features[key][i], key) for key in feature_keys
         }
 
     def _feature_spec(arr: np.ndarray) -> tf.TensorSpec:
@@ -212,9 +211,7 @@ def _load_sharded_numpy_dataset(
 
     def generator():
         for shard_idx in range(num_shards):
-            shard_arrays = {
-                key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys
-            }
+            shard_arrays = {key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys}
             shard_labels = data[f"labels_{shard_idx:05d}"]
             # Pre-convert dense (non-object) shards in one shot to avoid
             # per-sample TensorFlow overhead.

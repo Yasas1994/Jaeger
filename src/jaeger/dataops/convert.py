@@ -1162,9 +1162,7 @@ def _zip_compression(compress: str) -> tuple[int, int | None]:
         return zipfile.ZIP_DEFLATED, 1
     if compress == "none":
         return zipfile.ZIP_STORED, None
-    raise ValueError(
-        f"Invalid compress: {compress}. Choose from: default, none, fast"
-    )
+    raise ValueError(f"Invalid compress: {compress}. Choose from: default, none, fast")
 
 
 def _convert_to_npz_streaming(
@@ -1233,7 +1231,10 @@ def _convert_to_npz_streaming(
         keys: list[str] = []
         batch_idx = 0
         with zipfile.ZipFile(
-            output_path, "w", compression=compress_type, compresslevel=compress_level or 6
+            output_path,
+            "w",
+            compression=compress_type,
+            compresslevel=compress_level or 6,
         ) as zf:
             with open(input_path) as f:
                 while True:
@@ -1288,7 +1289,9 @@ def _convert_to_npz_streaming(
                 "num_classes": int(num_classes),
                 "codon_map": codon_map_name if fmt in ("translated", "both") else None,
                 "nucleotide_map": (
-                    json.dumps(nucleotide_map) if fmt in ("nucleotide", "both") else None
+                    json.dumps(nucleotide_map)
+                    if fmt in ("nucleotide", "both")
+                    else None
                 ),
             }
             buf = io.BytesIO()
