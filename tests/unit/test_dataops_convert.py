@@ -478,3 +478,170 @@ class TestFinalizeBatchArrays:
         assert finalized["nucleotide"].dtype == object
         assert finalized["nucleotide"][0].shape == (2, 12)
         assert finalized["nucleotide"][1].shape == (2, 4)
+
+    def test_padded_onehot_nucleotide_multi_crop(self, tmp_path: Path):
+        csv = tmp_path / "in.csv"
+        csv.write_text("0,ATGCATGCATGC\n")
+        result = convert._process_chunk_npz(
+            lines=csv.read_text().splitlines(),
+            fmt="nucleotide",
+            crop_sizes=[12, 8],
+            strides=[0, 0],
+            one_hot=True,
+            pad_int=0,
+            nucleotide_lookups=convert._build_nucleotide_lookups(
+                {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+            ),
+            codon_lut=np.empty(0, dtype=np.int32),
+            codon_map_len=64,
+            standard_codon_lut3=np.empty(0, dtype=np.int32),
+            dicodon_lut=np.empty(0, dtype=np.int32),
+            ascii_lut=np.zeros(256, dtype=np.int8),
+            comp_lut=np.zeros(256, dtype=np.int8),
+        )
+        finalized = convert._finalize_batch_arrays(
+            result,
+            fmt="nucleotide",
+            crop_sizes=[12, 8],
+            one_hot=True,
+            codon_map_len=None,
+            pad=True,
+            pad_int=0,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            codon_map_name="codon_id",
+        )
+        assert finalized["nucleotide"].ndim == 4
+        assert finalized["nucleotide"].shape == (2, 2, 12, 4)
+        assert np.all(finalized["nucleotide"][1, :, 8:, :] == 0.0)
+
+    def test_padded_integer_nucleotide_multi_crop(self, tmp_path: Path):
+        csv = tmp_path / "in.csv"
+        csv.write_text("0,ATGCATGCATGC\n")
+        result = convert._process_chunk_npz(
+            lines=csv.read_text().splitlines(),
+            fmt="nucleotide",
+            crop_sizes=[12, 8],
+            strides=[0, 0],
+            one_hot=False,
+            pad_int=0,
+            nucleotide_lookups=convert._build_nucleotide_lookups(
+                {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+            ),
+            codon_lut=np.empty(0, dtype=np.int32),
+            codon_map_len=64,
+            standard_codon_lut3=np.empty(0, dtype=np.int32),
+            dicodon_lut=np.empty(0, dtype=np.int32),
+            ascii_lut=np.zeros(256, dtype=np.int8),
+            comp_lut=np.zeros(256, dtype=np.int8),
+        )
+        finalized = convert._finalize_batch_arrays(
+            result,
+            fmt="nucleotide",
+            crop_sizes=[12, 8],
+            one_hot=False,
+            codon_map_len=None,
+            pad=True,
+            pad_int=0,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            codon_map_name="codon_id",
+        )
+        assert finalized["nucleotide"].ndim == 3
+        assert finalized["nucleotide"].shape == (2, 2, 12)
+        assert np.all(finalized["nucleotide"][1, :, 8:] == 0)
+
+    def test_unpadded_translated_object_array(self, tmp_path: Path):
+        csv = tmp_path / "in.csv"
+        csv.write_text("0,ATGCATGCATGCATGCATGCATGC\n")
+        codon_lut = convert._build_codon_lut(convert._get_codon_map("codon_id"))
+        ascii_lut, comp_lut = convert._build_numba_lookups()[1:]
+        result = convert._process_chunk_npz(
+            lines=csv.read_text().splitlines(),
+            fmt="translated",
+            crop_sizes=[24],
+            strides=[0],
+            one_hot=False,
+            pad_int=0,
+            nucleotide_lookups=convert._build_nucleotide_lookups(
+                {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+            ),
+            codon_lut=codon_lut,
+            codon_map_len=64,
+            standard_codon_lut3=np.empty(0, dtype=np.int32),
+            dicodon_lut=np.empty(0, dtype=np.int32),
+            ascii_lut=ascii_lut,
+            comp_lut=comp_lut,
+        )
+        finalized = convert._finalize_batch_arrays(
+            result,
+            fmt="translated",
+            crop_sizes=[24],
+            one_hot=False,
+            codon_map_len=64,
+            pad=False,
+            pad_int=0,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            codon_map_name="codon_id",
+        )
+        assert finalized["translated"].dtype == object
+        assert finalized["translated"][0].shape[0] == 6
+        assert finalized["translated"][0].dtype == np.int32
+
+    def test_unpadded_both_object_arrays(self, tmp_path: Path):
+        csv = tmp_path / "in.csv"
+        csv.write_text("0,ATGCATGCATGCATGCATGCATGC\n")
+        codon_lut = convert._build_codon_lut(convert._get_codon_map("codon_id"))
+        ascii_lut, comp_lut = convert._build_numba_lookups()[1:]
+        result = convert._process_chunk_npz(
+            lines=csv.read_text().splitlines(),
+            fmt="both",
+            crop_sizes=[24],
+            strides=[0],
+            one_hot=False,
+            pad_int=0,
+            nucleotide_lookups=convert._build_nucleotide_lookups(
+                {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+            ),
+            codon_lut=codon_lut,
+            codon_map_len=64,
+            standard_codon_lut3=np.empty(0, dtype=np.int32),
+            dicodon_lut=np.empty(0, dtype=np.int32),
+            ascii_lut=ascii_lut,
+            comp_lut=comp_lut,
+        )
+        finalized = convert._finalize_batch_arrays(
+            result,
+            fmt="both",
+            crop_sizes=[24],
+            one_hot=False,
+            codon_map_len=64,
+            pad=False,
+            pad_int=0,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            codon_map_name="codon_id",
+        )
+        assert finalized["nucleotide"].dtype == object
+        assert finalized["translated"].dtype == object
+        assert isinstance(finalized["nucleotide_map"], str)
+        assert isinstance(finalized["codon_map"], str)
+
+    def test_empty_arrays_padded(self, tmp_path: Path):
+        result = {
+            "nucleotide": [],
+            "translated": [],
+            "labels": np.empty((0,), dtype=np.int32),
+            "lengths": np.empty((0,), dtype=np.int32),
+            "translated_lengths": np.empty((0,), dtype=np.int32),
+        }
+        finalized = convert._finalize_batch_arrays(
+            result,
+            fmt="both",
+            crop_sizes=[12],
+            one_hot=False,
+            codon_map_len=64,
+            pad=True,
+            pad_int=0,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            codon_map_name="codon_id",
+        )
+        assert finalized["nucleotide"].shape == (0,)
+        assert finalized["translated"].shape == (0,)

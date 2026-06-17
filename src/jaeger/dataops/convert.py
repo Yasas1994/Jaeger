@@ -860,7 +860,7 @@ def _finalize_batch_arrays(
     If ``pad`` is False each crop is trimmed to its actual length and stored
     in a 1-D object array.
     """
-    save_dict: dict[str, np.ndarray] = {
+    save_dict: dict[str, np.ndarray | str] = {
         "labels": result["labels"],
         "lengths": result["lengths"],
         "translated_lengths": result["translated_lengths"],
@@ -875,13 +875,14 @@ def _finalize_batch_arrays(
         arrays = result["nucleotide"]
         if arrays:
             if pad:
-                max_len = max(a.shape[-1] for a in arrays)
                 if one_hot:
+                    max_len = max(a.shape[-2] for a in arrays)
                     padded = [
-                        _pad_axis(a, max_len, axis=-1, pad_value=0.0) for a in arrays
+                        _pad_axis(a, max_len, axis=-2, pad_value=0.0) for a in arrays
                     ]
                     save_dict["nucleotide"] = np.concatenate(padded, axis=0)
                 else:
+                    max_len = max(a.shape[-1] for a in arrays)
                     padded = [
                         _pad_axis(a, max_len, axis=-1, pad_value=pad_int)
                         for a in arrays
@@ -890,7 +891,7 @@ def _finalize_batch_arrays(
             else:
                 items: list[np.ndarray] = []
                 offset = 0
-                for arr, crop_size in zip(arrays, crop_sizes):
+                for arr, _ in zip(arrays, crop_sizes):
                     n = arr.shape[0]
                     lens = result["lengths"][offset : offset + n]
                     for i in range(n):
@@ -907,7 +908,7 @@ def _finalize_batch_arrays(
                 if one_hot
                 else np.empty((0,), dtype=np.int32)
             )
-        save_dict["nucleotide_map"] = np.array(json.dumps(nucleotide_map))
+        save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
 
     if fmt in ("translated", "both"):
         arrays = result["translated"]
@@ -930,7 +931,7 @@ def _finalize_batch_arrays(
             else:
                 items: list[np.ndarray] = []
                 offset = 0
-                for arr, crop_size in zip(arrays, crop_sizes):
+                for arr, _ in zip(arrays, crop_sizes):
                     n = arr.shape[0]
                     if one_hot and codon_map_len is not None:
                         arr = _one_hot_integer(arr, codon_map_len + 1)
@@ -949,7 +950,7 @@ def _finalize_batch_arrays(
                 if one_hot
                 else np.empty((0,), dtype=np.int32)
             )
-        save_dict["codon_map"] = np.array(codon_map_name)
+        save_dict["codon_map"] = codon_map_name
 
     return save_dict
 
