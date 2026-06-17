@@ -71,6 +71,7 @@ def test_optimize_data_nucleotide_onehot(tiny_csv: str, tmp_path: Path):
             "--crop-size",
             "12",
             "--one-hot",
+            "--pad",
             "--num-classes",
             "2",
         ],
