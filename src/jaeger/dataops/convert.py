@@ -968,6 +968,7 @@ def _convert_to_npz(
     codon_map_name: str,
     nucleotide_map: dict[str, int],
     compress: str,
+    pad: bool = True,
 ) -> None:
     """Convert a CSV dataset to an ``.npz`` file.
 
@@ -1105,7 +1106,7 @@ def _convert_to_npz(
         crop_sizes=crop_sizes,
         one_hot=one_hot,
         codon_map_len=codon_map_len,
-        pad=True,
+        pad=pad,
         pad_int=pad_int,
         nucleotide_map=nucleotide_map,
         codon_map_name=codon_map_name,
@@ -1115,7 +1116,7 @@ def _convert_to_npz(
             "pad_int": np.int32(pad_int),
             "crop_sizes": np.array(crop_sizes, dtype=np.int32),
             "strides": np.array(strides, dtype=np.int32),
-            "padded": np.bool_(True),
+            "padded": np.bool_(pad),
         }
     )
 

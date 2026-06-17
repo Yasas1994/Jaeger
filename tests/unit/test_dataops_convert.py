@@ -442,6 +442,29 @@ class TestConvertToNpz:
         assert data["nucleotide"].shape == (2, 2, 12, 4)
         assert np.all(data["nucleotide"][1, :, 8:, :] == 0.0)
 
+    def test_nucleotide_fast_path_unpadded(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGC", "1,GGGG"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            strides=[0],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            pad=False,
+        )
+        data = np.load(out, allow_pickle=True)
+        assert data["padded"].item() is False
+        assert data["nucleotide"].dtype == object
+        assert data["nucleotide"][1].shape == (2, 4)
+
 
 class TestMemoryEstimate:
     def test_per_row_nucleotide_integer(self):
