@@ -563,6 +563,7 @@ def optimize_data_core(
     codon_map: str = "codon_id",
     nucleotide_map: str | None = None,
     compress: str = "default",
+    dtype: str = "auto",
     max_length: int = 5000,  # deprecated, ignored
     max_memory_mb: int | None = None,
     pad: bool = False,
@@ -600,6 +601,10 @@ def optimize_data_core(
         JSON string with mappings for ``A``, ``C``, ``G``, ``T``, ``N``.
     compress : str, optional
         Compression mode for the output archive (default: ``default``).
+    dtype : str, optional
+        Integer dtype for encoded features: ``int8``, ``uint8``, ``int16``,
+        ``int32``, or ``auto``. ``auto`` selects the smallest dtype that fits
+        the vocabulary (default: ``auto``).
     max_memory_mb : int | None, optional
         Memory budget in MB for encoded output buffers. ``None`` uses ~75% of
         available RAM. ``0`` disables streaming.
@@ -622,6 +627,7 @@ def optimize_data_core(
         codon_map=codon_map,
         nucleotide_map=nucleotide_map,
         compress=compress,
+        dtype=dtype,
         max_length=max_length,
         max_memory_mb=max_memory_mb,
         pad=pad,

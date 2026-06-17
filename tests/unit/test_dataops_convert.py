@@ -910,3 +910,83 @@ class TestStreamingConvert:
         assert manifest["padded"] is False
         stream_data = self._load_stream(str(out))
         assert stream_data["nucleotide"].dtype == object
+
+
+class TestFeatureDtype:
+    def test_resolve_feature_dtype_translated_integer(self):
+        assert convert._resolve_feature_dtype(
+            "translated",
+            one_hot=False,
+            dtype_arg="auto",
+            codon_map_len=64,
+            nucleotide_map={},
+        ) == np.dtype(np.int8)
+
+    def test_resolve_feature_dtype_dicodon_integer(self):
+        assert convert._resolve_feature_dtype(
+            "translated",
+            one_hot=False,
+            dtype_arg="auto",
+            codon_map_len=4096,
+            nucleotide_map={},
+        ) == np.dtype(np.int16)
+
+    def test_resolve_feature_dtype_onehot_ignored(self):
+        assert convert._resolve_feature_dtype(
+            "translated",
+            one_hot=True,
+            dtype_arg="auto",
+            codon_map_len=64,
+            nucleotide_map={},
+        ) == np.dtype(np.float32)
+
+    def test_resolve_feature_dtype_explicit(self):
+        assert convert._resolve_feature_dtype(
+            "translated",
+            one_hot=False,
+            dtype_arg="int16",
+            codon_map_len=64,
+            nucleotide_map={},
+        ) == np.dtype(np.int16)
+
+    def test_nucleotide_integer_is_int8(self):
+        assert convert._resolve_feature_dtype(
+            "nucleotide",
+            one_hot=False,
+            dtype_arg="auto",
+            codon_map_len=None,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+        ) == np.dtype(np.int8)
+
+    def test_optimize_data_saves_int8_translated(self, tmp_path: Path):
+        csv = tmp_path / "input.csv"
+        csv.write_text("0,ATGCATGCATGCATGCATGCATGC\n1,GGGGGGGGGGGG\n")
+        out = tmp_path / "out.npz"
+        convert.convert_dataset(
+            input_path=str(csv),
+            output_path=str(out),
+            format="translated",
+            crop_size=24,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+        )
+        data = np.load(out, allow_pickle=True)
+        assert data["translated"][0].dtype == np.dtype(np.int8)
+
+    def test_optimize_data_dtype_int32_override(self, tmp_path: Path):
+        csv = tmp_path / "input.csv"
+        csv.write_text("0,ATGCATGCATGCATGCATGCATGC\n1,GGGGGGGGGGGG\n")
+        out = tmp_path / "out.npz"
+        convert.convert_dataset(
+            input_path=str(csv),
+            output_path=str(out),
+            format="translated",
+            crop_size=24,
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            dtype="int32",
+        )
+        data = np.load(out, allow_pickle=True)
+        assert data["translated"][0].dtype == np.dtype(np.int32)

@@ -607,3 +607,18 @@ class TestRuntimeCropLoader:
         crops = list(ds.as_numpy_iterator())
         # stride = 5, starts [0, 5, 10, 15, 20]
         assert len(crops) == 5
+
+    def test_int8_npz_cast_to_int32(self, tmp_path: Path):
+        path = tmp_path / "translated_int8.npz"
+        translated = np.random.randint(1, 65, size=(2, 6, 12), dtype=np.int8)
+        labels = np.array([0, 1], dtype=np.int32)
+        np.savez(path, translated=translated, labels=labels, codon_map="codon_id")
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=2,
+        )
+        features, _ = next(iter(ds))
+        assert features["translated"].dtype == tf.int32

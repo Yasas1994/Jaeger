@@ -1076,6 +1076,16 @@ def convert(**kwargs):
     help="NPZ compression level",
 )
 @click.option(
+    "--dtype",
+    type=click.Choice(
+        ["int8", "uint8", "int16", "int32", "auto"],
+        case_sensitive=False,
+    ),
+    default="auto",
+    show_default=True,
+    help="Integer dtype for encoded features (auto picks the smallest fitting dtype)",
+)
+@click.option(
     "--max-length",
     type=int,
     default=5000,
@@ -1107,6 +1117,7 @@ def optimize_data(**kwargs):
         codon_map=kwargs.get("codon_map"),
         nucleotide_map=kwargs.get("nucleotide_map"),
         compress=kwargs.get("compress"),
+        dtype=kwargs.get("dtype"),
         max_length=kwargs.get("max_length"),
         max_memory_mb=kwargs.get("max_memory_mb"),
         pad=kwargs.get("pad"),

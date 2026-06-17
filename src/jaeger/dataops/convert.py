@@ -881,6 +881,7 @@ def _finalize_batch_arrays(
     pad_int: int,
     nucleotide_map: dict[str, int],
     codon_map_name: str,
+    feature_dtype: np.dtype | None = None,
 ) -> dict[str, np.ndarray | str]:
     """Turn a processed chunk into save-ready arrays.
 
@@ -889,6 +890,9 @@ def _finalize_batch_arrays(
     If ``pad`` is False each crop is trimmed to its actual length and stored
     in a 1-D object array.
     """
+    if feature_dtype is None:
+        feature_dtype = np.dtype(np.float32) if one_hot else np.dtype(np.int32)
+
     save_dict: dict[str, np.ndarray | str] = {
         "labels": result["labels"],
         "lengths": result["lengths"],
@@ -909,14 +913,18 @@ def _finalize_batch_arrays(
                     padded = [
                         _pad_axis(a, max_len, axis=-2, pad_value=0.0) for a in arrays
                     ]
-                    save_dict["nucleotide"] = np.concatenate(padded, axis=0)
+                    save_dict["nucleotide"] = np.concatenate(padded, axis=0).astype(
+                        feature_dtype, copy=False
+                    )
                 else:
                     max_len = max(a.shape[-1] for a in arrays)
                     padded = [
                         _pad_axis(a, max_len, axis=-1, pad_value=pad_int)
                         for a in arrays
                     ]
-                    save_dict["nucleotide"] = np.concatenate(padded, axis=0)
+                    save_dict["nucleotide"] = np.concatenate(padded, axis=0).astype(
+                        feature_dtype, copy=False
+                    )
             else:
                 items: list[np.ndarray] = []
                 offset = 0
@@ -926,17 +934,17 @@ def _finalize_batch_arrays(
                     for i in range(n):
                         L = int(lens[i])
                         if one_hot:
-                            items.append(arr[i, :, :L, :])
+                            items.append(
+                                arr[i, :, :L, :].astype(feature_dtype, copy=False)
+                            )
                         else:
-                            items.append(arr[i, :, :L])
+                            items.append(
+                                arr[i, :, :L].astype(feature_dtype, copy=False)
+                            )
                     offset += n
                 save_dict["nucleotide"] = _to_object_array(items)
         else:
-            save_dict["nucleotide"] = (
-                np.empty((0,), dtype=np.float32)
-                if one_hot
-                else np.empty((0,), dtype=np.int32)
-            )
+            save_dict["nucleotide"] = np.empty((0,), dtype=feature_dtype)
         save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
 
     if fmt in ("translated", "both"):
@@ -951,12 +959,14 @@ def _finalize_batch_arrays(
                     stacked = np.concatenate(padded, axis=0)
                     save_dict["translated"] = _one_hot_integer(
                         stacked, codon_map_len + 1
-                    )
+                    ).astype(feature_dtype, copy=False)
                 else:
                     padded = [
                         _pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays
                     ]
-                    save_dict["translated"] = np.concatenate(padded, axis=0)
+                    save_dict["translated"] = np.concatenate(padded, axis=0).astype(
+                        feature_dtype, copy=False
+                    )
             else:
                 items: list[np.ndarray] = []
                 offset = 0
@@ -968,17 +978,17 @@ def _finalize_batch_arrays(
                     for i in range(n):
                         L = int(lens[i])
                         if one_hot:
-                            items.append(arr[i, :, :L, :])
+                            items.append(
+                                arr[i, :, :L, :].astype(feature_dtype, copy=False)
+                            )
                         else:
-                            items.append(arr[i, :, :L])
+                            items.append(
+                                arr[i, :, :L].astype(feature_dtype, copy=False)
+                            )
                     offset += n
                 save_dict["translated"] = _to_object_array(items)
         else:
-            save_dict["translated"] = (
-                np.empty((0,), dtype=np.float32)
-                if one_hot
-                else np.empty((0,), dtype=np.int32)
-            )
+            save_dict["translated"] = np.empty((0,), dtype=feature_dtype)
         save_dict["codon_map"] = codon_map_name
 
     return save_dict
@@ -998,6 +1008,7 @@ def _convert_to_npz(
     nucleotide_map: dict[str, int],
     compress: str,
     pad: bool = True,
+    dtype: str = "auto",
 ) -> None:
     """Convert a CSV dataset to an ``.npz`` file.
 
@@ -1037,6 +1048,9 @@ def _convert_to_npz(
 
     codon_map = _get_codon_map(codon_map_name)
     codon_map_len = len(codon_map)
+    feature_dtype = _resolve_feature_dtype(
+        fmt, one_hot, dtype, codon_map_len, nucleotide_map
+    )
     if codon_map_len == 4096:
         standard_codon_lut3 = _build_standard_codon_lut3()
         dicodon_lut = _build_dicodon_lut(codon_map)
@@ -1139,6 +1153,7 @@ def _convert_to_npz(
         pad_int=pad_int,
         nucleotide_map=nucleotide_map,
         codon_map_name=codon_map_name,
+        feature_dtype=feature_dtype,
     )
     save_dict.update(
         {
@@ -1165,6 +1180,41 @@ def _zip_compression(compress: str) -> tuple[int, int | None]:
     raise ValueError(f"Invalid compress: {compress}. Choose from: default, none, fast")
 
 
+def _resolve_feature_dtype(
+    fmt: str,
+    one_hot: bool,
+    dtype_arg: str,
+    codon_map_len: int | None,
+    nucleotide_map: dict[str, int],
+) -> np.dtype:
+    """Return the smallest NumPy dtype that fits the integer vocabulary.
+
+    One-hot float outputs always use ``float32``. For integer outputs the
+    default ``auto`` mode picks ``int8`` / ``uint8`` / ``int16`` / ``int32``
+    based on the maximum token value.
+    """
+    if one_hot:
+        return np.dtype(np.float32)
+
+    dtype_arg = dtype_arg.lower()
+    if dtype_arg != "auto":
+        return np.dtype(dtype_arg)
+
+    max_token = 0
+    if fmt in ("translated", "both") and codon_map_len is not None:
+        max_token = max(max_token, codon_map_len)
+    if fmt in ("nucleotide", "both"):
+        max_token = max(max_token, max(nucleotide_map.values()))
+
+    if max_token < 128:
+        return np.dtype(np.int8)
+    if max_token < 256:
+        return np.dtype(np.uint8)
+    if max_token < 32768:
+        return np.dtype(np.int16)
+    return np.dtype(np.int32)
+
+
 def _convert_to_npz_streaming(
     input_path: str,
     output_path: str,
@@ -1179,6 +1229,7 @@ def _convert_to_npz_streaming(
     compress: str,
     max_memory_bytes: int,
     pad: bool,
+    dtype: str = "auto",
 ) -> None:
     """Memory-bounded CSV -> NPZ converter that writes sharded batches.
 
@@ -1191,6 +1242,10 @@ def _convert_to_npz_streaming(
     codon_map_len: int | None = None
     if fmt in ("translated", "both"):
         codon_map_len = len(_get_codon_map(codon_map_name))
+
+    feature_dtype = _resolve_feature_dtype(
+        fmt, one_hot, dtype, codon_map_len, nucleotide_map
+    )
 
     total_per_row = _estimate_total_bytes_per_input_row(
         crop_sizes, strides, fmt, one_hot, codon_map_len
@@ -1253,6 +1308,7 @@ def _convert_to_npz_streaming(
                         pad_int=pad_int,
                         nucleotide_map=nucleotide_map,
                         codon_map_name=codon_map_name,
+                        feature_dtype=feature_dtype,
                     )
 
                     if not keys:
@@ -1326,6 +1382,7 @@ def convert_dataset(
     codon_map: str = "codon_id",
     nucleotide_map: str | None = None,
     compress: str = "default",
+    dtype: str = "auto",
     max_length: int = 5000,  # deprecated, ignored
     use_embedding_layer: bool = True,  # deprecated, ignored
     max_memory_mb: int | None = None,
@@ -1478,6 +1535,7 @@ def convert_dataset(
             codon_map_name=codon_map,
             nucleotide_map=nucleotide_map_dict,
             compress=compress,
+            dtype=dtype,
             max_memory_bytes=budget,
             pad=pad,
         )
@@ -1495,5 +1553,6 @@ def convert_dataset(
             codon_map_name=codon_map,
             nucleotide_map=nucleotide_map_dict,
             compress=compress,
+            dtype=dtype,
             pad=pad,
         )

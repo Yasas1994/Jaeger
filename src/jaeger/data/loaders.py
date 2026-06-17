@@ -100,6 +100,8 @@ def _load_ragged_numpy_dataset(
             nuc = data["nucleotide"][i]
             if seq_onehot and nuc.ndim == 2 and lookup is not None:
                 nuc = lookup[nuc]
+            elif nuc.ndim == 2:
+                nuc = nuc.astype(np.int32)
             features["nucleotide"] = nuc
         if input_type in ("translated", "both"):
             trans = data["translated"][i]
@@ -108,6 +110,8 @@ def _load_ragged_numpy_dataset(
                 mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
                 oh = tf.one_hot(t, depth=codon_depth, dtype=tf.float32)
                 trans = (oh * mask).numpy()
+            elif trans.ndim == 2:
+                trans = trans.astype(np.int32)
             features["translated"] = trans
         return features
 
@@ -174,6 +178,9 @@ def _load_sharded_numpy_dataset(
 
     def _convert_feature(arr: np.ndarray, key: str) -> np.ndarray:
         if not seq_onehot:
+            # Keras Embedding layers expect int32 inputs.
+            if arr.ndim == 2:
+                return arr.astype(np.int32)
             return arr
         if key == "nucleotide" and arr.ndim == 2 and lookup is not None:
             return lookup[arr]
@@ -354,12 +361,16 @@ def _load_cropped_numpy_dataset(
                 mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
                 oh = tf.one_hot(t, depth=int(codon_depth), dtype=tf.float32)
                 trans = oh * mask
+            elif trans.dtype != tf.float32:
+                trans = tf.cast(trans, tf.int32)
             features["translated"] = trans
         if "nucleotide" in feature_keys:
             nuc = _slice_crop(arrays["nucleotide"], idx, start, length)
             if seq_onehot and nuc.shape.rank == 2:
                 n = tf.cast(nuc, tf.int32)
                 nuc = tf.gather(lookup_t, n)
+            elif nuc.dtype != tf.float32:
+                nuc = tf.cast(nuc, tf.int32)
             features["nucleotide"] = nuc
 
         label = labels_t[idx]
@@ -549,6 +560,12 @@ def _load_numpy_dataset(
     # Binary heads expect shape (N, 1), multi-class heads expect (N, num_classes).
     if labels.ndim == 1 and num_classes == 1:
         labels = labels[:, np.newaxis]
+
+    # Keras Embedding layers expect int32 inputs, so upcast any smaller
+    # integer feature arrays before they reach the model.
+    for key in features:
+        if np.issubdtype(features[key].dtype, np.integer):
+            features[key] = features[key].astype(np.int32)
 
     # Keep the source arrays on CPU; the GPU only sees training batches.
     with tf.device("/CPU:0"):
