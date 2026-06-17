@@ -690,3 +690,49 @@ class TestFinalizeBatchArrays:
         )
         assert finalized["nucleotide"].shape == (0,)
         assert finalized["translated"].shape == (0,)
+
+
+class TestStreamingConvert:
+    def _csv(self, tmp_path: Path, lines: list[str]) -> str:
+        path = tmp_path / "input.csv"
+        path.write_text("\n".join(lines))
+        return str(path)
+
+    def test_streaming_matches_fast_path(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0," + "A" * 25, "1," + "G" * 25])
+        fast = tmp_path / "fast.npz"
+        stream = tmp_path / "stream.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(fast),
+            fmt="nucleotide",
+            crop_sizes=[20],
+            strides=[10],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        convert._convert_to_npz_streaming(
+            input_path=csv,
+            output_path=str(stream),
+            fmt="nucleotide",
+            crop_sizes=[20],
+            strides=[10],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            max_memory_bytes=1 * 1024 * 1024,
+            pad=True,
+        )
+        fast_data = np.load(fast)
+        stream_data = np.load(stream)
+        assert np.array_equal(fast_data["labels"], stream_data["labels"])
+        assert np.array_equal(fast_data["nucleotide"], stream_data["nucleotide"])

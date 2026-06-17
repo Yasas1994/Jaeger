@@ -10,9 +10,11 @@ Supported output representations:
 from __future__ import annotations
 
 import io
-import itertools  # noqa: F401
+import itertools
 import json
 import math
+import shutil
+import tempfile
 import zipfile
 from functools import partial
 from multiprocessing import cpu_count
@@ -1122,6 +1124,127 @@ def _convert_to_npz(
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     _save_npz(output_path, save_dict, compress)
+
+
+def _convert_to_npz_streaming(
+    input_path: str,
+    output_path: str,
+    fmt: str,
+    crop_sizes: list[int],
+    strides: list[int],
+    num_classes: int,
+    num_workers: int | None,
+    one_hot: bool,
+    pad_int: int,
+    codon_map_name: str,
+    nucleotide_map: dict[str, int],
+    compress: str,
+    max_memory_bytes: int,
+    pad: bool,
+) -> None:
+    """Memory-bounded CSV -> NPZ converter that shards encoded batches to disk."""
+    max_crop = max(crop_sizes) if crop_sizes else 500
+    codon_map_len: int | None = None
+    if fmt in ("translated", "both"):
+        codon_map_len = len(_get_codon_map(codon_map_name))
+
+    per_row = _estimate_output_bytes_per_row(max_crop, fmt, one_hot, codon_map_len)
+    batch_rows = max(1, int(max_memory_bytes * 0.8 / per_row))
+
+    nucleotide_lookups = _build_nucleotide_lookups(nucleotide_map)
+    _, ascii_lut, comp_lut = _build_numba_lookups()
+
+    codon_map = _get_codon_map(codon_map_name)
+    if len(codon_map) == 4096:
+        standard_codon_lut3 = _build_standard_codon_lut3()
+        dicodon_lut = _build_dicodon_lut(codon_map)
+        codon_lut = np.empty(0, dtype=np.int32)
+    else:
+        codon_lut = _build_codon_lut(codon_map)
+        standard_codon_lut3 = np.empty(0, dtype=np.int32)
+        dicodon_lut = np.empty(0, dtype=np.int32)
+
+    worker_kwargs = {
+        "fmt": fmt,
+        "crop_sizes": crop_sizes,
+        "strides": strides,
+        "one_hot": one_hot,
+        "pad_int": pad_int,
+        "nucleotide_lookups": nucleotide_lookups,
+        "codon_lut": codon_lut,
+        "codon_map_len": codon_map_len if codon_map_len is not None else 0,
+        "standard_codon_lut3": standard_codon_lut3,
+        "dicodon_lut": dicodon_lut,
+        "ascii_lut": ascii_lut,
+        "comp_lut": comp_lut,
+    }
+
+    tmp_dir = Path(
+        tempfile.mkdtemp(prefix="jaeger_optimize_", dir=Path(output_path).parent)
+    )
+    try:
+        keys: list[str] = []
+        batch_idx = 0
+        with open(input_path) as f:
+            while True:
+                batch_lines = list(itertools.islice(f, batch_rows))
+                if not batch_lines:
+                    break
+
+                result = _process_chunk_npz(batch_lines, **worker_kwargs)
+                batch_dict = _finalize_batch_arrays(
+                    result,
+                    fmt=fmt,
+                    crop_sizes=crop_sizes,
+                    one_hot=one_hot,
+                    codon_map_len=codon_map_len,
+                    pad=pad,
+                    pad_int=pad_int,
+                    nucleotide_map=nucleotide_map,
+                    codon_map_name=codon_map_name,
+                )
+
+                if not keys:
+                    keys = [
+                        k
+                        for k in batch_dict.keys()
+                        if k not in ("nucleotide_map", "codon_map")
+                    ]
+
+                for key in keys:
+                    shard_path = tmp_dir / f"batch_{batch_idx:05d}_{key}.npy"
+                    np.save(shard_path, batch_dict[key])
+                batch_idx += 1
+
+        if batch_idx == 0:
+            raise ValueError(f"Input file is empty: {input_path}")
+
+        save_dict: dict[str, np.ndarray] = {}
+        for key in keys:
+            shard_paths = sorted(tmp_dir.glob(f"batch_*_{key}.npy"))
+            shards = [np.load(p, allow_pickle=True) for p in shard_paths]
+            save_dict[key] = np.concatenate(shards, axis=0)
+
+        save_dict.update(
+            {
+                "pad_int": np.int32(pad_int),
+                "crop_sizes": np.array(crop_sizes, dtype=np.int32),
+                "strides": np.array(strides, dtype=np.int32),
+                "padded": np.bool_(pad),
+            }
+        )
+        if fmt in ("nucleotide", "both"):
+            save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
+        if fmt in ("translated", "both"):
+            save_dict["codon_map"] = codon_map_name
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        _save_npz(output_path, save_dict, compress)
+    except Exception:
+        Path(output_path).unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
