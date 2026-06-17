@@ -600,6 +600,11 @@ def optimize_data_core(
         JSON string with mappings for ``A``, ``C``, ``G``, ``T``, ``N``.
     compress : str, optional
         Compression mode for the output archive (default: ``default``).
+    max_memory_mb : int | None, optional
+        Memory budget in MB for encoded output buffers. ``None`` uses ~75% of
+        available RAM. ``0`` disables streaming.
+    pad : bool, optional
+        If True, pad all crops to the global maximum length. Default is False.
     max_length : int, optional
         Deprecated and ignored. Kept for backward compatibility.
     """

@@ -424,3 +424,27 @@ class TestRaggedLoaders:
         features, _ = next(iter(ds))
         assert features["translated"].shape == (6, 4, 65)
         assert features["translated"].dtype == tf.float32
+
+
+def test_convert_and_load_unpadded(simple_csv_path: str, tmp_path: Path):
+    from jaeger.dataops import convert
+
+    out = tmp_path / "unpadded.npz"
+    convert.convert_dataset(
+        input_path=simple_csv_path,
+        output_path=str(out),
+        format="nucleotide",
+        crop_size=24,
+        num_classes=2,
+        num_workers=1,
+        pad=False,
+    )
+    ds = loaders._load_numpy_dataset(
+        str(out),
+        input_type="nucleotide",
+        seq_onehot=False,
+        num_classes=2,
+    )
+    features, label = next(iter(ds))
+    assert features["nucleotide"].shape[1] <= 24
+    assert label.shape == (2,)

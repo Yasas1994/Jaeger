@@ -861,3 +861,21 @@ class TestStreamingConvert:
         stream_data = np.load(stream)
         assert np.array_equal(fast_data["labels"], stream_data["labels"])
         assert np.array_equal(fast_data["nucleotide"], stream_data["nucleotide"])
+
+    def test_streaming_unpadded(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0," + "A" * 25, "1," + "G" * 25])
+        out = tmp_path / "out.npz"
+        convert.convert_dataset(
+            input_path=csv,
+            output_path=str(out),
+            format="nucleotide",
+            crop_size=20,
+            stride=10,
+            num_classes=2,
+            num_workers=1,
+            max_memory_mb=1,
+            pad=False,
+        )
+        data = np.load(out, allow_pickle=True)
+        assert data["padded"].item() is False
+        assert data["nucleotide"].dtype == object
