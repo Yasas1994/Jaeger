@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import zipfile
 from functools import partial
 from multiprocessing import cpu_count
@@ -43,6 +44,7 @@ def _estimate_onehot_memory(
     fmt: str,
     one_hot: bool,
     codon_map_len: int | None = None,
+    stride: int = 0,
 ) -> int:
     """Return the estimated raw float32 bytes needed for one-hot output."""
     if not one_hot:
@@ -51,6 +53,12 @@ def _estimate_onehot_memory(
     total_rows = max(0, total_rows)
     crop_size = max(0, crop_size)
     estimated = 0
+
+    # Overlapping crops increase the number of rows generated from the input.
+    multiplier = 1
+    if stride > 0 and crop_size > 0:
+        multiplier = math.ceil(crop_size / stride)
+    total_rows = total_rows * multiplier
 
     if fmt in ("nucleotide", "both"):
         estimated += total_rows * 2 * crop_size * 4 * np.dtype(np.float32).itemsize
@@ -295,12 +303,14 @@ def _crop_starts(seq_len: int, crop_size: int, stride: int) -> list[int]:
     return starts
 
 
-def _generate_crops(seq_len: int, crop_sizes: list[int], stride: int):
+def _generate_crops(seq_len: int, crop_sizes: list[int], strides: list[int]):
     """Generate (crop_size, start, length) tuples for one sequence.
 
     Yields one record per crop, ordered by ``crop_sizes`` then by start index.
+    ``strides`` must have the same length as ``crop_sizes`` and provides the
+    stride for each corresponding crop size.
     """
-    for crop_size in crop_sizes:
+    for crop_size, stride in zip(crop_sizes, strides):
         starts = _crop_starts(seq_len, crop_size, stride)
         for start in starts:
             length = min(crop_size, seq_len - start)
@@ -672,7 +682,7 @@ def _process_chunk_npz(
     lines,
     fmt,
     crop_sizes,
-    stride,
+    strides,
     one_hot,
     pad_int,
     nucleotide_lookups,
@@ -711,7 +721,7 @@ def _process_chunk_npz(
     all_lengths = []
     all_translated_lengths = []
 
-    for crop_size in crop_sizes:
+    for crop_size, stride in zip(crop_sizes, strides):
         batch_seqs = []
         batch_lengths = []
         batch_labels = []
@@ -810,7 +820,7 @@ def _convert_to_npz(
     output_path: str,
     fmt: str,
     crop_sizes: list[int],
-    stride: int,
+    strides: list[int],
     num_classes: int,
     num_workers: int | None,
     one_hot: bool,
@@ -822,13 +832,18 @@ def _convert_to_npz(
     """Convert a CSV dataset to an ``.npz`` file.
 
     Supports ``nucleotide``, ``translated``, and ``both`` output formats, with
-    optional one-hot encoding and multiple crop sizes sharing one stride.
+    optional one-hot encoding and per-crop-size strides.
     """
     import warnings
 
     valid_fmts = ["nucleotide", "translated", "both"]
     if fmt not in valid_fmts:
         raise ValueError(f"Invalid format: {fmt}. Choose from: {', '.join(valid_fmts)}")
+
+    if len(strides) != len(crop_sizes):
+        raise ValueError(
+            f"strides ({len(strides)}) must match crop_sizes ({len(crop_sizes)})"
+        )
 
     if not output_path.endswith(".npz"):
         warnings.warn(
@@ -902,7 +917,7 @@ def _convert_to_npz(
     worker_kwargs = {
         "fmt": fmt,
         "crop_sizes": crop_sizes,
-        "stride": stride,
+        "strides": strides,
         "one_hot": one_hot,
         "pad_int": pad_int,
         "nucleotide_lookups": nucleotide_lookups,
@@ -949,7 +964,7 @@ def _convert_to_npz(
         "labels": result["labels"],
         "pad_int": np.int32(pad_int),
         "crop_sizes": np.array(crop_sizes, dtype=np.int32),
-        "stride": np.int32(stride),
+        "strides": np.array(strides, dtype=np.int32),
     }
 
     if fmt in ("nucleotide", "both"):
@@ -1006,6 +1021,7 @@ def convert_dataset(
     format: str,
     crop_size: int | tuple[int, ...] | list[int] = 500,
     stride: int = 0,
+    strides: list[int] | None = None,
     num_classes: int = 3,
     num_workers: int | None = None,
     one_hot: bool = False,
@@ -1036,8 +1052,11 @@ def convert_dataset(
         Sequence crop size(s). An int is wrapped as ``[crop_size]``; a tuple or
         list is converted to a list (default: 500).
     stride : int, optional
-        Sliding-window stride. ``0`` means a single crop per sequence
-        (default: 0).
+        Sliding-window stride applied to every crop size. ``0`` means a single
+        crop per sequence (default: 0). Ignored when ``strides`` is provided.
+    strides : list[int] | None, optional
+        Per-crop-size strides. If given, it overrides ``stride`` and must have
+        the same length as the resolved ``crop_sizes``.
     num_classes : int, optional
         Number of output classes (default: 3).
     num_workers : int | None, optional
@@ -1071,6 +1090,13 @@ def convert_dataset(
     else:
         crop_sizes = list(crop_size)
 
+    if strides is None:
+        strides = [stride] * len(crop_sizes)
+    elif len(strides) != len(crop_sizes):
+        raise ValueError(
+            f"strides ({len(strides)}) must match crop_sizes ({len(crop_sizes)})"
+        )
+
     format = format.lower()
     valid_formats = ["nucleotide", "translated", "both"]
     if format not in valid_formats:
@@ -1082,14 +1108,20 @@ def convert_dataset(
 
     logger.info(f"Converting {input_path} -> {output_path}")
     logger.info(
-        f"Format: {format}, Crop sizes: {crop_sizes}, Stride: {stride}, "
+        f"Format: {format}, Crop sizes: {crop_sizes}, Strides: {strides}, "
         f"Num classes: {num_classes}"
     )
 
     # Memory guard for one-hot outputs.
     if one_hot:
         total_lines = _count_lines(input_path)
-        max_crop = max(crop_sizes) if crop_sizes else 500
+        if crop_sizes:
+            max_crop_idx = int(np.argmax(crop_sizes))
+            max_crop = crop_sizes[max_crop_idx]
+            max_crop_stride = strides[max_crop_idx]
+        else:
+            max_crop = 500
+            max_crop_stride = 0
         codon_map_len: int | None = None
         if format in ("translated", "both"):
             codon_map_arr = _get_codon_map(codon_map)
@@ -1100,6 +1132,7 @@ def convert_dataset(
             fmt=format,
             one_hot=one_hot,
             codon_map_len=codon_map_len,
+            stride=max_crop_stride,
         )
         _check_onehot_memory(estimated, psutil.virtual_memory().available)
 
@@ -1108,7 +1141,7 @@ def convert_dataset(
         output_path=output_path,
         fmt=format,
         crop_sizes=crop_sizes,
-        stride=stride,
+        strides=strides,
         num_classes=num_classes,
         num_workers=num_workers,
         one_hot=one_hot,

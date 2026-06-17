@@ -555,6 +555,7 @@ def optimize_data_core(
     format: str,
     crop_size: tuple[int, ...] = (500,),
     stride: int = 0,
+    strides: list[int] | None = None,
     num_classes: int = 3,
     num_workers: int | None = None,
     one_hot: bool = False,
@@ -580,7 +581,9 @@ def optimize_data_core(
     crop_size : tuple[int, ...]
         Sequence crop size(s) (default: ``(500,)``).
     stride : int, optional
-        Sliding-window stride (default: 0).
+        Sliding-window stride applied to every crop size (default: 0).
+    strides : list[int] | None, optional
+        Per-crop-size strides. If given, overrides ``stride``.
     num_classes : int, optional
         Number of classes (default: 3).
     num_workers : int | None, optional
@@ -604,6 +607,7 @@ def optimize_data_core(
         format=format,
         crop_size=crop_size,
         stride=stride,
+        strides=strides,
         num_classes=num_classes,
         num_workers=num_workers,
         one_hot=one_hot,

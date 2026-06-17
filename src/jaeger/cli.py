@@ -998,6 +998,13 @@ def convert(**kwargs):
     help="Step between crops (0 = one crop per sequence)",
 )
 @click.option(
+    "--overlap",
+    type=click.FloatRange(0.0, 1.0, min_open=False, max_open=False),
+    default=None,
+    show_default=True,
+    help="Overlap between crops as a fraction of each crop size (0.0-1.0). Overrides --stride.",
+)
+@click.option(
     "--num-classes",
     type=int,
     default=3,
@@ -1061,12 +1068,20 @@ def optimize_data(**kwargs):
     """Convert CSV training data to an optimized NPZ dataset."""
     from jaeger.commands.utils import optimize_data_core
 
+    crop_sizes = list(kwargs.get("crop_size"))
+    overlap = kwargs.get("overlap")
+    if overlap is not None:
+        strides = [int(cs * (1 - overlap)) for cs in crop_sizes]
+    else:
+        strides = None
+
     optimize_data_core(
         input_path=kwargs.get("input"),
         output_path=kwargs.get("output"),
         format=kwargs.get("format"),
-        crop_size=kwargs.get("crop_size"),
+        crop_size=crop_sizes,
         stride=kwargs.get("stride"),
+        strides=strides,
         num_classes=kwargs.get("num_classes"),
         num_workers=kwargs.get("num_workers"),
         one_hot=kwargs.get("one_hot"),

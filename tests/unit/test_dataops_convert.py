@@ -163,10 +163,24 @@ class TestCropHelpers:
         assert starts[-1] + 20 == 55
 
     def test_generate_crops_multiple_sizes(self):
-        crops = list(convert._generate_crops(25, [20, 10], 10))
+        crops = list(convert._generate_crops(25, [20, 10], [10, 10]))
         expected = [
             (20, 0, 20),
             (20, 5, 20),
+            (10, 0, 10),
+            (10, 10, 10),
+            (10, 15, 10),
+        ]
+        assert crops == expected
+
+    def test_generate_crops_per_size_strides(self):
+        crops = list(convert._generate_crops(25, [20, 10], [5, 10]))
+        expected = [
+            # crop_size 20, stride 5 -> starts 0, 5, 5? Let's compute:
+            # _crop_starts(25,20,5): range(0,6,5) -> [0,5]; last+crop=25 so no tail
+            (20, 0, 20),
+            (20, 5, 20),
+            # crop_size 10, stride 10 -> starts 0,10,15? wait range(0,16,10) -> [0,10]; 10+10=20<25 -> append 15
             (10, 0, 10),
             (10, 10, 10),
             (10, 15, 10),
@@ -191,6 +205,48 @@ class TestCropHelpers:
         assert padded.shape == (2, 2)
 
 
+class TestOverlap:
+    def test_per_crop_strides_produce_expected_crops(self, tmp_path: Path):
+        csv_path = tmp_path / "input.csv"
+        csv_path.write_text("0," + "A" * 25 + "\n")
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=str(csv_path),
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[20, 10],
+            strides=[10, 5],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        # crop 20 with stride 10 -> starts [0, 5] (tail window)
+        # crop 10 with stride 5  -> starts [0, 5, 10, 15]
+        assert data["labels"].shape[0] == 6
+
+    def test_overlap_memory_estimate_multiplier(self):
+        single = convert._estimate_onehot_memory(
+            total_rows=1,
+            crop_size=100,
+            fmt="nucleotide",
+            one_hot=True,
+            stride=100,
+        )
+        overlap = convert._estimate_onehot_memory(
+            total_rows=1,
+            crop_size=100,
+            fmt="nucleotide",
+            one_hot=True,
+            stride=50,
+        )
+        assert overlap == single * 2
+
+
 class TestConvertToNpz:
     def _csv(self, tmp_path: Path, lines: list[str]) -> str:
         path = tmp_path / "input.csv"
@@ -205,7 +261,7 @@ class TestConvertToNpz:
             output_path=str(out),
             fmt="nucleotide",
             crop_sizes=[12],
-            stride=0,
+            strides=[0],
             num_classes=2,
             num_workers=1,
             one_hot=False,
@@ -229,7 +285,7 @@ class TestConvertToNpz:
             output_path=str(out),
             fmt="translated",
             crop_sizes=[24],
-            stride=0,
+            strides=[0],
             num_classes=2,
             num_workers=1,
             one_hot=False,
@@ -251,7 +307,7 @@ class TestConvertToNpz:
             output_path=str(out),
             fmt="both",
             crop_sizes=[24],
-            stride=0,
+            strides=[0],
             num_classes=2,
             num_workers=1,
             one_hot=False,
@@ -272,7 +328,7 @@ class TestConvertToNpz:
             output_path=str(out),
             fmt="nucleotide",
             crop_sizes=[4],
-            stride=0,
+            strides=[0],
             num_classes=2,
             num_workers=1,
             one_hot=True,
@@ -293,7 +349,7 @@ class TestConvertToNpz:
             output_path=str(out),
             fmt="nucleotide",
             crop_sizes=[20, 10],
-            stride=10,
+            strides=[10, 10],
             num_classes=2,
             num_workers=1,
             one_hot=False,
@@ -314,7 +370,7 @@ class TestConvertToNpz:
             output_path=str(out),
             fmt="translated",
             crop_sizes=[24],
-            stride=0,
+            strides=[0],
             num_classes=2,
             num_workers=1,
             one_hot=False,
@@ -338,7 +394,7 @@ class TestConvertToNpz:
                 output_path=str(out),
                 fmt="unknown",
                 crop_sizes=[4],
-                stride=0,
+                strides=[0],
                 num_classes=2,
                 num_workers=1,
                 one_hot=False,
