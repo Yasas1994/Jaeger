@@ -25,6 +25,7 @@ from jaeger.seqops.encode import process_string_train
 from jaeger.utils.misc import load_model_config, numerize
 from jaeger.utils.logging import get_logger
 from jaeger.data.loaders import _load_numpy_dataset
+from jaeger.dataops.reliability_generator import generate_reliability_data
 
 try:
     from icecream import ic
@@ -366,10 +367,57 @@ def train_fragment_core(**kwargs):
             else:
                 logger.info("Skipping training — classification model")
 
+        # ============== generate reliability data ========================
+        if kwargs.get("generate_reliability_data", False):
+            generator_cfg = builder.train_cfg.get("reliability_data_generation", {})
+
+            if data_format == "csv":
+                raw_csv_path = _train_data.get("train", {}).get("paths", [None])[0]
+            else:
+                raw_csv_path = generator_cfg.get("raw_csv_path")
+
+            if not raw_csv_path:
+                raise ValueError(
+                    "--generate_reliability_data requires raw CSV sequences. "
+                    "Set reliability_data_generation.raw_csv_path in the config "
+                    "or use data_format: csv for classifier training."
+                )
+
+            if builder._get_reliability_fragment_paths().get("train", {}).get("paths"):
+                logger.warning(
+                    "--generate_reliability_data is active; ignoring "
+                    "fragment_reliability_data paths provided in the config"
+                )
+
+            output_dir = generator_cfg.get("output_dir") or str(
+                Path(raw_csv_path).parent / "reliability_generated"
+            )
+            logger.info(f"Generating reliability data in {output_dir}")
+
+            _rel_train_data = generate_reliability_data(
+                classifier=models["jaeger_classifier"],
+                raw_csv_path=raw_csv_path,
+                output_dir=output_dir,
+                string_processor_config=string_processor_config,
+                model_cfg=builder.model_cfg,
+                classifier_out_dim=builder.classifier_out_dim,
+                reliability_out_dim=builder.reliability_out_dim,
+                batch_size=builder.train_cfg.get("batch_size"),
+                id_threshold=kwargs.get("id_threshold", 0.8),
+                synthetic_ood_threshold=kwargs.get("synthetic_ood_threshold", 0.8),
+                synthetic_ood_multiplier=kwargs.get("synthetic_ood_multiplier", 1.0),
+                generator_cfg=generator_cfg,
+            )
+            data_format = "numpy"
+            logger.info(
+                "Reliability data generated; switching reliability loader to numpy"
+            )
+
         # ============== reliability model ========================
         builder.compile_model(models, train_branch="reliability")
 
-        _rel_train_data = builder._get_reliability_fragment_paths()
+        if not kwargs.get("generate_reliability_data", False):
+            _rel_train_data = builder._get_reliability_fragment_paths()
         rel_train_data = {"train": None, "validation": None}
 
         # ============== check convergence & train reliability ========

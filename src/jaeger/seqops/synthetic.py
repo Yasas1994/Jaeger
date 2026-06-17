@@ -83,3 +83,50 @@ def generate_low_entropy_sequence(
     raise ValueError(
         f"Failed to generate low-entropy sequence after {max_attempts} attempts"
     )
+
+
+def _random_window(seq_len: int, window_fraction: float) -> tuple[int, int]:
+    """Return ``(start, end)`` of a random window covering ``window_fraction`` of the sequence."""
+    window_len = max(1, int(seq_len * window_fraction))
+    start = random.randint(0, max(0, seq_len - window_len))
+    return start, start + window_len
+
+
+def apply_shuffle(seq: str) -> str:
+    """Return a randomly permuted version of *seq*."""
+    chars = list(seq)
+    random.shuffle(chars)
+    return "".join(chars)
+
+
+def apply_subseq_repeat_window(seq: str, window_fraction: float = 0.25) -> str:
+    """Replace a random window with a repeated subsequence from *seq*."""
+    if not seq:
+        return seq
+    seq_len = len(seq)
+    start, end = _random_window(seq_len, window_fraction)
+    window_len = end - start
+    # choose a subsequence from the original sequence
+    sub_len = random.randint(1, min(window_len, seq_len))
+    sub_start = random.randint(0, seq_len - sub_len)
+    sub = seq[sub_start : sub_start + sub_len]
+    repeats = (window_len // sub_len) + 1
+    fill = (sub * repeats)[:window_len]
+    return seq[:start] + fill + seq[end:]
+
+
+def apply_tandem_repeat_window(
+    seq: str,
+    motif_length_range: tuple[int, int] = (3, 10),
+    window_fraction: float = 0.25,
+) -> str:
+    """Replace a random window with a tandem repeat of a short random motif."""
+    if not seq:
+        return seq
+    seq_len = len(seq)
+    start, end = _random_window(seq_len, window_fraction)
+    window_len = end - start
+    motif_len = random.randint(*motif_length_range)
+    motif = "".join(random.choices("ACGT", k=motif_len))
+    fill = (motif * ((window_len // motif_len) + 1))[:window_len]
+    return seq[:start] + fill + seq[end:]

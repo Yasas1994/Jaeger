@@ -401,6 +401,33 @@ def tune(**kwargs):
     help="save the model with weights from last checkpoints without training",
 )
 @click.option(
+    "--generate_reliability_data",
+    is_flag=True,
+    default=False,
+    help="Generate reliability training data after classifier training",
+)
+@click.option(
+    "--id_threshold",
+    type=float,
+    default=0.8,
+    show_default=True,
+    help="Confidence threshold for selecting ID / high-confidence OOD samples",
+)
+@click.option(
+    "--synthetic_ood_threshold",
+    type=float,
+    default=0.8,
+    show_default=True,
+    help="Confidence threshold for synthetic OOD samples",
+)
+@click.option(
+    "--synthetic_ood_multiplier",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Number of synthetic OOD sequences to generate per real training sequence",
+)
+@click.option(
     "--mixed_precision",
     is_flag=True,
     required=False,

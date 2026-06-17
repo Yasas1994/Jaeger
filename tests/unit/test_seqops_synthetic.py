@@ -52,3 +52,25 @@ def test_generate_low_entropy_sequence_max_attempts():
         synthetic.generate_low_entropy_sequence(
             200, window_size=50, threshold=0.0, max_attempts=1
         )
+
+
+def test_apply_shuffle_preserves_length_and_bases():
+    seq = "ATCGATCGATCG"
+    shuffled = synthetic.apply_shuffle(seq)
+    assert len(shuffled) == len(seq)
+    assert sorted(shuffled) == sorted(seq)
+    assert shuffled != seq  # very unlikely to be identical
+
+
+def test_apply_subseq_repeat_window_preserves_length():
+    seq = "ATCG" * 20
+    corrupted = synthetic.apply_subseq_repeat_window(seq, window_fraction=0.25)
+    assert len(corrupted) == len(seq)
+
+
+def test_apply_tandem_repeat_window_preserves_length():
+    seq = "ATCG" * 20
+    corrupted = synthetic.apply_tandem_repeat_window(
+        seq, motif_length_range=(3, 6), window_fraction=0.25
+    )
+    assert len(corrupted) == len(seq)
