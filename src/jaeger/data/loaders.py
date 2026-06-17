@@ -197,10 +197,11 @@ def _load_sharded_numpy_dataset(
         }
 
     def _feature_spec(arr: np.ndarray) -> tf.TensorSpec:
-        # Keep all axes static except the sequence-length axis (second from last).
+        # Feature arrays are (frames, length) or (frames, length, depth).
+        # The sequence-length axis is always axis 1.
         shape = list(arr.shape)
         if len(shape) >= 2:
-            shape[-2] = None
+            shape[1] = None
         return tf.TensorSpec(shape=shape, dtype=tf.as_dtype(arr.dtype))
 
     sample = _sample_features(0)
@@ -276,7 +277,7 @@ def _load_cropped_numpy_dataset(
     num_classes: int | None,
     one_hot_labels: bool,
 ) -> tf.data.Dataset:
-    """Load a dense NPZ and slice runtime crops from full-length arrays."""
+    """Load a NumPy NPZ and slice runtime crops from full-length arrays."""
     if input_type == "both":
         raise NotImplementedError(
             "Runtime crop generation for input_type='both' is not supported yet."
@@ -287,11 +288,10 @@ def _load_cropped_numpy_dataset(
         codon_map = _get_codon_map(codon_map_name)
         codon_depth = len(codon_map) + 1
 
-    lookup_t = None
+    lookup = None
     if input_type in ("nucleotide", "both") and seq_onehot:
         nucleotide_map = json.loads(str(data["nucleotide_map"]))
         lookup = _build_nucleotide_onehot_lookup(nucleotide_map, nucleotide_onehot_map)
-        lookup_t = tf.constant(lookup, dtype=tf.float32)
 
     if "labels" in data:
         labels = data["labels"]
@@ -300,25 +300,113 @@ def _load_cropped_numpy_dataset(
     else:
         raise KeyError("NPZ must contain 'labels' or 'label' array")
     labels = np.asarray(labels, dtype=np.int32)
-    labels_t = tf.constant(labels)
     n = len(labels)
 
     feature_keys: list[str] = []
-    arrays: dict[str, tf.Tensor] = {}
+    np_arrays: dict[str, np.ndarray] = {}
     if input_type in ("translated", "both"):
         feature_keys.append("translated")
-        arrays["translated"] = tf.constant(data["translated"])
+        np_arrays["translated"] = data["translated"]
         if "translated_lengths" in data:
             lengths = np.asarray(data["translated_lengths"], dtype=np.int32)
         else:
-            lengths = np.full(n, arrays["translated"].shape[-2], dtype=np.int32)
+            lengths = np.full(n, np_arrays["translated"].shape[-2], dtype=np.int32)
     if input_type in ("nucleotide", "both"):
         feature_keys.append("nucleotide")
-        arrays["nucleotide"] = tf.constant(data["nucleotide"])
+        np_arrays["nucleotide"] = data["nucleotide"]
         if "lengths" in data:
             lengths = np.asarray(data["lengths"], dtype=np.int32)
         else:
-            lengths = np.full(n, arrays["nucleotide"].shape[-2], dtype=np.int32)
+            lengths = np.full(n, np_arrays["nucleotide"].shape[-2], dtype=np.int32)
+
+    is_object = bool(
+        np_arrays[feature_keys[0]].ndim == 1
+        and np_arrays[feature_keys[0]].dtype == object
+    )
+
+    def _encode_label(label: int) -> np.ndarray:
+        if one_hot_labels and num_classes is not None and num_classes > 1:
+            return np.eye(int(num_classes), dtype=np.float32)[label]
+        if num_classes == 1:
+            return np.array([float(label)], dtype=np.float32)
+        return np.float32(label)
+
+    def _convert_numpy_crop(crop: np.ndarray, key: str) -> np.ndarray:
+        if seq_onehot and crop.ndim == 2 and key == "translated":
+            t = tf.cast(crop, tf.int32)
+            mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
+            oh = tf.one_hot(t, depth=int(codon_depth), dtype=tf.float32)
+            return (oh * mask).numpy()
+        if seq_onehot and crop.ndim == 2 and key == "nucleotide" and lookup is not None:
+            return lookup[crop]
+        if crop.ndim == 2:
+            return crop.astype(np.int32)
+        return crop
+
+    def _feature_spec(arr: np.ndarray) -> tf.TensorSpec:
+        # Feature arrays are (frames, length) or (frames, length, depth).
+        # The sequence-length axis is always axis 1.
+        shape = list(arr.shape)
+        if len(shape) >= 2:
+            shape[1] = None
+        return tf.TensorSpec(shape=shape, dtype=tf.as_dtype(arr.dtype))
+
+    if is_object:
+        # Variable-length full sequences stored as object arrays.
+        def _sample_features(i: int, start: int, length: int) -> dict[str, np.ndarray]:
+            return {
+                key: _convert_numpy_crop(
+                    np_arrays[key][i][:, start : start + length]
+                    if np_arrays[key][i].ndim == 2
+                    else np_arrays[key][i][:, start : start + length, :],
+                    key,
+                )
+                for key in feature_keys
+            }
+
+        # Build the first crop to infer output signatures.
+        first_start, first_length = next(
+            (
+                (start, min(crop_sizes[0], int(lengths[0]) - start))
+                for start in _crop_starts(int(lengths[0]), crop_sizes[0], strides[0])
+            ),
+            None,
+        )
+        if first_start is None:
+            raise ValueError("No crops could be generated from the input sequences")
+        sample = _sample_features(0, first_start, first_length)
+        output_signature = (
+            {key: _feature_spec(arr) for key, arr in sample.items()},
+            tf.TensorSpec(
+                shape=(int(num_classes),)
+                if one_hot_labels and num_classes and num_classes > 1
+                else (1,)
+                if num_classes == 1
+                else (),
+                dtype=tf.float32,
+            ),
+        )
+
+        def generator():
+            for i in range(n):
+                actual_len = int(lengths[i])
+                label = _encode_label(int(labels[i]))
+                for cs, stride in zip(crop_sizes, strides):
+                    for start in _crop_starts(actual_len, cs, stride):
+                        length = min(cs, actual_len - start)
+                        yield _sample_features(i, start, length), label
+
+        with tf.device("/CPU:0"):
+            ds = tf.data.Dataset.from_generator(
+                generator, output_signature=output_signature
+            )
+        return ds
+
+    # Dense padded full sequences.
+    arrays: dict[str, tf.Tensor] = {
+        key: tf.constant(np_arrays[key]) for key in feature_keys
+    }
+    labels_t = tf.constant(labels)
 
     sample_indices: list[int] = []
     starts_list: list[int] = []
@@ -368,7 +456,7 @@ def _load_cropped_numpy_dataset(
             nuc = _slice_crop(arrays["nucleotide"], idx, start, length)
             if seq_onehot and nuc.shape.rank == 2:
                 n = tf.cast(nuc, tf.int32)
-                nuc = tf.gather(lookup_t, n)
+                nuc = tf.gather(tf.constant(lookup, dtype=tf.float32), n)
             elif nuc.dtype != tf.float32:
                 nuc = tf.cast(nuc, tf.int32)
             features["nucleotide"] = nuc
