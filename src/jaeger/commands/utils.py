@@ -564,6 +564,8 @@ def optimize_data_core(
     nucleotide_map: str | None = None,
     compress: str = "default",
     max_length: int = 5000,  # deprecated, ignored
+    max_memory_mb: int | None = None,
+    pad: bool = False,
 ):
     """Convert Jaeger CSV training data to an optimized ``.npz`` format.
 
@@ -616,4 +618,6 @@ def optimize_data_core(
         nucleotide_map=nucleotide_map,
         compress=compress,
         max_length=max_length,
+        max_memory_mb=max_memory_mb,
+        pad=pad,
     )

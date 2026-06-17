@@ -1005,6 +1005,24 @@ def convert(**kwargs):
     help="Overlap between crops as a fraction of each crop size (0.0-1.0). Overrides --stride.",
 )
 @click.option(
+    "--max-memory-mb",
+    type=int,
+    default=None,
+    show_default=True,
+    help=(
+        "Memory budget in MB for encoded output buffers. "
+        "If omitted, auto-budget is ~75% of available RAM. "
+        "Set to 0 to disable streaming."
+    ),
+)
+@click.option(
+    "--pad",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Pad all crops to the global maximum length (legacy behavior).",
+)
+@click.option(
     "--num-classes",
     type=int,
     default=3,
@@ -1090,6 +1108,8 @@ def optimize_data(**kwargs):
         nucleotide_map=kwargs.get("nucleotide_map"),
         compress=kwargs.get("compress"),
         max_length=kwargs.get("max_length"),
+        max_memory_mb=kwargs.get("max_memory_mb"),
+        pad=kwargs.get("pad"),
     )
 
 
