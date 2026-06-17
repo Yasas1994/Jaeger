@@ -441,3 +441,40 @@ class TestMemoryEstimate:
         seq_len = 12 // 3 - 1
         expected = 2 * 12 * 4 + 6 * seq_len * 4
         assert b == expected
+
+
+class TestFinalizeBatchArrays:
+    def test_unpadded_nucleotide_object_array(self, tmp_path: Path):
+        csv = tmp_path / "in.csv"
+        csv.write_text("0,ATGCATGCATGC\n1,GGGG\n")
+        result = convert._process_chunk_npz(
+            lines=csv.read_text().splitlines(),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            strides=[0],
+            one_hot=False,
+            pad_int=0,
+            nucleotide_lookups=convert._build_nucleotide_lookups(
+                {"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}
+            ),
+            codon_lut=np.empty(0, dtype=np.int32),
+            codon_map_len=64,
+            standard_codon_lut3=np.empty(0, dtype=np.int32),
+            dicodon_lut=np.empty(0, dtype=np.int32),
+            ascii_lut=np.zeros(256, dtype=np.int8),
+            comp_lut=np.zeros(256, dtype=np.int8),
+        )
+        finalized = convert._finalize_batch_arrays(
+            result,
+            fmt="nucleotide",
+            crop_sizes=[12],
+            one_hot=False,
+            codon_map_len=None,
+            pad=False,
+            pad_int=0,
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            codon_map_name="codon_id",
+        )
+        assert finalized["nucleotide"].dtype == object
+        assert finalized["nucleotide"][0].shape == (2, 12)
+        assert finalized["nucleotide"][1].shape == (2, 4)

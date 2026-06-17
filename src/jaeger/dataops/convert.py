@@ -842,6 +842,118 @@ def _process_chunk_npz(
     }
 
 
+def _finalize_batch_arrays(
+    result: dict,
+    fmt: str,
+    crop_sizes: list[int],
+    one_hot: bool,
+    codon_map_len: int | None,
+    pad: bool,
+    pad_int: int,
+    nucleotide_map: dict[str, int],
+    codon_map_name: str,
+) -> dict[str, np.ndarray]:
+    """Turn a processed chunk into save-ready arrays.
+
+    ``result`` is the dict returned by ``_process_chunk_npz``. If ``pad`` is
+    True the arrays are padded to the global maximum length (legacy behavior).
+    If ``pad`` is False each crop is trimmed to its actual length and stored
+    in a 1-D object array.
+    """
+    save_dict: dict[str, np.ndarray] = {
+        "labels": result["labels"],
+        "lengths": result["lengths"],
+        "translated_lengths": result["translated_lengths"],
+    }
+
+    def _to_object_array(items: list[np.ndarray]) -> np.ndarray:
+        arr = np.empty(len(items), dtype=object)
+        arr[:] = items
+        return arr
+
+    if fmt in ("nucleotide", "both"):
+        arrays = result["nucleotide"]
+        if arrays:
+            if pad:
+                max_len = max(a.shape[-1] for a in arrays)
+                if one_hot:
+                    padded = [
+                        _pad_axis(a, max_len, axis=-1, pad_value=0.0) for a in arrays
+                    ]
+                    save_dict["nucleotide"] = np.concatenate(padded, axis=0)
+                else:
+                    padded = [
+                        _pad_axis(a, max_len, axis=-1, pad_value=pad_int)
+                        for a in arrays
+                    ]
+                    save_dict["nucleotide"] = np.concatenate(padded, axis=0)
+            else:
+                items: list[np.ndarray] = []
+                offset = 0
+                for arr, crop_size in zip(arrays, crop_sizes):
+                    n = arr.shape[0]
+                    lens = result["lengths"][offset : offset + n]
+                    for i in range(n):
+                        L = int(lens[i])
+                        if one_hot:
+                            items.append(arr[i, :, :L, :])
+                        else:
+                            items.append(arr[i, :, :L])
+                    offset += n
+                save_dict["nucleotide"] = _to_object_array(items)
+        else:
+            save_dict["nucleotide"] = (
+                np.empty((0,), dtype=np.float32)
+                if one_hot
+                else np.empty((0,), dtype=np.int32)
+            )
+        save_dict["nucleotide_map"] = np.array(json.dumps(nucleotide_map))
+
+    if fmt in ("translated", "both"):
+        arrays = result["translated"]
+        if arrays:
+            if pad:
+                max_len = max(a.shape[-1] for a in arrays)
+                if one_hot and codon_map_len is not None:
+                    padded = [
+                        _pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays
+                    ]
+                    stacked = np.concatenate(padded, axis=0)
+                    save_dict["translated"] = _one_hot_integer(
+                        stacked, codon_map_len + 1
+                    )
+                else:
+                    padded = [
+                        _pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays
+                    ]
+                    save_dict["translated"] = np.concatenate(padded, axis=0)
+            else:
+                items: list[np.ndarray] = []
+                offset = 0
+                for arr, crop_size in zip(arrays, crop_sizes):
+                    n = arr.shape[0]
+                    if one_hot and codon_map_len is not None:
+                        arr = _one_hot_integer(arr, codon_map_len + 1)
+                    lens = result["translated_lengths"][offset : offset + n]
+                    for i in range(n):
+                        L = int(lens[i])
+                        if one_hot:
+                            items.append(arr[i, :, :L, :])
+                        else:
+                            items.append(arr[i, :, :L])
+                    offset += n
+                save_dict["translated"] = _to_object_array(items)
+        else:
+            save_dict["translated"] = (
+                np.empty((0,), dtype=np.float32)
+                if one_hot
+                else np.empty((0,), dtype=np.int32)
+            )
+        save_dict["codon_map"] = np.array(codon_map_name)
+
+    return save_dict
+
+
 def _convert_to_npz(
     input_path: str,
     output_path: str,
