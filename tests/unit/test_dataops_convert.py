@@ -723,13 +723,138 @@ class TestStreamingConvert:
             crop_sizes=[20],
             strides=[10],
             num_classes=2,
-            num_workers=1,
             one_hot=False,
             pad_int=0,
             codon_map_name="codon_id",
             nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
             compress="default",
             max_memory_bytes=1 * 1024 * 1024,
+            pad=True,
+        )
+        fast_data = np.load(fast)
+        stream_data = np.load(stream)
+        assert np.array_equal(fast_data["labels"], stream_data["labels"])
+        assert np.array_equal(fast_data["nucleotide"], stream_data["nucleotide"])
+
+    def test_streaming_translated_matches_fast_path(self, tmp_path: Path):
+        csv = self._csv(
+            tmp_path, ["0,ATGCATGCATGCATGCATGCATGC", "1,GGGGGGGGGGGGGGGGGGGGGGGG"]
+        )
+        fast = tmp_path / "fast.npz"
+        stream = tmp_path / "stream.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(fast),
+            fmt="translated",
+            crop_sizes=[24],
+            strides=[0],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        convert._convert_to_npz_streaming(
+            input_path=csv,
+            output_path=str(stream),
+            fmt="translated",
+            crop_sizes=[24],
+            strides=[0],
+            num_classes=2,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            max_memory_bytes=1 * 1024 * 1024,
+            pad=True,
+        )
+        fast_data = np.load(fast)
+        stream_data = np.load(stream)
+        assert np.array_equal(fast_data["labels"], stream_data["labels"])
+        assert np.array_equal(fast_data["translated"], stream_data["translated"])
+
+    def test_streaming_unpadded_matches_padded_fast_path(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGC", "1,GGGG"])
+        fast = tmp_path / "fast.npz"
+        stream = tmp_path / "stream.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(fast),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            strides=[0],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            pad=True,
+        )
+        convert._convert_to_npz_streaming(
+            input_path=csv,
+            output_path=str(stream),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            strides=[0],
+            num_classes=2,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            max_memory_bytes=1 * 1024 * 1024,
+            pad=False,
+        )
+        fast_data = np.load(fast)
+        stream_data = np.load(stream, allow_pickle=True)
+        assert np.array_equal(fast_data["labels"], stream_data["labels"])
+        # Pad each unpadded object array to the fast-path padded length.
+        for i, crop in enumerate(stream_data["nucleotide"]):
+            padded = np.concatenate(
+                [crop, np.zeros((crop.shape[0], 12 - crop.shape[1]), dtype=crop.dtype)],
+                axis=1,
+            )
+            assert np.array_equal(fast_data["nucleotide"][i], padded)
+
+    def test_streaming_forces_multiple_batches(self, tmp_path: Path):
+        csv = self._csv(
+            tmp_path,
+            ["0,ATGCATGCATGC", "1,GGGGGGGGGGGG", "0,TACGTACGTACG", "1,CCCCCCCCCCCC"],
+        )
+        fast = tmp_path / "fast.npz"
+        stream = tmp_path / "stream.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(fast),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            strides=[0],
+            num_classes=2,
+            num_workers=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        convert._convert_to_npz_streaming(
+            input_path=csv,
+            output_path=str(stream),
+            fmt="nucleotide",
+            crop_sizes=[12],
+            strides=[0],
+            num_classes=2,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            max_memory_bytes=64,
             pad=True,
         )
         fast_data = np.load(fast)

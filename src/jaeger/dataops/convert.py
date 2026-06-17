@@ -1133,7 +1133,6 @@ def _convert_to_npz_streaming(
     crop_sizes: list[int],
     strides: list[int],
     num_classes: int,
-    num_workers: int | None,
     one_hot: bool,
     pad_int: int,
     codon_map_name: str,
@@ -1142,14 +1141,23 @@ def _convert_to_npz_streaming(
     max_memory_bytes: int,
     pad: bool,
 ) -> None:
-    """Memory-bounded CSV -> NPZ converter that shards encoded batches to disk."""
+    """Memory-bounded CSV -> NPZ converter that shards encoded batches to disk.
+
+    Peak memory during encoding is bounded by ``max_memory_bytes``: only one
+    batch of input rows is read and encoded at a time. However, the final
+    artifact is a single ``.npz`` file, so the saved arrays are materialized in
+    memory when the shards are concatenated right before ``_save_npz``.
+    """
     max_crop = max(crop_sizes) if crop_sizes else 500
+    max_stride = max(strides) if strides else 0
     codon_map_len: int | None = None
     if fmt in ("translated", "both"):
         codon_map_len = len(_get_codon_map(codon_map_name))
 
     per_row = _estimate_output_bytes_per_row(max_crop, fmt, one_hot, codon_map_len)
-    batch_rows = max(1, int(max_memory_bytes * 0.8 / per_row))
+    multiplier = math.ceil(max_crop / max_stride) if max_stride > 0 else 1
+    effective_per_row = per_row * multiplier
+    batch_rows = max(1, int(max_memory_bytes * 0.8 / effective_per_row))
 
     nucleotide_lookups = _build_nucleotide_lookups(nucleotide_map)
     _, ascii_lut, comp_lut = _build_numba_lookups()
