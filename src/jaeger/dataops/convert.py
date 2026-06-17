@@ -107,6 +107,7 @@ def _save_npz(output_path: str, data: dict[str, np.ndarray], compress: str) -> N
             f"Invalid compress: {compress}. Choose from: default, none, fast"
         )
 
+
 # ---------------------------------------------------------------------------
 # Codon / nucleotide lookup helpers
 # ---------------------------------------------------------------------------

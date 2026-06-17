@@ -134,7 +134,11 @@ def train_fragment_core(**kwargs):
 
         builder = DynamicModelBuilder(config)
         models = builder.build_fragment_classifier()
-        models.get("rep_model").summary()
+        for (
+            _,
+            m,
+        ) in models.items():
+            m.summary()
         model_num_params = numerize(models.get("rep_model").count_params(), decimal=1)
 
         # ================= train classifier ======================
@@ -227,7 +231,9 @@ def train_fragment_core(**kwargs):
                         paths[0],
                     )
                 _onehot_buffer = (
-                    _buffer_size if _buffer_size is not None and _buffer_size > 0 else None
+                    _buffer_size
+                    if _buffer_size is not None and _buffer_size > 0
+                    else None
                 )
                 _data = _load_numpy_dataset(
                     paths[0],
@@ -293,7 +299,7 @@ def train_fragment_core(**kwargs):
                 # self-supervised pre-training
                 if kwargs.get("self_supervised_pretraining", False):
                     builder.compile_model(models, train_branch="pretrain")
-                    models.get("jaeger_projection").summary()
+                    # models.get("jaeger_projection").summary()
                     self_supervised_train_args = {
                         "validation_data": train_data.get("validation").take(
                             builder.train_cfg.get("classifier_validation_steps")
@@ -396,7 +402,9 @@ def train_fragment_core(**kwargs):
                         paths[0],
                     )
                 _onehot_buffer = (
-                    _buffer_size if _buffer_size is not None and _buffer_size > 0 else None
+                    _buffer_size
+                    if _buffer_size is not None and _buffer_size > 0
+                    else None
                 )
                 _data = _load_numpy_dataset(
                     paths[0],
@@ -449,9 +457,7 @@ def train_fragment_core(**kwargs):
                 rel_train = rel_train_data.get("train")
                 rel_val = rel_train_data.get("validation")
                 if rel_train is None or rel_val is None:
-                    logger.warning(
-                        "Skipping training — reliability data not available"
-                    )
+                    logger.warning("Skipping training — reliability data not available")
                 else:
                     train_args = {
                         "validation_data": rel_val.take(
@@ -469,9 +475,7 @@ def train_fragment_core(**kwargs):
                         rel_train.take(
                             builder.train_cfg.get("reliability_train_steps")
                         ),
-                        class_weight=builder.train_cfg.get(
-                            "reliability_class_weights"
-                        ),
+                        class_weight=builder.train_cfg.get("reliability_class_weights"),
                         **train_args,
                     )
             else:
