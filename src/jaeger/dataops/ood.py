@@ -7,16 +7,14 @@ sampling genome fragments to mimic metagenomic assemblies.
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Set
 
-import numpy as np
 import polars as pl
 import pyfastx
-from typing import Callable, Set, Optional, List
-from dataclasses import dataclass
 
-from jaeger.seqops.transform import dinuc_shuffle, kmer_shuffle
 from jaeger.seqops.synthetic import generate_random_tandem_repeats
-from jaeger.seqops.io import write_fasta_entry
+from jaeger.seqops.transform import dinuc_shuffle, kmer_shuffle
 from jaeger.utils.logging import get_logger
 
 logger = get_logger(log_file=None, log_path=None, level=3)
