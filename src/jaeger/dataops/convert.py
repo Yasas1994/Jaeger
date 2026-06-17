@@ -13,8 +13,6 @@ import io
 import itertools
 import json
 import math
-import shutil
-import tempfile
 import zipfile
 from functools import partial
 from multiprocessing import cpu_count
@@ -100,6 +98,35 @@ def _estimate_output_bytes_per_row(
             per_row += 6 * seq_len * np.dtype(np.int32).itemsize
 
     return max(1, per_row)
+
+
+def _estimate_total_bytes_per_input_row(
+    crop_sizes: list[int],
+    strides: list[int],
+    fmt: str,
+    one_hot: bool,
+    codon_map_len: int | None,
+) -> int:
+    """Upper-bound bytes produced from one input sequence across all crop sizes.
+
+    The estimate assumes every input sequence is at least as long as the largest
+    crop size, so each crop size can contribute its maximum number of overlapping
+    crops. This is intentionally conservative so the streaming batch size does
+    not blow through the memory budget.
+    """
+    if not crop_sizes:
+        return 1
+    max_crop = max(crop_sizes)
+    total = 0
+    for crop_size, stride in zip(crop_sizes, strides):
+        per_crop = _estimate_output_bytes_per_row(
+            crop_size, fmt, one_hot, codon_map_len
+        )
+        max_crops = 1
+        if stride > 0 and max_crop > 0:
+            max_crops = math.ceil(max_crop / stride)
+        total += per_crop * max_crops
+    return max(1, total)
 
 
 def _check_onehot_memory(
@@ -1126,6 +1153,20 @@ def _convert_to_npz(
     _save_npz(output_path, save_dict, compress)
 
 
+def _zip_compression(compress: str) -> tuple[int, int | None]:
+    """Return ``(zipfile compression type, compresslevel)`` for NPZ output."""
+    compress = compress.lower()
+    if compress == "default":
+        return zipfile.ZIP_DEFLATED, None
+    if compress == "fast":
+        return zipfile.ZIP_DEFLATED, 1
+    if compress == "none":
+        return zipfile.ZIP_STORED, None
+    raise ValueError(
+        f"Invalid compress: {compress}. Choose from: default, none, fast"
+    )
+
+
 def _convert_to_npz_streaming(
     input_path: str,
     output_path: str,
@@ -1141,23 +1182,22 @@ def _convert_to_npz_streaming(
     max_memory_bytes: int,
     pad: bool,
 ) -> None:
-    """Memory-bounded CSV -> NPZ converter that shards encoded batches to disk.
+    """Memory-bounded CSV -> NPZ converter that writes sharded batches.
 
-    Peak memory during encoding is bounded by ``max_memory_bytes``: only one
-    batch of input rows is read and encoded at a time. However, the final
-    artifact is a single ``.npz`` file, so the saved arrays are materialized in
-    memory when the shards are concatenated right before ``_save_npz``.
+    Each encoded batch is written directly into the output ``.npz`` archive as
+    a separate ``.npy`` entry (e.g. ``translated_00000.npy``). The loader
+    reassembles samples on-the-fly, so the converter never needs to hold the
+    final arrays in memory. The only memory spike is the single batch being
+    encoded, which is bounded by ``max_memory_bytes``.
     """
-    max_crop = max(crop_sizes) if crop_sizes else 500
-    max_stride = max(strides) if strides else 0
     codon_map_len: int | None = None
     if fmt in ("translated", "both"):
         codon_map_len = len(_get_codon_map(codon_map_name))
 
-    per_row = _estimate_output_bytes_per_row(max_crop, fmt, one_hot, codon_map_len)
-    multiplier = math.ceil(max_crop / max_stride) if max_stride > 0 else 1
-    effective_per_row = per_row * multiplier
-    batch_rows = max(1, int(max_memory_bytes * 0.8 / effective_per_row))
+    total_per_row = _estimate_total_bytes_per_input_row(
+        crop_sizes, strides, fmt, one_hot, codon_map_len
+    )
+    batch_rows = max(1, int(max_memory_bytes * 0.5 / total_per_row))
 
     nucleotide_lookups = _build_nucleotide_lookups(nucleotide_map)
     _, ascii_lut, comp_lut = _build_numba_lookups()
@@ -1187,72 +1227,81 @@ def _convert_to_npz_streaming(
         "comp_lut": comp_lut,
     }
 
-    tmp_dir = Path(
-        tempfile.mkdtemp(prefix="jaeger_optimize_", dir=Path(output_path).parent)
-    )
+    compress_type, compress_level = _zip_compression(compress)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     try:
         keys: list[str] = []
         batch_idx = 0
-        with open(input_path) as f:
-            while True:
-                batch_lines = list(itertools.islice(f, batch_rows))
-                if not batch_lines:
-                    break
+        with zipfile.ZipFile(
+            output_path, "w", compression=compress_type, compresslevel=compress_level or 6
+        ) as zf:
+            with open(input_path) as f:
+                while True:
+                    batch_lines = list(itertools.islice(f, batch_rows))
+                    if not batch_lines:
+                        break
 
-                result = _process_chunk_npz(batch_lines, **worker_kwargs)
-                batch_dict = _finalize_batch_arrays(
-                    result,
-                    fmt=fmt,
-                    crop_sizes=crop_sizes,
-                    one_hot=one_hot,
-                    codon_map_len=codon_map_len,
-                    pad=pad,
-                    pad_int=pad_int,
-                    nucleotide_map=nucleotide_map,
-                    codon_map_name=codon_map_name,
-                )
+                    result = _process_chunk_npz(batch_lines, **worker_kwargs)
+                    batch_dict = _finalize_batch_arrays(
+                        result,
+                        fmt=fmt,
+                        crop_sizes=crop_sizes,
+                        one_hot=one_hot,
+                        codon_map_len=codon_map_len,
+                        pad=pad,
+                        pad_int=pad_int,
+                        nucleotide_map=nucleotide_map,
+                        codon_map_name=codon_map_name,
+                    )
 
-                if not keys:
-                    keys = [
-                        k
-                        for k in batch_dict.keys()
-                        if k not in ("nucleotide_map", "codon_map")
-                    ]
+                    if not keys:
+                        keys = [
+                            k
+                            for k in batch_dict.keys()
+                            if k not in ("nucleotide_map", "codon_map")
+                        ]
 
-                for key in keys:
-                    shard_path = tmp_dir / f"batch_{batch_idx:05d}_{key}.npy"
-                    np.save(shard_path, batch_dict[key])
-                batch_idx += 1
+                    for key in keys:
+                        buf = io.BytesIO()
+                        np.save(buf, batch_dict[key])
+                        zf.writestr(
+                            f"{key}_{batch_idx:05d}.npy",
+                            buf.getvalue(),
+                            compress_type=compress_type,
+                            compresslevel=compress_level,
+                        )
+                    batch_idx += 1
 
-        if batch_idx == 0:
-            raise ValueError(f"Input file is empty: {input_path}")
+            if batch_idx == 0:
+                raise ValueError(f"Input file is empty: {input_path}")
 
-        save_dict: dict[str, np.ndarray] = {}
-        for key in keys:
-            shard_paths = sorted(tmp_dir.glob(f"batch_*_{key}.npy"))
-            shards = [np.load(p, allow_pickle=True) for p in shard_paths]
-            save_dict[key] = np.concatenate(shards, axis=0)
-
-        save_dict.update(
-            {
-                "pad_int": np.int32(pad_int),
-                "crop_sizes": np.array(crop_sizes, dtype=np.int32),
-                "strides": np.array(strides, dtype=np.int32),
-                "padded": np.bool_(pad),
+            manifest = {
+                "version": 1,
+                "keys": keys,
+                "num_shards": batch_idx,
+                "format": fmt,
+                "crop_sizes": crop_sizes,
+                "strides": strides,
+                "padded": pad,
+                "pad_int": int(pad_int),
+                "one_hot": one_hot,
+                "num_classes": int(num_classes),
+                "codon_map": codon_map_name if fmt in ("translated", "both") else None,
+                "nucleotide_map": (
+                    json.dumps(nucleotide_map) if fmt in ("nucleotide", "both") else None
+                ),
             }
-        )
-        if fmt in ("nucleotide", "both"):
-            save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
-        if fmt in ("translated", "both"):
-            save_dict["codon_map"] = codon_map_name
-
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        _save_npz(output_path, save_dict, compress)
+            buf = io.BytesIO()
+            np.save(buf, np.array(json.dumps(manifest), dtype=object))
+            zf.writestr(
+                "_jaeger_manifest.npy",
+                buf.getvalue(),
+                compress_type=compress_type,
+                compresslevel=compress_level,
+            )
     except Exception:
         Path(output_path).unlink(missing_ok=True)
         raise
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1287,6 +1336,12 @@ def convert_dataset(
     and ``both``. The resulting ``.npz`` archive contains encoded crops, labels,
     crop metadata, and (depending on the format) the nucleotide/codon mapping
     used during encoding.
+
+    When the streaming converter is used, the output is a *sharded* NPZ: each
+    encoded batch is stored as a separate ``.npy`` entry (e.g.
+    ``translated_00000.npy``) and a ``_jaeger_manifest.npy`` entry records the
+    shard layout. This keeps peak memory bounded by ``max_memory_mb`` instead
+    of materialising the full dataset in RAM.
 
     Parameters
     ----------
@@ -1369,13 +1424,13 @@ def convert_dataset(
     )
 
     total_lines = _count_lines(input_path)
-    max_crop_idx = int(np.argmax(crop_sizes))
-    max_crop = crop_sizes[max_crop_idx]
-    max_stride = strides[max_crop_idx]
-    multiplier = 1
-    if max_stride > 0 and max_crop > 0:
-        multiplier = math.ceil(max_crop / max_stride)
-    total_rows = total_lines * multiplier
+    if crop_sizes:
+        max_crop_idx = int(np.argmax(crop_sizes))
+        max_crop = crop_sizes[max_crop_idx]
+        max_stride = strides[max_crop_idx]
+    else:
+        max_crop = 500
+        max_stride = 0
 
     codon_map_len: int | None = None
     if format in ("translated", "both"):
@@ -1391,10 +1446,10 @@ def convert_dataset(
 
     stream = False
     if budget is not None:
-        per_row = _estimate_output_bytes_per_row(
-            max_crop, format, one_hot, codon_map_len
+        per_row = _estimate_total_bytes_per_input_row(
+            crop_sizes, strides, format, one_hot, codon_map_len
         )
-        stream = total_rows * per_row > budget
+        stream = total_lines * per_row > budget
 
     if one_hot and not stream:
         estimated = _estimate_onehot_memory(

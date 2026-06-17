@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import numpy as np
 import pytest
 
@@ -698,6 +700,29 @@ class TestStreamingConvert:
         path.write_text("\n".join(lines))
         return str(path)
 
+    def _load_stream(self, path: str) -> dict[str, np.ndarray]:
+        """Load either a legacy NPZ or a sharded streaming NPZ."""
+        data = np.load(path, allow_pickle=True)
+        if "_jaeger_manifest" in data:
+            manifest = json.loads(str(data["_jaeger_manifest"].item()))
+            keys = manifest["keys"]
+            num_shards = manifest["num_shards"]
+            out: dict[str, np.ndarray] = {}
+            for key in keys:
+                shards = [data[f"{key}_{i:05d}"] for i in range(num_shards)]
+                if shards and shards[0].dtype == object:
+                    total = sum(len(s) for s in shards)
+                    arr = np.empty(total, dtype=object)
+                    idx = 0
+                    for s in shards:
+                        arr[idx : idx + len(s)] = s
+                        idx += len(s)
+                    out[key] = arr
+                else:
+                    out[key] = np.concatenate(shards, axis=0)
+            return out
+        return {k: data[k] for k in data.files}
+
     def test_streaming_matches_fast_path(self, tmp_path: Path):
         csv = self._csv(tmp_path, ["0," + "A" * 25, "1," + "G" * 25])
         fast = tmp_path / "fast.npz"
@@ -732,7 +757,7 @@ class TestStreamingConvert:
             pad=True,
         )
         fast_data = np.load(fast)
-        stream_data = np.load(stream)
+        stream_data = self._load_stream(str(stream))
         assert np.array_equal(fast_data["labels"], stream_data["labels"])
         assert np.array_equal(fast_data["nucleotide"], stream_data["nucleotide"])
 
@@ -772,7 +797,7 @@ class TestStreamingConvert:
             pad=True,
         )
         fast_data = np.load(fast)
-        stream_data = np.load(stream)
+        stream_data = self._load_stream(str(stream))
         assert np.array_equal(fast_data["labels"], stream_data["labels"])
         assert np.array_equal(fast_data["translated"], stream_data["translated"])
 
@@ -811,7 +836,7 @@ class TestStreamingConvert:
             pad=False,
         )
         fast_data = np.load(fast)
-        stream_data = np.load(stream, allow_pickle=True)
+        stream_data = self._load_stream(str(stream))
         assert np.array_equal(fast_data["labels"], stream_data["labels"])
         # Pad each unpadded object array to the fast-path padded length.
         for i, crop in enumerate(stream_data["nucleotide"]):
@@ -858,24 +883,30 @@ class TestStreamingConvert:
             pad=True,
         )
         fast_data = np.load(fast)
-        stream_data = np.load(stream)
+        stream_data = self._load_stream(str(stream))
         assert np.array_equal(fast_data["labels"], stream_data["labels"])
         assert np.array_equal(fast_data["nucleotide"], stream_data["nucleotide"])
 
     def test_streaming_unpadded(self, tmp_path: Path):
         csv = self._csv(tmp_path, ["0," + "A" * 25, "1," + "G" * 25])
         out = tmp_path / "out.npz"
-        convert.convert_dataset(
+        convert._convert_to_npz_streaming(
             input_path=csv,
             output_path=str(out),
-            format="nucleotide",
-            crop_size=20,
-            stride=10,
+            fmt="nucleotide",
+            crop_sizes=[20],
+            strides=[10],
             num_classes=2,
-            num_workers=1,
-            max_memory_mb=1,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            max_memory_bytes=64,
             pad=False,
         )
         data = np.load(out, allow_pickle=True)
-        assert data["padded"].item() is False
-        assert data["nucleotide"].dtype == object
+        manifest = json.loads(str(data["_jaeger_manifest"].item()))
+        assert manifest["padded"] is False
+        stream_data = self._load_stream(str(out))
+        assert stream_data["nucleotide"].dtype == object

@@ -146,6 +146,104 @@ def _load_ragged_numpy_dataset(
     return ds
 
 
+def _load_sharded_numpy_dataset(
+    data: np.lib.npyio.NpzFile,
+    input_type: str,
+    seq_onehot: bool,
+    codon_depth: int | None,
+    nucleotide_onehot_map: dict[str, list[float]] | None,
+    num_classes: int | None,
+    one_hot_labels: bool,
+) -> tf.data.Dataset:
+    """Load a sharded NPZ produced by the streaming converter."""
+    manifest = json.loads(str(data["_jaeger_manifest"].item()))
+    num_shards = int(manifest["num_shards"])
+    feature_keys = [k for k in manifest["keys"] if k in ("nucleotide", "translated")]
+
+    if input_type in ("translated", "both") and codon_depth is None:
+        codon_map_name = str(manifest.get("codon_map"))
+        codon_map = _get_codon_map(codon_map_name)
+        codon_depth = len(codon_map) + 1
+
+    lookup = None
+    if input_type in ("nucleotide", "both") and seq_onehot:
+        nucleotide_map = json.loads(str(manifest["nucleotide_map"]))
+        lookup = _build_nucleotide_onehot_lookup(nucleotide_map, nucleotide_onehot_map)
+
+    first_features = {k: data[f"{k}_00000"] for k in feature_keys}
+
+    def _convert_feature(arr: np.ndarray, key: str) -> np.ndarray:
+        if not seq_onehot:
+            return arr
+        if key == "nucleotide" and arr.ndim == 2 and lookup is not None:
+            return lookup[arr]
+        if key == "translated" and arr.ndim == 2 and codon_depth is not None:
+            t = tf.cast(arr, tf.int32)
+            mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
+            oh = tf.one_hot(t, depth=codon_depth, dtype=tf.float32)
+            return (oh * mask).numpy()
+        return arr
+
+    def _sample_features(i: int) -> dict[str, np.ndarray]:
+        return {
+            key: _convert_feature(first_features[key][i], key)
+            for key in feature_keys
+        }
+
+    def _feature_spec(arr: np.ndarray) -> tf.TensorSpec:
+        # Keep all axes static except the sequence-length axis (second from last).
+        shape = list(arr.shape)
+        if len(shape) >= 2:
+            shape[-2] = None
+        return tf.TensorSpec(shape=shape, dtype=tf.as_dtype(arr.dtype))
+
+    sample = _sample_features(0)
+    output_signature = (
+        {key: _feature_spec(arr) for key, arr in sample.items()},
+        tf.TensorSpec(
+            shape=(num_classes,)
+            if one_hot_labels and num_classes and num_classes > 1
+            else (1,)
+            if num_classes == 1
+            else (),
+            dtype=tf.float32,
+        ),
+    )
+
+    def generator():
+        for shard_idx in range(num_shards):
+            shard_arrays = {
+                key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys
+            }
+            shard_labels = data[f"labels_{shard_idx:05d}"]
+            # Pre-convert dense (non-object) shards in one shot to avoid
+            # per-sample TensorFlow overhead.
+            for key, arr in shard_arrays.items():
+                if not (arr.ndim == 1 and arr.dtype == object):
+                    shard_arrays[key] = _convert_feature(arr, key)
+            for i in range(len(shard_labels)):
+                features = {}
+                for key, arr in shard_arrays.items():
+                    feat = arr[i]
+                    if arr.ndim == 1 and arr.dtype == object:
+                        feat = _convert_feature(feat, key)
+                    features[key] = feat
+                label = int(shard_labels[i])
+                if one_hot_labels and num_classes is not None and num_classes > 1:
+                    label_arr = np.eye(num_classes, dtype=np.float32)[label]
+                elif num_classes == 1:
+                    label_arr = np.array([float(label)], dtype=np.float32)
+                else:
+                    label_arr = np.float32(label)
+                yield features, label_arr
+
+    with tf.device("/CPU:0"):
+        ds = tf.data.Dataset.from_generator(
+            generator, output_signature=output_signature
+        )
+    return ds
+
+
 def _load_numpy_dataset(
     path: str,
     input_type: str = "translated",
@@ -189,6 +287,17 @@ def _load_numpy_dataset(
     ``tf.data.Dataset`` yielding ``(features, labels)`` tuples.
     """
     data = np.load(path, allow_pickle=True)
+
+    if "_jaeger_manifest" in data.files:
+        return _load_sharded_numpy_dataset(
+            data,
+            input_type=input_type,
+            seq_onehot=seq_onehot,
+            codon_depth=codon_depth,
+            nucleotide_onehot_map=nucleotide_onehot_map,
+            num_classes=num_classes,
+            one_hot_labels=one_hot_labels,
+        )
 
     if _is_ragged(data, input_type):
         return _load_ragged_numpy_dataset(
