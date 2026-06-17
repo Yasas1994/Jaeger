@@ -446,25 +446,34 @@ def train_fragment_core(**kwargs):
                 and not kwargs.get("only_classification_head", False)
                 and models.get("jaeger_reliability") is not None
             ):
-                train_args = {
-                    "validation_data": rel_train_data.get("validation").take(
-                        builder.train_cfg.get("reliability_validation_steps")
-                    ),
-                    "epochs": builder.train_cfg.get("reliability_epochs"),
-                    "callbacks": builder.get_callbacks(branch="reliability"),
-                }
-                if checkpoint:
-                    train_args["initial_epoch"] = checkpoint.get("reliability", {}).get(
-                        "epoch", 0
+                rel_train = rel_train_data.get("train")
+                rel_val = rel_train_data.get("validation")
+                if rel_train is None or rel_val is None:
+                    logger.warning(
+                        "Skipping training — reliability data not available"
                     )
+                else:
+                    train_args = {
+                        "validation_data": rel_val.take(
+                            builder.train_cfg.get("reliability_validation_steps")
+                        ),
+                        "epochs": builder.train_cfg.get("reliability_epochs"),
+                        "callbacks": builder.get_callbacks(branch="reliability"),
+                    }
+                    if checkpoint:
+                        train_args["initial_epoch"] = checkpoint.get(
+                            "reliability", {}
+                        ).get("epoch", 0)
 
-                models.get("jaeger_reliability").fit(
-                    rel_train_data.get("train").take(
-                        builder.train_cfg.get("reliability_train_steps")
-                    ),
-                    class_weight=builder.train_cfg.get("reliability_class_weights"),
-                    **train_args,
-                )
+                    models.get("jaeger_reliability").fit(
+                        rel_train.take(
+                            builder.train_cfg.get("reliability_train_steps")
+                        ),
+                        class_weight=builder.train_cfg.get(
+                            "reliability_class_weights"
+                        ),
+                        **train_args,
+                    )
             else:
                 logger.info("Skipping training — reliability model")
 
