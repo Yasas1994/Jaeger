@@ -852,7 +852,7 @@ def _finalize_batch_arrays(
     pad_int: int,
     nucleotide_map: dict[str, int],
     codon_map_name: str,
-) -> dict[str, np.ndarray]:
+) -> dict[str, np.ndarray | str]:
     """Turn a processed chunk into save-ready arrays.
 
     ``result`` is the dict returned by ``_process_chunk_npz``. If ``pad`` is
@@ -1099,52 +1099,25 @@ def _convert_to_npz(
             ),
         }
 
-    save_dict: dict[str, np.ndarray | str] = {
-        "lengths": result["lengths"],
-        "labels": result["labels"],
-        "pad_int": np.int32(pad_int),
-        "crop_sizes": np.array(crop_sizes, dtype=np.int32),
-        "strides": np.array(strides, dtype=np.int32),
-    }
-
-    if fmt in ("nucleotide", "both"):
-        arrays = result["nucleotide"]
-        if arrays:
-            max_len = max(a.shape[-1] for a in arrays)
-            if one_hot:
-                padded = [_pad_axis(a, max_len, axis=-1, pad_value=0.0) for a in arrays]
-                nucleotide_arr = np.concatenate(padded, axis=0)
-            else:
-                padded = [
-                    _pad_axis(a, max_len, axis=-1, pad_value=pad_int) for a in arrays
-                ]
-                nucleotide_arr = np.concatenate(padded, axis=0)
-            save_dict["nucleotide"] = nucleotide_arr
-            save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
-        else:
-            save_dict["nucleotide"] = np.empty(
-                (0,), dtype=np.float32 if one_hot else np.int32
-            )
-            save_dict["nucleotide_map"] = json.dumps(nucleotide_map)
-
-    if fmt in ("translated", "both"):
-        arrays = result["translated"]
-        if arrays:
-            max_len = max(a.shape[-1] for a in arrays)
-            if one_hot:
-                padded = [_pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays]
-                stacked = np.concatenate(padded, axis=0)
-                translated_arr = _one_hot_integer(stacked, codon_map_len + 1)
-            else:
-                padded = [_pad_axis(a, max_len, axis=-1, pad_value=0) for a in arrays]
-                translated_arr = np.concatenate(padded, axis=0)
-            save_dict["translated"] = translated_arr
-            save_dict["codon_map"] = codon_map_name
-        else:
-            save_dict["translated"] = np.empty(
-                (0,), dtype=np.float32 if one_hot else np.int32
-            )
-            save_dict["codon_map"] = codon_map_name
+    save_dict = _finalize_batch_arrays(
+        result,
+        fmt=fmt,
+        crop_sizes=crop_sizes,
+        one_hot=one_hot,
+        codon_map_len=codon_map_len,
+        pad=True,
+        pad_int=pad_int,
+        nucleotide_map=nucleotide_map,
+        codon_map_name=codon_map_name,
+    )
+    save_dict.update(
+        {
+            "pad_int": np.int32(pad_int),
+            "crop_sizes": np.array(crop_sizes, dtype=np.int32),
+            "strides": np.array(strides, dtype=np.int32),
+            "padded": np.bool_(True),
+        }
+    )
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     _save_npz(output_path, save_dict, compress)

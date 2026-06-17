@@ -420,6 +420,28 @@ class TestConvertToNpz:
                 compress="default",
             )
 
+    def test_one_hot_nucleotide_multi_crop(self, tmp_path: Path):
+        csv = self._csv(tmp_path, ["0,ATGCATGCATGC"])
+        out = tmp_path / "out.npz"
+        convert._convert_to_npz(
+            input_path=csv,
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[12, 8],
+            strides=[0, 0],
+            num_classes=2,
+            num_workers=1,
+            one_hot=True,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+        )
+        data = np.load(out)
+        assert data["nucleotide"].ndim == 4
+        assert data["nucleotide"].shape == (2, 2, 12, 4)
+        assert np.all(data["nucleotide"][1, :, 8:, :] == 0.0)
+
 
 class TestMemoryEstimate:
     def test_per_row_nucleotide_integer(self):
