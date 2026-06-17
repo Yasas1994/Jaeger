@@ -448,3 +448,162 @@ def test_convert_and_load_unpadded(simple_csv_path: str, tmp_path: Path):
     features, label = next(iter(ds))
     assert features["nucleotide"].shape[1] <= 24
     assert label.shape == (2,)
+
+
+class TestResolveStrides:
+    def test_explicit_strides(self):
+        assert loaders._resolve_strides([300, 600], [270, 540], None) == [270, 540]
+
+    def test_overlap(self):
+        assert loaders._resolve_strides([300, 600], None, 0.1) == [270, 540]
+
+    def test_default_strides(self):
+        assert loaders._resolve_strides([300, 600], None, None) == [300, 600]
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ValueError):
+            loaders._resolve_strides([300, 600], [270], None)
+
+
+class TestRuntimeCropLoader:
+    def test_translated_integer_crops_match_manual_slices(self, tmp_path: Path):
+        path = tmp_path / "translated_crops.npz"
+        seq_len = 20
+        translated = np.arange(6 * seq_len, dtype=np.int32).reshape(1, 6, seq_len) + 1
+        labels = np.array([1], dtype=np.int32)
+        translated_lengths = np.array([seq_len], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=2,
+            crop_sizes=[10, 20],
+            overlap=0.0,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 3  # two 10-length + one 20-length
+
+        feats, label = crops[0]
+        np.testing.assert_array_equal(feats["translated"], translated[0, :, :10])
+        feats, label = crops[1]
+        np.testing.assert_array_equal(feats["translated"], translated[0, :, 10:20])
+        feats, label = crops[2]
+        np.testing.assert_array_equal(feats["translated"], translated[0, :, :20])
+        np.testing.assert_array_equal(label, np.array([0.0, 1.0]))
+
+    def test_tail_crop_trimmed_to_actual_length(self, tmp_path: Path):
+        path = tmp_path / "translated_tail.npz"
+        seq_len = 20
+        translated = np.arange(6 * seq_len, dtype=np.int32).reshape(1, 6, seq_len) + 1
+        labels = np.array([2], dtype=np.int32)
+        # actual sequence is only 13 codons long
+        translated_lengths = np.array([13], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=3,
+            crop_sizes=[10],
+            overlap=0.0,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 2
+        assert crops[0][0]["translated"].shape == (6, 10)
+        # Tail crop starts at seq_len - crop_size so it stays 10-long.
+        assert crops[1][0]["translated"].shape == (6, 10)
+        np.testing.assert_array_equal(crops[1][0]["translated"], translated[0, :, 3:13])
+
+    def test_translated_onehot_conversion(self, tmp_path: Path):
+        path = tmp_path / "translated_oh_crops.npz"
+        seq_len = 12
+        translated = np.random.randint(1, 65, size=(1, 6, seq_len), dtype=np.int32)
+        labels = np.array([0], dtype=np.int32)
+        translated_lengths = np.array([seq_len], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=True,
+            num_classes=2,
+            crop_sizes=[6],
+            overlap=0.0,
+        )
+        features, label = next(iter(ds))
+        assert features["translated"].shape == (6, 6, 65)
+        assert features["translated"].dtype == tf.float32
+
+    def test_nucleotide_onehot_crops(self, tmp_path: Path):
+        path = tmp_path / "nucleotide_oh_crops.npz"
+        seq_len = 16
+        nucleotide = np.random.randint(0, 4, size=(1, 2, seq_len), dtype=np.int32)
+        labels = np.array([1], dtype=np.int32)
+        lengths = np.array([seq_len], dtype=np.int32)
+        np.savez(
+            path,
+            nucleotide=nucleotide,
+            labels=labels,
+            lengths=lengths,
+            nucleotide_map='{"A": 1, "G": 2, "T": 3, "C": 4, "N": 0}',
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="nucleotide",
+            seq_onehot=True,
+            num_classes=2,
+            crop_sizes=[8, 16],
+            overlap=0.0,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 3
+        assert crops[0][0]["nucleotide"].shape == (2, 8, 4)
+        assert crops[2][0]["nucleotide"].shape == (2, 16, 4)
+
+    def test_overlapping_crops(self, tmp_path: Path):
+        path = tmp_path / "translated_overlap.npz"
+        seq_len = 30
+        translated = np.random.randint(1, 65, size=(1, 6, seq_len), dtype=np.int32)
+        labels = np.array([0], dtype=np.int32)
+        translated_lengths = np.array([seq_len], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=2,
+            crop_sizes=[10],
+            overlap=0.5,
+        )
+        crops = list(ds.as_numpy_iterator())
+        # stride = 5, starts [0, 5, 10, 15, 20]
+        assert len(crops) == 5

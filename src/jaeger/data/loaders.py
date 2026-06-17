@@ -13,7 +13,7 @@ import json
 import numpy as np
 import tensorflow as tf
 
-from jaeger.dataops.convert import _get_codon_map
+from jaeger.dataops.convert import _crop_starts, _get_codon_map
 
 
 def _one_hot_integer_np(indices: np.ndarray, depth: int) -> np.ndarray:
@@ -241,6 +241,143 @@ def _load_sharded_numpy_dataset(
     return ds
 
 
+def _resolve_strides(
+    crop_sizes: list[int],
+    strides: list[int] | None,
+    overlap: float | None,
+) -> list[int]:
+    """Return per-crop strides from explicit strides or overlap."""
+    if strides is not None:
+        if len(strides) != len(crop_sizes):
+            raise ValueError(
+                f"strides ({len(strides)}) must match crop_sizes ({len(crop_sizes)})"
+            )
+        return [int(s) for s in strides]
+    if overlap is not None:
+        return [max(1, int(cs * (1 - overlap))) for cs in crop_sizes]
+    return [int(cs) for cs in crop_sizes]
+
+
+def _load_cropped_numpy_dataset(
+    data: np.lib.npyio.NpzFile,
+    crop_sizes: list[int],
+    strides: list[int],
+    input_type: str,
+    seq_onehot: bool,
+    codon_depth: int | None,
+    nucleotide_onehot_map: dict[str, list[float]] | None,
+    num_classes: int | None,
+    one_hot_labels: bool,
+) -> tf.data.Dataset:
+    """Load a dense NPZ and slice runtime crops from full-length arrays."""
+    if input_type == "both":
+        raise NotImplementedError(
+            "Runtime crop generation for input_type='both' is not supported yet."
+        )
+
+    if input_type in ("translated", "both") and codon_depth is None:
+        codon_map_name = str(data["codon_map"])
+        codon_map = _get_codon_map(codon_map_name)
+        codon_depth = len(codon_map) + 1
+
+    lookup_t = None
+    if input_type in ("nucleotide", "both") and seq_onehot:
+        nucleotide_map = json.loads(str(data["nucleotide_map"]))
+        lookup = _build_nucleotide_onehot_lookup(nucleotide_map, nucleotide_onehot_map)
+        lookup_t = tf.constant(lookup, dtype=tf.float32)
+
+    if "labels" in data:
+        labels = data["labels"]
+    elif "label" in data:
+        labels = data["label"]
+    else:
+        raise KeyError("NPZ must contain 'labels' or 'label' array")
+    labels = np.asarray(labels, dtype=np.int32)
+    labels_t = tf.constant(labels)
+    n = len(labels)
+
+    feature_keys: list[str] = []
+    arrays: dict[str, tf.Tensor] = {}
+    if input_type in ("translated", "both"):
+        feature_keys.append("translated")
+        arrays["translated"] = tf.constant(data["translated"])
+        if "translated_lengths" in data:
+            lengths = np.asarray(data["translated_lengths"], dtype=np.int32)
+        else:
+            lengths = np.full(n, arrays["translated"].shape[-2], dtype=np.int32)
+    if input_type in ("nucleotide", "both"):
+        feature_keys.append("nucleotide")
+        arrays["nucleotide"] = tf.constant(data["nucleotide"])
+        if "lengths" in data:
+            lengths = np.asarray(data["lengths"], dtype=np.int32)
+        else:
+            lengths = np.full(n, arrays["nucleotide"].shape[-2], dtype=np.int32)
+
+    sample_indices: list[int] = []
+    starts_list: list[int] = []
+    lengths_list: list[int] = []
+    for i in range(n):
+        actual_len = int(lengths[i])
+        for cs, stride in zip(crop_sizes, strides):
+            for start in _crop_starts(actual_len, cs, stride):
+                length = min(cs, actual_len - start)
+                sample_indices.append(i)
+                starts_list.append(start)
+                lengths_list.append(length)
+
+    if not sample_indices:
+        raise ValueError("No crops could be generated from the input sequences")
+
+    sample_indices_t = tf.constant(sample_indices, dtype=tf.int32)
+    starts_t = tf.constant(starts_list, dtype=tf.int32)
+    crop_lengths_t = tf.constant(lengths_list, dtype=tf.int32)
+
+    def _slice_crop(
+        arr: tf.Tensor, idx: tf.Tensor, start: tf.Tensor, length: tf.Tensor
+    ) -> tf.Tensor:
+        rank = arr.shape.rank
+        begin = [idx, 0, start] + [0] * (rank - 3)
+        size = [1, tf.shape(arr)[1], length] + [
+            tf.shape(arr)[i] for i in range(3, rank)
+        ]
+        crop = tf.slice(arr, begin, size)
+        return tf.squeeze(crop, axis=0)
+
+    def _map_fn(
+        idx: tf.Tensor, start: tf.Tensor, length: tf.Tensor
+    ) -> tuple[dict[str, tf.Tensor], tf.Tensor]:
+        features: dict[str, tf.Tensor] = {}
+        if "translated" in feature_keys:
+            trans = _slice_crop(arrays["translated"], idx, start, length)
+            if seq_onehot and trans.shape.rank == 2:
+                t = tf.cast(trans, tf.int32)
+                mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
+                oh = tf.one_hot(t, depth=int(codon_depth), dtype=tf.float32)
+                trans = oh * mask
+            features["translated"] = trans
+        if "nucleotide" in feature_keys:
+            nuc = _slice_crop(arrays["nucleotide"], idx, start, length)
+            if seq_onehot and nuc.shape.rank == 2:
+                n = tf.cast(nuc, tf.int32)
+                nuc = tf.gather(lookup_t, n)
+            features["nucleotide"] = nuc
+
+        label = labels_t[idx]
+        if one_hot_labels and num_classes is not None and num_classes > 1:
+            label = tf.one_hot(label, depth=int(num_classes), dtype=tf.float32)
+        elif num_classes == 1:
+            label = tf.expand_dims(tf.cast(label, tf.float32), 0)
+        else:
+            label = tf.cast(label, tf.float32)
+        return features, label
+
+    with tf.device("/CPU:0"):
+        ds = tf.data.Dataset.from_tensor_slices(
+            (sample_indices_t, starts_t, crop_lengths_t)
+        ).map(_map_fn, num_parallel_calls=tf.data.AUTOTUNE)
+    return ds
+
+
 def _load_numpy_dataset(
     path: str,
     input_type: str = "translated",
@@ -250,6 +387,9 @@ def _load_numpy_dataset(
     num_classes: int | None = None,
     one_hot_labels: bool = True,
     buffer_size: int | None = None,
+    crop_sizes: list[int] | None = None,
+    strides: list[int] | None = None,
+    overlap: float | None = None,
 ) -> tf.data.Dataset:
     """Load a unified NPZ file and return a ``tf.data.Dataset``.
 
@@ -278,6 +418,15 @@ def _load_numpy_dataset(
         batch-wise in the ``tf.data`` pipeline instead of materialising the
         whole one-hot array in memory. This mirrors the CSV loader's
         sample-by-sample preprocessing and avoids OOM for large NPZs.
+    crop_sizes:
+        Optional list of crop lengths. When provided, full-length sequences in
+        the NPZ are sliced into multiple crops at runtime instead of loading
+        pre-generated crops.
+    strides:
+        Optional per-crop strides. Must match ``crop_sizes`` in length.
+    overlap:
+        Optional overlap fraction between 0 and 1. If ``strides`` is not given,
+        strides are computed as ``int(crop_size * (1 - overlap))``.
 
     Returns
     -------
@@ -288,6 +437,20 @@ def _load_numpy_dataset(
     if "_jaeger_manifest" in data.files:
         return _load_sharded_numpy_dataset(
             data,
+            input_type=input_type,
+            seq_onehot=seq_onehot,
+            codon_depth=codon_depth,
+            nucleotide_onehot_map=nucleotide_onehot_map,
+            num_classes=num_classes,
+            one_hot_labels=one_hot_labels,
+        )
+
+    if crop_sizes is not None:
+        resolved_strides = _resolve_strides(crop_sizes, strides, overlap)
+        return _load_cropped_numpy_dataset(
+            data,
+            crop_sizes=crop_sizes,
+            strides=resolved_strides,
             input_type=input_type,
             seq_onehot=seq_onehot,
             codon_depth=codon_depth,

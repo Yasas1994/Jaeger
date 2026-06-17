@@ -296,6 +296,9 @@ def train_fragment_core(**kwargs):
                             num_classes=builder.classifier_out_dim,
                             one_hot_labels=True,
                             buffer_size=_onehot_buffer,
+                            crop_sizes=string_processor_config.get("crop_sizes"),
+                            strides=string_processor_config.get("strides"),
+                            overlap=string_processor_config.get("overlap"),
                         )
                         padded_shapes = (
                             tf.nest.map_structure(
@@ -471,6 +474,9 @@ def train_fragment_core(**kwargs):
                             num_classes=builder.reliability_out_dim,
                             one_hot_labels=True,
                             buffer_size=_onehot_buffer,
+                            crop_sizes=string_processor_config.get("crop_sizes"),
+                            strides=string_processor_config.get("strides"),
+                            overlap=string_processor_config.get("overlap"),
                         )
                         padded_shapes = (
                             tf.nest.map_structure(
