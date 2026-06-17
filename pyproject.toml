@@ -5,6 +5,7 @@ build-backend = "pdm.backend"
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
 python_files = ["test_*.py", "*_test.py"]
+pythonpath = ["."]
 
 [tool.pdm]
 package-dir = "src"
