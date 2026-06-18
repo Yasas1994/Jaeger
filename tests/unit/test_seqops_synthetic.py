@@ -97,3 +97,29 @@ def test_apply_kmer_shuffle_preserves_kmer_counts():
     shuffled = synthetic.apply_kmer_shuffle(seq, k=2)
     assert len(shuffled) == len(seq)
     assert sorted(shuffled) == sorted(seq)
+
+
+def test_apply_mix_concatenates_full_sequences():
+    seqs = ["AAAA", "CCCC", "GGGG"]
+    mixed = synthetic.apply_mix(seqs)
+    assert mixed == "AAAACCCCGGGG"
+
+
+def test_apply_mix_truncates_to_output_length():
+    seqs = ["AAAA" * 10, "CCCC" * 10]
+    mixed = synthetic.apply_mix(seqs, output_length=20)
+    assert len(mixed) == 20
+
+
+def test_apply_mix_pads_to_output_length():
+    seqs = ["AAAA", "CCCC"]
+    mixed = synthetic.apply_mix(seqs, output_length=20, pad_value="N")
+    assert len(mixed) == 20
+    assert mixed.endswith("NNNNNNNNNNNN")
+
+
+def test_apply_mix_includes_material_from_each_source():
+    seqs = ["A" * 50, "C" * 50]
+    mixed = synthetic.apply_mix(seqs, output_length=40)
+    assert "A" in mixed
+    assert "C" in mixed

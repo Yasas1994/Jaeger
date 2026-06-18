@@ -151,3 +151,44 @@ def apply_tandem_repeat_window(
     else:
         fill = (motif * ((window_len // motif_len) + 1))[:window_len]
     return seq[:start] + fill + seq[end:]
+
+
+def apply_mix(
+    sequences: list[str],
+    output_length: int | None = None,
+    pad_value: str = "N",
+) -> str:
+    """Concatenate *sequences* into a chimeric sequence.
+
+    If *output_length* is provided, the concatenation is truncated or padded
+    with *pad_value* to that length. Otherwise the full concatenation is
+    returned.
+    """
+    if not sequences:
+        raise ValueError("apply_mix requires at least one sequence")
+
+    if output_length is None:
+        return "".join(sequences)
+
+    n = len(sequences)
+    if output_length < n:
+        cuts = list(range(output_length)) + [output_length]
+    else:
+        cuts = sorted(random.sample(range(output_length), k=n - 1))
+    cuts = [0] + cuts + [output_length]
+    segment_lengths = [cuts[i + 1] - cuts[i] for i in range(n)]
+
+    segments: list[str] = []
+    for seq, seg_len in zip(sequences, segment_lengths):
+        seq_len = len(seq)
+        if seq_len == 0 or seg_len <= 0:
+            segments.append("")
+            continue
+        actual_len = min(seg_len, seq_len)
+        start = random.randint(0, seq_len - actual_len)
+        segments.append(seq[start : start + actual_len])
+
+    chimera = "".join(segments)
+    if len(chimera) < output_length:
+        chimera += pad_value * (output_length - len(chimera))
+    return chimera
