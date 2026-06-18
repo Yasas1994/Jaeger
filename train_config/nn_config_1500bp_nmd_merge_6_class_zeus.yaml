@@ -195,8 +195,8 @@ training:
 
   reliability_data_generation:
     raw_csv_paths:
-      train: '{{ training.data_dir }}/train_shuffled_sample.csv'
-      val: '{{ training.data_dir }}/val_shuffled_sample.csv'
+      train: '{{ training.data_dir }}/train_data_2000.csv'
+      val: '{{ training.data_dir }}/val_data_2000.csv'
     output_dir: '{{ training.data_dir }}/reliability_data'
     crop_sizes: [ 500 ]
     units: codon
@@ -286,7 +286,7 @@ training:
       - archaea
       - plasmid
       path:
-      - '{{ training.data_dir }}/train_data_1800bp_translated.npz'
+      - '{{ training.data_dir }}/numpy/train_data_1800bp_translated.npz'
       label:
       - 0
       - 1
@@ -303,7 +303,7 @@ training:
       - archaea
       - plasmid
       path:
-      - '{{ training.data_dir }}/val_data_1800bp_translated.npz'
+      - '{{ training.data_dir }}/numpy/val_data_1800bp_translated.npz'
       label:
       - 0
       - 1
