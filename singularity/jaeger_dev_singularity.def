@@ -1,8 +1,8 @@
 Bootstrap: docker
 From: python:3.12.7-bookworm 
 
-%files
-    scripts/calculate_metrics_realworld.py /usr/bin/calculate_metrics_realworld.py
+# %files
+#     scripts/calculate_metrics_realworld.py /usr/bin/calculate_metrics_realworld.py
 
 %post
     # Update and install system dependencies
@@ -14,7 +14,7 @@ From: python:3.12.7-bookworm
         && rm -rf /var/lib/apt/lists/*
 
     wget https://github.com/soedinglab/MMseqs2/releases/download/18-8cc5c/mmseqs-linux-avx2.tar.gz
-    tar xvf mmseqs-linux-avx2.tar.gz
+    tar --no-same-owner -xvf mmseqs-linux-avx2.tar.gz
     rm mmseqs-linux-avx2.tar.gz
     # export PATH="/Software/mmseqs/bin:$PATH"
 
@@ -22,10 +22,10 @@ From: python:3.12.7-bookworm
     python3 -m pip install --upgrade pip --root-user-action=ignore
 
     # Install Jaeger and other dependencies
-    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/Yasas1994/Jaeger@dev" # install jaeger without tensorflow support
+    pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/Yasas1994/Jaeger@main" # install jaeger without tensorflow support
     pip3 install --root-user-action=ignore --no-cache-dir  icecream matplotlib seaborn
 
-    chmod +x /usr/bin/calculate_metrics_realworld.py
+    # chmod +x /usr/bin/calculate_metrics_realworld.py
 
 %environment
     # Set environment variables for TensorFlow GPU usage
@@ -37,5 +37,5 @@ From: python:3.12.7-bookworm
 
 %labels
     Author: "Yasas Wijesekara"
-    Version: "1.0"
+    Version: "1.26.4"
     Description: "Apptainer container with Jaeger[dev] and TensorFlow GPU support"
