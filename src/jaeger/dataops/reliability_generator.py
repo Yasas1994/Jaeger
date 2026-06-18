@@ -340,6 +340,17 @@ def generate_reliability_data(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
+    train_npz = str(output_dir_path / "reliability_train.npz")
+    val_npz = str(output_dir_path / "reliability_val.npz")
+    if Path(train_npz).is_file() and Path(val_npz).is_file():
+        logger.info(
+            f"Reliability data already exists in {output_dir}; skipping generation"
+        )
+        return {
+            "train": {"paths": [train_npz], "class": [], "label": []},
+            "validation": {"paths": [val_npz], "class": [], "label": []},
+        }
+
     raw_csv_paths = generator_cfg.get("raw_csv_paths") or {}
     train_csv_path = raw_csv_paths.get("train") or raw_csv_path
     val_csv_path = raw_csv_paths.get("val")

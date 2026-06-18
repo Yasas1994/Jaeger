@@ -376,3 +376,33 @@ def test_build_inference_dataset_produces_batched_dict_input(tmp_path: Path):
         assert x["translated"].shape[0] == 2
         assert y.shape == (2, 3)
         break
+
+
+def test_generate_reliability_data_skips_if_outputs_exist(monkeypatch, tmp_path: Path):
+    """Existing reliability NPZs are reused instead of regenerating."""
+    output_dir = str(tmp_path)
+    train_npz = str(tmp_path / "reliability_train.npz")
+    val_npz = str(tmp_path / "reliability_val.npz")
+    Path(train_npz).touch()
+    Path(val_npz).touch()
+
+    def _raise(*args, **kwargs):
+        raise AssertionError("Should not regenerate when outputs exist")
+
+    monkeypatch.setattr(rg, "_build_inference_dataset", _raise)
+    monkeypatch.setattr(rg, "_convert_to_npz", _raise)
+
+    result = rg.generate_reliability_data(
+        classifier=object(),
+        raw_csv_path=str(tmp_path / "missing_train.csv"),
+        output_dir=output_dir,
+        string_processor_config={"crop_size": 100},
+        model_cfg={"string_processor": {}},
+        classifier_out_dim=2,
+        reliability_out_dim=1,
+        batch_size=2,
+        generator_cfg={},
+    )
+
+    assert result["train"]["paths"] == [train_npz]
+    assert result["validation"]["paths"] == [val_npz]
