@@ -189,3 +189,167 @@ def test_generate_reliability_data_smoke(monkeypatch, tmp_path: Path):
     assert (Path(output_dir) / "reliability_val.npz").exists()
     assert result["train"]["paths"]
     assert result["validation"]["paths"]
+
+
+def test_generate_reliability_data_accepts_raw_csv_paths(monkeypatch, tmp_path: Path):
+    """Separate train/val CSVs are used directly instead of splitting one file."""
+    import tensorflow as tf
+
+    train_csv = str(tmp_path / "train.csv")
+    val_csv = str(tmp_path / "val.csv")
+    rg._write_csv(
+        [(0, "ATCG" * 50), (1, "TGCA" * 50), (0, "GCTA" * 50), (1, "CATG" * 50)],
+        train_csv,
+    )
+    rg._write_csv(
+        [(0, "AAAA" * 50), (1, "TTTT" * 50)],
+        val_csv,
+    )
+    output_dir = str(tmp_path / "rel_out")
+
+    train_records = rg._read_csv_records(train_csv)
+
+    def _mock_build_dataset(
+        csv_path, string_processor_config, classifier_out_dim, batch_size
+    ):
+        records = rg._read_csv_records(csv_path)
+        n = len(records)
+        labels = np.array([label for label, _ in records], dtype=np.int32)
+        x = tf.zeros((n, 10), dtype=tf.float32)
+        y = tf.one_hot(labels, depth=classifier_out_dim)
+        return tf.data.Dataset.from_tensor_slices((x, y)).batch(batch_size)
+
+    monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
+
+    call_count = 0
+
+    def _mock_run_inference(classifier, dataset):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Train real data: first two correct & high-conf -> ID; third wrong & high-conf -> OOD.
+            return np.array(
+                [
+                    [0.9, 0.1],
+                    [0.1, 0.9],
+                    [0.1, 0.9],
+                    [0.6, 0.4],
+                ],
+                dtype=np.float32,
+            )
+        # Val real data: both correct & high-conf -> ID.
+        return np.array(
+            [
+                [0.9, 0.1],
+                [0.1, 0.9],
+            ],
+            dtype=np.float32,
+        )
+
+    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+
+    class FakeClassifier:
+        pass
+
+    rg.generate_reliability_data(
+        classifier=FakeClassifier(),
+        raw_csv_path=train_csv,
+        output_dir=output_dir,
+        string_processor_config={"crop_size": 100},
+        model_cfg={"string_processor": {}},
+        classifier_out_dim=2,
+        reliability_out_dim=1,
+        batch_size=2,
+        id_threshold=0.8,
+        synthetic_ood_threshold=0.8,
+        synthetic_ood_multiplier=0.0,
+        generator_cfg={
+            "raw_csv_paths": {"train": train_csv, "val": val_csv},
+            "perturbations": {"shuffle": False},
+            "val_fraction": 0.5,
+        },
+    )
+
+    assert (Path(output_dir) / "reliability_train.csv").exists()
+    assert (Path(output_dir) / "reliability_val.csv").exists()
+
+    # Val file should contain exactly the two validation records (both ID).
+    val_written = rg._read_csv_records(str(Path(output_dir) / "reliability_val.csv"))
+    assert len(val_written) == 2
+    assert all(label == 1 for label, _ in val_written)
+
+    # Train file should contain ID + OOD from train CSV (no val records).
+    train_written = rg._read_csv_records(
+        str(Path(output_dir) / "reliability_train.csv")
+    )
+    assert all(seq in {r[1] for r in train_records} for _, seq in train_written)
+
+
+def test_generate_reliability_data_raw_csv_paths_missing_val_falls_back(
+    monkeypatch, tmp_path: Path
+):
+    """If raw_csv_paths.val is missing, fall back to val_fraction split of train."""
+    import tensorflow as tf
+
+    csv_path = str(tmp_path / "train.csv")
+    rg._write_csv(
+        [(0, "ATCG" * 50), (1, "TGCA" * 50), (0, "GCTA" * 50), (1, "CATG" * 50)],
+        csv_path,
+    )
+    output_dir = str(tmp_path / "rel_out")
+
+    true_labels = np.array([0, 1, 0, 1], dtype=np.int32)
+
+    def _mock_build_dataset(
+        csv_path, string_processor_config, classifier_out_dim, batch_size
+    ):
+        n = len(rg._read_csv_records(csv_path))
+        x = tf.zeros((n, 10), dtype=tf.float32)
+        y = tf.one_hot(true_labels[:n], depth=classifier_out_dim)
+        return tf.data.Dataset.from_tensor_slices((x, y)).batch(batch_size)
+
+    monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
+
+    call_count = 0
+
+    def _mock_run_inference(classifier, dataset):
+        nonlocal call_count
+        call_count += 1
+        return np.array(
+            [
+                [0.9, 0.1],
+                [0.1, 0.9],
+                [0.1, 0.9],
+                [0.6, 0.4],
+            ],
+            dtype=np.float32,
+        )
+
+    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+
+    class FakeClassifier:
+        pass
+
+    result = rg.generate_reliability_data(
+        classifier=FakeClassifier(),
+        raw_csv_path=csv_path,
+        output_dir=output_dir,
+        string_processor_config={"crop_size": 100},
+        model_cfg={"string_processor": {}},
+        classifier_out_dim=2,
+        reliability_out_dim=1,
+        batch_size=2,
+        id_threshold=0.8,
+        synthetic_ood_threshold=0.8,
+        synthetic_ood_multiplier=0.0,
+        generator_cfg={
+            "raw_csv_paths": {"train": csv_path},
+            "perturbations": {"shuffle": False},
+            "val_fraction": 0.5,
+        },
+    )
+
+    assert (Path(output_dir) / "reliability_train.csv").exists()
+    assert (Path(output_dir) / "reliability_val.csv").exists()
+    assert result["train"]["paths"]
+    assert result["validation"]["paths"]

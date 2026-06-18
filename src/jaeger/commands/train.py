@@ -401,15 +401,21 @@ def train_fragment_core(**kwargs):
         if kwargs.get("generate_reliability_data", False):
             generator_cfg = builder.train_cfg.get("reliability_data_generation", {})
 
+            raw_csv_paths = generator_cfg.get("raw_csv_paths") or {}
             if data_format == "csv":
-                raw_csv_path = _train_data.get("train", {}).get("paths", [None])[0]
+                raw_csv_path = (
+                    raw_csv_paths.get("train")
+                    or _train_data.get("train", {}).get("paths", [None])[0]
+                )
             else:
-                raw_csv_path = generator_cfg.get("raw_csv_path")
+                raw_csv_path = raw_csv_paths.get("train") or generator_cfg.get(
+                    "raw_csv_path"
+                )
 
             if not raw_csv_path:
                 raise ValueError(
                     "--generate_reliability_data requires raw CSV sequences. "
-                    "Set reliability_data_generation.raw_csv_path in the config "
+                    "Set reliability_data_generation.raw_csv_paths.train in the config "
                     "or use data_format: csv for classifier training."
                 )
 

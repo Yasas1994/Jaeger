@@ -340,23 +340,30 @@ def generate_reliability_data(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Reading raw training sequences from {raw_csv_path}")
-    records = _read_csv_records(raw_csv_path)
-    if not records:
-        raise ValueError(f"No records found in {raw_csv_path}")
+    raw_csv_paths = generator_cfg.get("raw_csv_paths") or {}
+    train_csv_path = raw_csv_paths.get("train") or raw_csv_path
+    val_csv_path = raw_csv_paths.get("val")
+
+    if not train_csv_path:
+        raise ValueError("A training raw CSV path must be provided")
+
+    logger.info(f"Reading raw training sequences from {train_csv_path}")
+    train_records = _read_csv_records(train_csv_path)
+    if not train_records:
+        raise ValueError(f"No records found in {train_csv_path}")
 
     # ---- ID / OOD from real data ----
     logger.info("Running classifier inference on real training sequences")
-    ds = _build_inference_dataset(
-        raw_csv_path,
+    train_ds = _build_inference_dataset(
+        train_csv_path,
         string_processor_config,
         classifier_out_dim,
         batch_size,
     )
-    y_true = _extract_true_labels(ds)
-    probs = _run_classifier_inference(classifier, ds)
+    y_true = _extract_true_labels(train_ds)
+    probs = _run_classifier_inference(classifier, train_ds)
     id_records, real_ood_records = _select_id_ood_records(
-        records, y_true, probs, id_threshold
+        train_records, y_true, probs, id_threshold
     )
     logger.info(
         f"Selected {len(id_records)} ID and {len(real_ood_records)} "
@@ -366,7 +373,7 @@ def generate_reliability_data(
     # ---- synthetic OOD ----
     perturbations_cfg = generator_cfg.get("perturbations", {})
     synthetic_seqs = _generate_synthetic_sequences(
-        records, synthetic_ood_multiplier, perturbations_cfg
+        train_records, synthetic_ood_multiplier, perturbations_cfg
     )
     synthetic_ood_records = _filter_synthetic_ood(
         classifier,
@@ -378,19 +385,47 @@ def generate_reliability_data(
     )
     logger.info(f"Selected {len(synthetic_ood_records)} synthetic OOD samples")
 
-    # ---- combine and split ----
-    all_records = id_records + real_ood_records + synthetic_ood_records
-    rng = np.random.default_rng()
-    rng.shuffle(all_records)
+    # ---- build train / validation records ----
+    if val_csv_path:
+        logger.info(f"Reading raw validation sequences from {val_csv_path}")
+        val_source_records = _read_csv_records(val_csv_path)
+        if not val_source_records:
+            raise ValueError(f"No records found in {val_csv_path}")
 
-    val_fraction = generator_cfg.get("val_fraction", 0.1)
-    n_val = int(len(all_records) * val_fraction)
-    val_records = all_records[:n_val]
-    train_records = all_records[n_val:]
+        logger.info("Running classifier inference on real validation sequences")
+        val_ds = _build_inference_dataset(
+            val_csv_path,
+            string_processor_config,
+            classifier_out_dim,
+            batch_size,
+        )
+        val_y_true = _extract_true_labels(val_ds)
+        val_probs = _run_classifier_inference(classifier, val_ds)
+        val_id_records, val_ood_records = _select_id_ood_records(
+            val_source_records, val_y_true, val_probs, id_threshold
+        )
+        val_records = val_id_records + val_ood_records
+        logger.info(
+            f"Selected {len(val_id_records)} ID and {len(val_ood_records)} "
+            "high-confidence wrong OOD samples from validation data"
+        )
+
+        train_records_out = id_records + real_ood_records + synthetic_ood_records
+        rng = np.random.default_rng()
+        rng.shuffle(train_records_out)
+    else:
+        all_records = id_records + real_ood_records + synthetic_ood_records
+        rng = np.random.default_rng()
+        rng.shuffle(all_records)
+
+        val_fraction = generator_cfg.get("val_fraction", 0.1)
+        n_val = int(len(all_records) * val_fraction)
+        val_records = all_records[:n_val]
+        train_records_out = all_records[n_val:]
 
     train_csv = str(output_dir_path / "reliability_train.csv")
     val_csv = str(output_dir_path / "reliability_val.csv")
-    _write_csv(train_records, train_csv)
+    _write_csv(train_records_out, train_csv)
     _write_csv(val_records, val_csv)
 
     # ---- convert to NPZ ----
