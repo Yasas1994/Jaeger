@@ -300,11 +300,15 @@ def _convert_to_npz(
 ) -> None:
     """Convert a reliability CSV to the same NPZ format used for training."""
     sp_cfg = model_cfg.get("string_processor", {})
+    crop_size = string_processor_config.get("crop_size")
+    if crop_size is None:
+        crop_sizes = string_processor_config.get("crop_sizes")
+        crop_size = max(crop_sizes) if crop_sizes else 500
     convert_dataset(
         input_path=csv_path,
         output_path=npz_path,
         format=string_processor_config.get("input_type", "translated"),
-        crop_size=string_processor_config.get("crop_size"),
+        crop_size=crop_size,
         stride=0,
         num_classes=reliability_out_dim,
         num_workers=1,
