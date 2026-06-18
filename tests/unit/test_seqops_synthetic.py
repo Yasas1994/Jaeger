@@ -74,3 +74,26 @@ def test_apply_tandem_repeat_window_preserves_length():
         seq, motif_length_range=(3, 6), window_fraction=0.25
     )
     assert len(corrupted) == len(seq)
+
+
+def test_apply_tandem_repeat_window_with_num_repeats():
+    seq = "ATCG" * 20
+    corrupted = synthetic.apply_tandem_repeat_window(
+        seq, motif_length_range=(3, 3), window_fraction=0.25, num_repeats=5
+    )
+    assert len(corrupted) == len(seq)
+
+
+def test_apply_dinuc_shuffle_preserves_length_and_dinuc_counts():
+    seq = "ATCGATCGATCG"
+    shuffled = synthetic.apply_dinuc_shuffle(seq)
+    assert len(shuffled) == len(seq)
+    # Dinuc shuffle preserves mononucleotide and dinucleotide frequencies.
+    assert sorted(shuffled) == sorted(seq)
+
+
+def test_apply_kmer_shuffle_preserves_kmer_counts():
+    seq = "ATCGATCGATCG"
+    shuffled = synthetic.apply_kmer_shuffle(seq, k=2)
+    assert len(shuffled) == len(seq)
+    assert sorted(shuffled) == sorted(seq)

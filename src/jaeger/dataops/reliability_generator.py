@@ -12,6 +12,7 @@ This module implements the post-classifier stage that:
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ import tensorflow as tf
 from jaeger.dataops.convert import convert_dataset
 from jaeger.seqops.encode import process_string_train
 from jaeger.seqops.synthetic import (
+    apply_dinuc_shuffle,
+    apply_kmer_shuffle,
     apply_shuffle,
     apply_subseq_repeat_window,
     apply_tandem_repeat_window,
@@ -121,47 +124,145 @@ def _select_id_ood_records(
     return id_records, ood_records
 
 
+def _normalize_perturbation_cfg(
+    perturbations_cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Convert flexible user config into a normalized list of perturbation specs.
+
+    Supports legacy booleans (``shuffle: true``) and structured dicts
+    (``shuffle: {enabled: true, mode: dinuc}``).
+    """
+    specs: list[dict[str, Any]] = []
+
+    def _is_enabled(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, dict):
+            return value.get("enabled", True)
+        return bool(value)
+
+    # ---- shuffle ----
+    shuffle_value = perturbations_cfg.get("shuffle", True)
+    if _is_enabled(shuffle_value):
+        shuffle_dict = (
+            shuffle_value if isinstance(shuffle_value, dict) else {"mode": "random"}
+        )
+        mode = shuffle_dict.get("mode", "random")
+        if mode == "random":
+            fn = apply_shuffle
+            kwargs: dict[str, Any] = {}
+        elif mode == "dinuc":
+            fn = apply_dinuc_shuffle
+            kwargs = {}
+        elif mode == "kmer":
+            fn = apply_kmer_shuffle
+            kwargs = {"k": shuffle_dict.get("k", 2)}
+        else:
+            raise ValueError(f"Unsupported shuffle mode: {mode}")
+        specs.append({"name": "shuffle", "fn": fn, "kwargs": kwargs})
+
+    # ---- subsequence repeat ----
+    subseq_value = perturbations_cfg.get("subseq_repeat", True)
+    if _is_enabled(subseq_value):
+        subseq_dict = subseq_value if isinstance(subseq_value, dict) else {}
+        specs.append(
+            {
+                "name": "subseq_repeat",
+                "fn": apply_subseq_repeat_window,
+                "kwargs": {
+                    "window_fraction": subseq_dict.get("window_fraction", 0.25),
+                },
+            }
+        )
+
+    # ---- tandem repeat ----
+    tandem_value = perturbations_cfg.get("tandem_repeat", True)
+    if _is_enabled(tandem_value):
+        tandem_dict = tandem_value if isinstance(tandem_value, dict) else {}
+        motif_range = tandem_dict.get("motif_length_range", [3, 10])
+        specs.append(
+            {
+                "name": "tandem_repeat",
+                "fn": apply_tandem_repeat_window,
+                "kwargs": {
+                    "motif_length_range": tuple(motif_range),
+                    "window_fraction": tandem_dict.get("window_fraction", 0.25),
+                    "num_repeats": tandem_dict.get("num_repeats"),
+                },
+            }
+        )
+
+    return specs
+
+
+def _compute_perturbation_counts(
+    records: list[tuple[int, str]],
+    multiplier: float,
+    specs: list[dict[str, Any]],
+    perturbations_cfg: dict[str, Any],
+) -> list[int]:
+    """Return the number of synthetic samples to create for each perturbation spec.
+
+    Count resolution order for each perturbation:
+      1. ``count`` key in its config (absolute number).
+      2. ``multiplier`` key in its config (fraction of *len(records)*).
+      3. Even share of the remaining global *multiplier* budget across
+         implicit (non-explicit) specs.
+    """
+    n = len(records)
+    global_count = max(0, int(n * multiplier))
+    if not specs:
+        return []
+
+    counts: list[int] = [0] * len(specs)
+    explicit_indices: list[int] = []
+
+    for i, spec in enumerate(specs):
+        name = spec["name"]
+        cfg = perturbations_cfg.get(name, {})
+        if isinstance(cfg, dict):
+            if "count" in cfg:
+                counts[i] = max(0, int(cfg["count"]))
+                explicit_indices.append(i)
+                continue
+            if "multiplier" in cfg:
+                counts[i] = max(0, int(n * cfg["multiplier"]))
+                explicit_indices.append(i)
+                continue
+
+    implicit_indices = [i for i in range(len(specs)) if i not in explicit_indices]
+    if not implicit_indices:
+        # All specs have explicit counts; honor them exactly.
+        return counts
+
+    allocated = sum(counts[i] for i in explicit_indices)
+    remaining = max(0, global_count - allocated)
+    per_implicit = remaining // len(implicit_indices)
+    for i in implicit_indices:
+        counts[i] = per_implicit
+    leftover = remaining - sum(counts[i] for i in implicit_indices)
+    for i in range(leftover):
+        counts[implicit_indices[i % len(implicit_indices)]] += 1
+
+    return counts
+
+
 def _generate_synthetic_sequences(
     records: list[tuple[int, str]],
     multiplier: float,
     perturbations_cfg: dict[str, Any],
 ) -> list[str]:
-    """Generate corrupted sequences from *records*."""
+    """Generate corrupted sequences from *records* according to *perturbations_cfg*."""
     synthetic: list[str] = []
-    count = max(1, int(len(records) * multiplier))
-    active_perturbations = [
-        name
-        for name in ("shuffle", "subseq_repeat", "tandem_repeat")
-        if perturbations_cfg.get(name, True)
-    ]
-    if not active_perturbations:
+    specs = _normalize_perturbation_cfg(perturbations_cfg)
+    if not specs:
         return synthetic
 
-    for i in range(count):
-        _, seq = records[i % len(records)]
-        perturbation = active_perturbations[i % len(active_perturbations)]
-        if perturbation == "shuffle":
-            synthetic.append(apply_shuffle(seq))
-        elif perturbation == "subseq_repeat":
-            synthetic.append(
-                apply_subseq_repeat_window(
-                    seq,
-                    window_fraction=perturbations_cfg.get("subseq_repeat", {}).get(
-                        "window_fraction", 0.25
-                    ),
-                )
-            )
-        elif perturbation == "tandem_repeat":
-            tandem_cfg = perturbations_cfg.get("tandem_repeat", {})
-            synthetic.append(
-                apply_tandem_repeat_window(
-                    seq,
-                    motif_length_range=tuple(
-                        tandem_cfg.get("motif_length_range", [3, 10])
-                    ),
-                    window_fraction=tandem_cfg.get("window_fraction", 0.25),
-                )
-            )
+    counts = _compute_perturbation_counts(records, multiplier, specs, perturbations_cfg)
+    for spec, count in zip(specs, counts):
+        for i in range(count):
+            _, seq = records[i % len(records)]
+            synthetic.append(spec["fn"](seq, **spec["kwargs"]))
     return synthetic
 
 
@@ -177,7 +278,7 @@ def _filter_synthetic_ood(
     if not synthetic_seqs:
         return []
 
-    tmp_csv = Path(tf.io.gfile.get_temp_dir()) / "jaeger_synthetic_ood.csv"
+    tmp_csv = Path(tempfile.gettempdir()) / "jaeger_synthetic_ood.csv"
     _write_csv([(0, s) for s in synthetic_seqs], str(tmp_csv))
     ds = _build_inference_dataset(
         str(tmp_csv),

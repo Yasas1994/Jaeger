@@ -11,6 +11,7 @@ from typing import List
 
 
 from jaeger.seqops.stats import shannon_entropy
+from jaeger.seqops.transform import dinuc_shuffle, kmer_shuffle
 
 
 def generate_homopolymer(length: int, base: str = "A") -> str:
@@ -99,6 +100,16 @@ def apply_shuffle(seq: str) -> str:
     return "".join(chars)
 
 
+def apply_dinuc_shuffle(seq: str) -> str:
+    """Return a dinucleotide-frequency-preserving shuffle of *seq*."""
+    return dinuc_shuffle(seq)
+
+
+def apply_kmer_shuffle(seq: str, k: int = 2) -> str:
+    """Return a k-mer-preserving shuffle of *seq*."""
+    return kmer_shuffle(seq, k=k)
+
+
 def apply_subseq_repeat_window(seq: str, window_fraction: float = 0.25) -> str:
     """Replace a random window with a repeated subsequence from *seq*."""
     if not seq:
@@ -119,8 +130,14 @@ def apply_tandem_repeat_window(
     seq: str,
     motif_length_range: tuple[int, int] = (3, 10),
     window_fraction: float = 0.25,
+    num_repeats: int | None = None,
 ) -> str:
-    """Replace a random window with a tandem repeat of a short random motif."""
+    """Replace a random window with a tandem repeat of a short random motif.
+
+    If *num_repeats* is provided, the motif is repeated exactly that many times
+    (truncated or padded to the window length). Otherwise the motif is repeated
+    enough times to fill the window.
+    """
     if not seq:
         return seq
     seq_len = len(seq)
@@ -128,5 +145,9 @@ def apply_tandem_repeat_window(
     window_len = end - start
     motif_len = random.randint(*motif_length_range)
     motif = "".join(random.choices("ACGT", k=motif_len))
-    fill = (motif * ((window_len // motif_len) + 1))[:window_len]
+    if num_repeats is not None and num_repeats > 0:
+        repeat_block = motif * num_repeats
+        fill = (repeat_block * ((window_len // len(repeat_block)) + 1))[:window_len]
+    else:
+        fill = (motif * ((window_len // motif_len) + 1))[:window_len]
     return seq[:start] + fill + seq[end:]

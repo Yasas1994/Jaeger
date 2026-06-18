@@ -409,23 +409,23 @@ def tune(**kwargs):
 @click.option(
     "--id_threshold",
     type=float,
-    default=0.8,
+    default=None,
     show_default=True,
-    help="Confidence threshold for selecting ID / high-confidence OOD samples",
+    help="Confidence threshold for selecting ID / high-confidence OOD samples (default: 0.8)",
 )
 @click.option(
     "--synthetic_ood_threshold",
     type=float,
-    default=0.8,
+    default=None,
     show_default=True,
-    help="Confidence threshold for synthetic OOD samples",
+    help="Confidence threshold for synthetic OOD samples (default: 0.8)",
 )
 @click.option(
     "--synthetic_ood_multiplier",
     type=float,
-    default=1.0,
+    default=None,
     show_default=True,
-    help="Number of synthetic OOD sequences to generate per real training sequence",
+    help="Number of synthetic OOD sequences to generate per real training sequence (default: 1.0)",
 )
 @click.option(
     "--mixed_precision",

@@ -394,6 +394,20 @@ def train_fragment_core(**kwargs):
             )
             logger.info(f"Generating reliability data in {output_dir}")
 
+            id_threshold = kwargs.get("id_threshold")
+            if id_threshold is None:
+                id_threshold = generator_cfg.get("id_threshold", 0.8)
+            synthetic_ood_threshold = kwargs.get("synthetic_ood_threshold")
+            if synthetic_ood_threshold is None:
+                synthetic_ood_threshold = generator_cfg.get(
+                    "synthetic_ood_threshold", 0.8
+                )
+            synthetic_ood_multiplier = kwargs.get("synthetic_ood_multiplier")
+            if synthetic_ood_multiplier is None:
+                synthetic_ood_multiplier = generator_cfg.get(
+                    "synthetic_ood_multiplier", 1.0
+                )
+
             _rel_train_data = generate_reliability_data(
                 classifier=models["jaeger_classifier"],
                 raw_csv_path=raw_csv_path,
@@ -403,9 +417,9 @@ def train_fragment_core(**kwargs):
                 classifier_out_dim=builder.classifier_out_dim,
                 reliability_out_dim=builder.reliability_out_dim,
                 batch_size=builder.train_cfg.get("batch_size"),
-                id_threshold=kwargs.get("id_threshold", 0.8),
-                synthetic_ood_threshold=kwargs.get("synthetic_ood_threshold", 0.8),
-                synthetic_ood_multiplier=kwargs.get("synthetic_ood_multiplier", 1.0),
+                id_threshold=id_threshold,
+                synthetic_ood_threshold=synthetic_ood_threshold,
+                synthetic_ood_multiplier=synthetic_ood_multiplier,
                 generator_cfg=generator_cfg,
             )
             data_format = "numpy"

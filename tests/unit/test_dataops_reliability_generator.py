@@ -51,3 +51,141 @@ def test_write_and_read_csv(tmp_path: Path):
     rg._write_csv(records, path)
     read = rg._read_csv_records(path)
     assert read == records
+
+
+def test_normalize_perturbation_cfg_structured():
+    cfg = {
+        "shuffle": {"enabled": True, "mode": "dinuc"},
+        "subseq_repeat": {"enabled": True, "window_fraction": 0.3},
+        "tandem_repeat": {
+            "enabled": True,
+            "motif_length_range": [4, 8],
+            "window_fraction": 0.3,
+            "num_repeats": 10,
+        },
+    }
+    specs = rg._normalize_perturbation_cfg(cfg)
+    assert len(specs) == 3
+    assert specs[0]["name"] == "shuffle"
+    assert specs[0]["fn"] is rg.apply_dinuc_shuffle
+    assert specs[1]["kwargs"]["window_fraction"] == 0.3
+    assert specs[2]["kwargs"]["num_repeats"] == 10
+    assert specs[2]["kwargs"]["motif_length_range"] == (4, 8)
+
+
+def test_normalize_perturbation_cfg_legacy_booleans():
+    cfg = {"shuffle": True, "subseq_repeat": False, "tandem_repeat": True}
+    specs = rg._normalize_perturbation_cfg(cfg)
+    names = [s["name"] for s in specs]
+    assert "shuffle" in names
+    assert "subseq_repeat" not in names
+    assert "tandem_repeat" in names
+
+
+def test_compute_perturbation_counts_with_global_multiplier():
+    records = [(0, "A" * 100)] * 12
+    specs = [{"name": "shuffle"}, {"name": "subseq_repeat"}, {"name": "tandem_repeat"}]
+    cfg = {}
+    counts = rg._compute_perturbation_counts(records, 1.0, specs, cfg)
+    assert sum(counts) == 12
+    assert all(c == 4 for c in counts)
+
+
+def test_compute_perturbation_counts_with_explicit_counts():
+    records = [(0, "A" * 100)] * 100
+    specs = [{"name": "shuffle"}, {"name": "tandem_repeat"}]
+    cfg = {"shuffle": {"count": 10}, "tandem_repeat": {"multiplier": 0.2}}
+    counts = rg._compute_perturbation_counts(records, 1.0, specs, cfg)
+    # When all specs are explicit, the global multiplier is ignored and the
+    # explicit counts are honored exactly.
+    assert counts[0] == 10
+    assert counts[1] == 20
+
+
+def test_generate_synthetic_sequences_uses_shuffle_mode():
+    records = [(0, "ATCG" * 10)]
+    seqs = rg._generate_synthetic_sequences(
+        records,
+        multiplier=2.0,
+        perturbations_cfg={"shuffle": {"enabled": True, "mode": "dinuc"}},
+    )
+    assert len(seqs) == 2
+    assert all(len(s) == len(records[0][1]) for s in seqs)
+
+
+def test_generate_reliability_data_smoke(monkeypatch, tmp_path: Path):
+    """End-to-end smoke test with a mocked classifier and dataset pipeline."""
+    import tensorflow as tf
+
+    csv_path = str(tmp_path / "train.csv")
+    rg._write_csv(
+        [(0, "ATCG" * 50), (1, "TGCA" * 50), (0, "GCTA" * 50), (1, "CATG" * 50)],
+        csv_path,
+    )
+    output_dir = str(tmp_path / "rel_out")
+
+    records = rg._read_csv_records(csv_path)
+    true_labels = np.array([label for label, _ in records], dtype=np.int32)
+
+    # Mock dataset builder so we do not need a real TF preprocessing pipeline.
+    def _mock_build_dataset(
+        csv_path, string_processor_config, classifier_out_dim, batch_size
+    ):
+        n = len(rg._read_csv_records(csv_path))
+        x = tf.zeros((n, 10), dtype=tf.float32)
+        y = tf.one_hot(true_labels[:n], depth=classifier_out_dim)
+        return tf.data.Dataset.from_tensor_slices((x, y)).batch(batch_size)
+
+    monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
+
+    # Mock classifier inference. First call = real data (4 samples),
+    # second call = synthetic data (number depends on multiplier).
+    call_count = 0
+
+    def _mock_run_inference(classifier, dataset):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Real data: first two correct & high-conf -> ID; third wrong & high-conf -> OOD.
+            return np.array(
+                [
+                    [0.9, 0.1],  # true 0, pred 0 -> ID
+                    [0.1, 0.9],  # true 1, pred 1 -> ID
+                    [0.1, 0.9],  # true 0, pred 1 -> OOD
+                    [0.6, 0.4],  # true 1, low conf -> dropped
+                ],
+                dtype=np.float32,
+            )
+        # Synthetic data: keep all as high-confidence OOD.
+        n = sum(int(batch[0].shape[0]) for batch in dataset)
+        return np.tile(np.array([0.9, 0.1], dtype=np.float32), (n, 1))
+
+    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+
+    class FakeClassifier:
+        pass
+
+    result = rg.generate_reliability_data(
+        classifier=FakeClassifier(),
+        raw_csv_path=csv_path,
+        output_dir=output_dir,
+        string_processor_config={"crop_size": 100},
+        model_cfg={"string_processor": {}},
+        classifier_out_dim=2,
+        reliability_out_dim=1,
+        batch_size=2,
+        id_threshold=0.8,
+        synthetic_ood_threshold=0.8,
+        synthetic_ood_multiplier=1.0,
+        generator_cfg={
+            "perturbations": {"shuffle": True, "tandem_repeat": False},
+            "val_fraction": 0.5,
+        },
+    )
+
+    assert (Path(output_dir) / "reliability_train.csv").exists()
+    assert (Path(output_dir) / "reliability_val.csv").exists()
+    assert (Path(output_dir) / "reliability_train.npz").exists()
+    assert (Path(output_dir) / "reliability_val.npz").exists()
+    assert result["train"]["paths"]
+    assert result["validation"]["paths"]
