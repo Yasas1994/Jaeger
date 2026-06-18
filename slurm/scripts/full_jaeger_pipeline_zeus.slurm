@@ -6,8 +6,9 @@
 #SBATCH --cpus-per-task=40
 #SBATCH --mem=250G
 #SBATCH --time=72:00:00
-#SBATCH --partition=vision
+#SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
+#SBATCH --nodelist=node030
 
 # Full Jaeger training-to-evaluation pipeline for Zeus.
 #
