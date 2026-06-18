@@ -308,6 +308,13 @@ def _convert_to_npz(
     if crop_size is None:
         crop_sizes = string_processor_config.get("crop_sizes")
         crop_size = max(crop_sizes) if crop_sizes else 500
+
+    units = generator_cfg.get("units", "nuc")
+    if units == "codon":
+        crop_size = crop_size * 3
+    elif units != "nuc":
+        raise ValueError("units must be 'nuc' or 'codon'")
+
     convert_dataset(
         input_path=csv_path,
         output_path=npz_path,

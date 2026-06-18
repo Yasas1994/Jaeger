@@ -457,3 +457,25 @@ def test_convert_to_npz_uses_generator_cfg_crop_size(monkeypatch, tmp_path: Path
     )
 
     assert called["crop_size"] == 250
+
+
+def test_convert_to_npz_converts_codon_units(monkeypatch, tmp_path: Path):
+    """generator_cfg.units='codon' multiplies crop_size by 3."""
+    called = {}
+
+    def _fake_convert_dataset(*, crop_size, **kwargs):
+        called["crop_size"] = crop_size
+        return None
+
+    monkeypatch.setattr(rg, "convert_dataset", _fake_convert_dataset)
+
+    rg._convert_to_npz(
+        csv_path=str(tmp_path / "rel.csv"),
+        npz_path=str(tmp_path / "rel.npz"),
+        string_processor_config={"crop_size": 100},
+        reliability_out_dim=1,
+        model_cfg={"string_processor": {}},
+        generator_cfg={"crop_size": 250, "units": "codon"},
+    )
+
+    assert called["crop_size"] == 750
