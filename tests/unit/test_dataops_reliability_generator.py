@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from jaeger.dataops import reliability_generator as rg
 
@@ -531,7 +532,9 @@ def test_generate_reliability_data_adds_synthetic_ood_to_validation(
 
     monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
 
-    def _mock_generate_synthetic(records, multiplier, perturbations_cfg):
+    def _mock_generate_synthetic(
+        records, multiplier, perturbations_cfg, crop_size=None
+    ):
         return ["SYNTHETIC_SEQ"] * int(len(records) * multiplier)
 
     monkeypatch.setattr(rg, "_generate_synthetic_sequences", _mock_generate_synthetic)
@@ -567,3 +570,65 @@ def test_generate_reliability_data_adds_synthetic_ood_to_validation(
 
     assert any(seq == "SYNTHETIC_SEQ" for _, seq in val_written)
     assert any(seq == "SYNTHETIC_SEQ" for _, seq in train_written)
+
+
+def test_normalize_perturbation_cfg_mix_boolean():
+    cfg = {
+        "shuffle": False,
+        "subseq_repeat": False,
+        "tandem_repeat": False,
+        "mix": True,
+    }
+    specs = rg._normalize_perturbation_cfg(cfg)
+    assert len(specs) == 1
+    assert specs[0]["name"] == "mix"
+    assert specs[0]["kwargs"]["n_segments"] == 2
+
+
+def test_normalize_perturbation_cfg_mix_structured():
+    cfg = {
+        "shuffle": False,
+        "subseq_repeat": False,
+        "tandem_repeat": False,
+        "mix": {"enabled": True, "n_segments": 3},
+    }
+    specs = rg._normalize_perturbation_cfg(cfg)
+    assert len(specs) == 1
+    assert specs[0]["name"] == "mix"
+    assert specs[0]["kwargs"]["n_segments"] == 3
+
+
+def test_generate_synthetic_sequences_mix_requires_distinct_classes():
+    records = [(0, "A" * 100)] * 5
+    with pytest.raises(ValueError, match="mix perturbation requires at least 2"):
+        rg._generate_synthetic_sequences(
+            records,
+            multiplier=1.0,
+            perturbations_cfg={
+                "shuffle": False,
+                "subseq_repeat": False,
+                "tandem_repeat": False,
+                "mix": {"enabled": True, "n_segments": 2},
+            },
+            crop_size=50,
+        )
+
+
+def test_generate_synthetic_sequences_mix_produces_chimera():
+    records = [(0, "A" * 100), (1, "C" * 100)]
+    seqs = rg._generate_synthetic_sequences(
+        records,
+        multiplier=1.0,
+        perturbations_cfg={
+            "shuffle": False,
+            "subseq_repeat": False,
+            "tandem_repeat": False,
+            "mix": {"enabled": True, "n_segments": 2},
+        },
+        crop_size=50,
+    )
+    assert len(seqs) == 2  # 1.0 * 2 records
+    for seq in seqs:
+        assert len(seq) == 50
+        assert "A" in seq
+        assert "C" in seq

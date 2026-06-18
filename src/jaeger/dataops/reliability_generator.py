@@ -12,6 +12,7 @@ This module implements the post-classifier stage that:
 
 from __future__ import annotations
 
+import random
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from jaeger.seqops.encode import CODON_ID, CODONS, process_string_train
 from jaeger.seqops.synthetic import (
     apply_dinuc_shuffle,
     apply_kmer_shuffle,
+    apply_mix,
     apply_shuffle,
     apply_subseq_repeat_window,
     apply_tandem_repeat_window,
@@ -214,6 +216,18 @@ def _normalize_perturbation_cfg(
             }
         )
 
+    # ---- mix / chimera ----
+    mix_value = perturbations_cfg.get("mix", False)
+    if _is_enabled(mix_value):
+        mix_dict = mix_value if isinstance(mix_value, dict) else {}
+        specs.append(
+            {
+                "name": "mix",
+                "fn": apply_mix,
+                "kwargs": {"n_segments": mix_dict.get("n_segments", 2)},
+            }
+        )
+
     return specs
 
 
@@ -269,10 +283,33 @@ def _compute_perturbation_counts(
     return counts
 
 
+def _make_mix_chimera(
+    records: list[tuple[int, str]],
+    n_segments: int,
+    crop_size: int | None = None,
+) -> str:
+    """Build a chimera from *n_segments* sequences belonging to distinct classes."""
+    distinct_labels = list({label for label, _ in records})
+    if len(distinct_labels) < n_segments:
+        raise ValueError(
+            f"mix perturbation requires at least {n_segments} distinct classes, "
+            f"found {len(distinct_labels)}"
+        )
+
+    selected_labels = random.sample(distinct_labels, k=n_segments)
+    label_to_seqs: dict[int, list[str]] = {}
+    for label, seq in records:
+        label_to_seqs.setdefault(label, []).append(seq)
+
+    selected_seqs = [random.choice(label_to_seqs[label]) for label in selected_labels]
+    return apply_mix(selected_seqs, output_length=crop_size)
+
+
 def _generate_synthetic_sequences(
     records: list[tuple[int, str]],
     multiplier: float,
     perturbations_cfg: dict[str, Any],
+    crop_size: int | None = None,
 ) -> list[str]:
     """Generate corrupted sequences from *records* according to *perturbations_cfg*."""
     synthetic: list[str] = []
@@ -282,9 +319,14 @@ def _generate_synthetic_sequences(
 
     counts = _compute_perturbation_counts(records, multiplier, specs, perturbations_cfg)
     for spec, count in zip(specs, counts):
-        for i in range(count):
-            _, seq = records[i % len(records)]
-            synthetic.append(spec["fn"](seq, **spec["kwargs"]))
+        if spec["name"] == "mix":
+            n_segments = spec["kwargs"]["n_segments"]
+            for _ in range(count):
+                synthetic.append(_make_mix_chimera(records, n_segments, crop_size))
+        else:
+            for i in range(count):
+                _, seq = records[i % len(records)]
+                synthetic.append(spec["fn"](seq, **spec["kwargs"]))
     return synthetic
 
 
@@ -418,7 +460,10 @@ def generate_reliability_data(
     # ---- synthetic OOD ----
     perturbations_cfg = generator_cfg.get("perturbations", {})
     synthetic_seqs = _generate_synthetic_sequences(
-        train_records, synthetic_ood_multiplier, perturbations_cfg
+        train_records,
+        synthetic_ood_multiplier,
+        perturbations_cfg,
+        crop_size=crop_size,
     )
     synthetic_ood_records = _filter_synthetic_ood(
         classifier,
@@ -458,7 +503,10 @@ def generate_reliability_data(
 
         logger.info("Generating synthetic OOD samples from validation sequences")
         val_synthetic_seqs = _generate_synthetic_sequences(
-            val_source_records, synthetic_ood_multiplier, perturbations_cfg
+            val_source_records,
+            synthetic_ood_multiplier,
+            perturbations_cfg,
+            crop_size=crop_size,
         )
         val_synthetic_ood_records = _filter_synthetic_ood(
             classifier,
