@@ -268,6 +268,39 @@ def _resolve_strides(
     return [int(cs) for cs in crop_sizes]
 
 
+def _densify_object_array(arr: np.ndarray, pad_value: int = 0) -> np.ndarray | None:
+    """Convert a 1-D object array of ndarrays into a dense padded ndarray.
+
+    Returns ``None`` if the array is not an object array or if the inner arrays
+    have incompatible shapes. Fixed-length inputs are stacked directly;
+    variable-length inputs are padded to the maximum length along each axis.
+    """
+    if arr.ndim != 1 or arr.dtype != object:
+        return arr
+
+    try:
+        # Fast path: all inner arrays have the same shape.
+        return np.stack(arr)
+    except ValueError:
+        pass
+
+    # Variable-length path: pad each inner array to the max shape.
+    shapes = [a.shape for a in arr]
+    if not shapes:
+        return arr
+    max_shape = tuple(max(s) for s in zip(*shapes))
+    try:
+        padded = []
+        for a in arr:
+            pad_width = [(0, m - s) for m, s in zip(max_shape, a.shape)]
+            if any(p > 0 for w in pad_width for p in w):
+                a = np.pad(a, pad_width, mode="constant", constant_values=pad_value)
+            padded.append(a)
+        return np.stack(padded)
+    except Exception:
+        return None
+
+
 def _load_cropped_numpy_dataset(
     data: np.lib.npyio.NpzFile,
     crop_sizes: list[int],
@@ -325,6 +358,23 @@ def _load_cropped_numpy_dataset(
         np_arrays[feature_keys[0]].ndim == 1
         and np_arrays[feature_keys[0]].dtype == object
     )
+
+    # If the NPZ stored full sequences as object arrays, try to densify them.
+    # Fixed-length data (e.g. all 1800 bp) becomes a dense tensor and can use
+    # the fast from_tensor_slices + parallel map path instead of a Python
+    # generator. Variable-length data falls back to the generator path.
+    if is_object:
+        densified: dict[str, np.ndarray] = {}
+        can_densify = True
+        for key in feature_keys:
+            dense = _densify_object_array(np_arrays[key])
+            if dense is None:
+                can_densify = False
+                break
+            densified[key] = dense
+        if can_densify:
+            np_arrays.update(densified)
+            is_object = False
 
     def _encode_label(label: int) -> np.ndarray:
         if one_hot_labels and num_classes is not None and num_classes > 1:
