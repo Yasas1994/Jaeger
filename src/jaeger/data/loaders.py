@@ -147,6 +147,7 @@ def _load_ragged_numpy_dataset(
         ds = tf.data.Dataset.from_generator(
             generator, output_signature=output_signature
         )
+        ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
 
 
@@ -246,6 +247,7 @@ def _load_sharded_numpy_dataset(
         ds = tf.data.Dataset.from_generator(
             generator, output_signature=output_signature
         )
+        ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
 
 
@@ -353,16 +355,21 @@ def _load_cropped_numpy_dataset(
 
     if is_object:
         # Variable-length full sequences stored as object arrays.
+        # Keep the generator as light as possible (numpy slicing only) and do
+        # one-hot conversion in a parallel map. This follows TensorFlow's data
+        # performance guideline of keeping the generator Python-only and moving
+        # heavy TF ops into vectorized/parallel map transforms.
         def _sample_features(i: int, start: int, length: int) -> dict[str, np.ndarray]:
-            return {
-                key: _convert_numpy_crop(
-                    np_arrays[key][i][:, start : start + length]
-                    if np_arrays[key][i].ndim == 2
-                    else np_arrays[key][i][:, start : start + length, :],
-                    key,
+            raw: dict[str, np.ndarray] = {}
+            for key in feature_keys:
+                arr = np_arrays[key][i]
+                crop = (
+                    arr[:, start : start + length]
+                    if arr.ndim == 2
+                    else arr[:, start : start + length, :]
                 )
-                for key in feature_keys
-            }
+                raw[key] = crop.astype(np.int32)
+            return raw
 
         # Build the first crop to infer output signatures.
         first_start, first_length = next(
@@ -396,10 +403,35 @@ def _load_cropped_numpy_dataset(
                         length = min(cs, actual_len - start)
                         yield _sample_features(i, start, length), label
 
+        def _convert_crops(
+            features: dict[str, tf.Tensor], label: tf.Tensor
+        ) -> tuple[dict[str, tf.Tensor], tf.Tensor]:
+            out: dict[str, tf.Tensor] = {}
+            for key in feature_keys:
+                crop = features[key]
+                if seq_onehot and crop.shape.rank == 2 and key == "translated":
+                    t = tf.cast(crop, tf.int32)
+                    mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
+                    oh = tf.one_hot(t, depth=int(codon_depth), dtype=tf.float32)
+                    out[key] = oh * mask
+                elif (
+                    seq_onehot
+                    and crop.shape.rank == 2
+                    and key == "nucleotide"
+                    and lookup is not None
+                ):
+                    n = tf.cast(crop, tf.int32)
+                    out[key] = tf.gather(tf.constant(lookup, dtype=tf.float32), n)
+                else:
+                    out[key] = crop
+            return out, label
+
         with tf.device("/CPU:0"):
             ds = tf.data.Dataset.from_generator(
                 generator, output_signature=output_signature
             )
+            ds = ds.map(_convert_crops, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.prefetch(tf.data.AUTOTUNE)
         return ds
 
     # Dense padded full sequences.
@@ -474,6 +506,7 @@ def _load_cropped_numpy_dataset(
         ds = tf.data.Dataset.from_tensor_slices(
             (sample_indices_t, starts_t, crop_lengths_t)
         ).map(_map_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
 
 
@@ -700,4 +733,4 @@ def _load_numpy_dataset(
             .unbatch()
         )
 
-    return ds
+    return ds.prefetch(tf.data.AUTOTUNE)
