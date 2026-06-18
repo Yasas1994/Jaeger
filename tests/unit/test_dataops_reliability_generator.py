@@ -179,7 +179,7 @@ def test_generate_reliability_data_smoke(monkeypatch, tmp_path: Path):
         synthetic_ood_threshold=0.8,
         synthetic_ood_multiplier=1.0,
         generator_cfg={
-            "perturbations": {"shuffle": True, "tandem_repeat": False},
+            "perturbations": {"shuffle": True, "tandem_repeat": False, "mix": True},
             "val_fraction": 0.5,
         },
     )
