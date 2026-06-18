@@ -491,11 +491,21 @@ class TestRuntimeCropLoader:
         crops = list(ds.as_numpy_iterator())
         assert len(crops) == 3  # two 10-length + one 20-length
 
+        # Every crop is padded to the max crop size (20).
         feats, label = crops[0]
-        np.testing.assert_array_equal(feats["translated"], translated[0, :, :10])
+        assert feats["translated"].shape == (6, 20)
+        np.testing.assert_array_equal(
+            feats["translated"][:, :10], translated[0, :, :10]
+        )
+        np.testing.assert_array_equal(feats["translated"][:, 10:], 0)
         feats, label = crops[1]
-        np.testing.assert_array_equal(feats["translated"], translated[0, :, 10:20])
+        assert feats["translated"].shape == (6, 20)
+        np.testing.assert_array_equal(
+            feats["translated"][:, :10], translated[0, :, 10:20]
+        )
+        np.testing.assert_array_equal(feats["translated"][:, 10:], 0)
         feats, label = crops[2]
+        assert feats["translated"].shape == (6, 20)
         np.testing.assert_array_equal(feats["translated"], translated[0, :, :20])
         np.testing.assert_array_equal(label, np.array([0.0, 1.0]))
 
@@ -579,8 +589,11 @@ class TestRuntimeCropLoader:
         )
         crops = list(ds.as_numpy_iterator())
         assert len(crops) == 3
-        assert crops[0][0]["nucleotide"].shape == (2, 8, 4)
+        # All crops are padded to the max crop size.
+        assert crops[0][0]["nucleotide"].shape == (2, 16, 4)
+        assert crops[1][0]["nucleotide"].shape == (2, 16, 4)
         assert crops[2][0]["nucleotide"].shape == (2, 16, 4)
+        np.testing.assert_array_equal(crops[0][0]["nucleotide"][:, 8:, :], 0)
 
     def test_overlapping_crops(self, tmp_path: Path):
         path = tmp_path / "translated_overlap.npz"
@@ -607,6 +620,40 @@ class TestRuntimeCropLoader:
         crops = list(ds.as_numpy_iterator())
         # stride = 5, starts [0, 5, 10, 15, 20]
         assert len(crops) == 5
+
+    def test_runtime_crops_padded_to_max_size(self, tmp_path: Path):
+        """All runtime crops share the same fixed length so cardinality/shape is known."""
+        path = tmp_path / "translated_padded_crops.npz"
+        seq_len = 20
+        translated = np.arange(6 * seq_len, dtype=np.int32).reshape(1, 6, seq_len) + 1
+        labels = np.array([1], dtype=np.int32)
+        translated_lengths = np.array([seq_len], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=2,
+            crop_sizes=[10, 20],
+            overlap=0.0,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 3
+        # Every crop is padded to the largest crop size.
+        for feats, _label in crops:
+            assert feats["translated"].shape == (6, 20)
+        # Shorter crops have token-0 padding after the real sequence.
+        np.testing.assert_array_equal(crops[0][0]["translated"][:, 10:], 0)
+        np.testing.assert_array_equal(crops[1][0]["translated"][:, 10:], 0)
+        # The largest crop is unpadded.
+        np.testing.assert_array_equal(crops[2][0]["translated"], translated[0, :, :20])
 
     def test_int8_npz_cast_to_int32(self, tmp_path: Path):
         path = tmp_path / "translated_int8.npz"

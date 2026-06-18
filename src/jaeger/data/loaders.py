@@ -376,6 +376,8 @@ def _load_cropped_numpy_dataset(
             np_arrays.update(densified)
             is_object = False
 
+    max_crop_size = int(max(crop_sizes))
+
     def _encode_label(label: int) -> np.ndarray:
         if one_hot_labels and num_classes is not None and num_classes > 1:
             return np.eye(int(num_classes), dtype=np.float32)[label]
@@ -400,7 +402,7 @@ def _load_cropped_numpy_dataset(
         # The sequence-length axis is always axis 1.
         shape = list(arr.shape)
         if len(shape) >= 2:
-            shape[1] = None
+            shape[1] = max_crop_size
         return tf.TensorSpec(shape=shape, dtype=tf.as_dtype(arr.dtype))
 
     if is_object:
@@ -413,11 +415,14 @@ def _load_cropped_numpy_dataset(
             raw: dict[str, np.ndarray] = {}
             for key in feature_keys:
                 arr = np_arrays[key][i]
-                crop = (
-                    arr[:, start : start + length]
-                    if arr.ndim == 2
-                    else arr[:, start : start + length, :]
-                )
+                if arr.ndim == 2:
+                    crop = arr[:, start : start + length]
+                    pad_width = [(0, 0), (0, max_crop_size - length)]
+                else:
+                    crop = arr[:, start : start + length, :]
+                    pad_width = [(0, 0), (0, max_crop_size - length), (0, 0)]
+                if length < max_crop_size:
+                    crop = np.pad(crop, pad_width, mode="constant", constant_values=0)
                 raw[key] = crop.astype(np.int32)
             return raw
 
@@ -453,6 +458,33 @@ def _load_cropped_numpy_dataset(
                         length = min(cs, actual_len - start)
                         yield _sample_features(i, start, length), label
 
+        # After one-hot conversion the tensor shapes become dynamic; pin them
+        # back to fixed values so the dataset has a known element spec.
+        object_expected_shapes: dict[str, tuple[int, ...]] = {}
+        for key, arr in sample.items():
+            frames = int(arr.shape[0])
+            if seq_onehot and arr.ndim == 2 and key == "translated":
+                object_expected_shapes[key] = (frames, max_crop_size, int(codon_depth))
+            elif (
+                seq_onehot
+                and arr.ndim == 2
+                and key == "nucleotide"
+                and lookup is not None
+            ):
+                object_expected_shapes[key] = (
+                    frames,
+                    max_crop_size,
+                    int(lookup.shape[1]),
+                )
+            elif arr.ndim == 3:
+                object_expected_shapes[key] = (
+                    frames,
+                    max_crop_size,
+                    int(arr.shape[2]),
+                )
+            else:
+                object_expected_shapes[key] = (frames, max_crop_size)
+
         def _convert_crops(
             features: dict[str, tf.Tensor], label: tf.Tensor
         ) -> tuple[dict[str, tf.Tensor], tf.Tensor]:
@@ -474,6 +506,7 @@ def _load_cropped_numpy_dataset(
                     out[key] = tf.gather(tf.constant(lookup, dtype=tf.float32), n)
                 else:
                     out[key] = crop
+                out[key] = tf.ensure_shape(out[key], object_expected_shapes[key])
             return out, label
 
         with tf.device("/CPU:0"):
@@ -509,6 +542,34 @@ def _load_cropped_numpy_dataset(
     starts_t = tf.constant(starts_list, dtype=tf.int32)
     crop_lengths_t = tf.constant(lengths_list, dtype=tf.int32)
 
+    # One-hot / padding ops erase static shapes; precompute the expected fixed
+    # shape for each feature so we can pin them back in the map function.
+    dense_expected_shapes: dict[str, tuple[int, ...]] = {}
+    for key in feature_keys:
+        arr = arrays[key]
+        frames = int(arr.shape[1])
+        if seq_onehot and arr.shape.rank == 3 and key == "translated":
+            dense_expected_shapes[key] = (frames, max_crop_size, int(codon_depth))
+        elif (
+            seq_onehot
+            and arr.shape.rank == 3
+            and key == "nucleotide"
+            and lookup is not None
+        ):
+            dense_expected_shapes[key] = (
+                frames,
+                max_crop_size,
+                int(lookup.shape[1]),
+            )
+        elif arr.shape.rank == 4:
+            dense_expected_shapes[key] = (
+                frames,
+                max_crop_size,
+                int(arr.shape[3]),
+            )
+        else:
+            dense_expected_shapes[key] = (frames, max_crop_size)
+
     def _slice_crop(
         arr: tf.Tensor, idx: tf.Tensor, start: tf.Tensor, length: tf.Tensor
     ) -> tf.Tensor:
@@ -518,7 +579,24 @@ def _load_cropped_numpy_dataset(
             tf.shape(arr)[i] for i in range(3, rank)
         ]
         crop = tf.slice(arr, begin, size)
-        return tf.squeeze(crop, axis=0)
+        crop = tf.squeeze(crop, axis=0)
+        # Pad every crop to the same maximum length so batch shapes are fixed
+        # and dataset cardinality is known. Token 0 is the padding value and is
+        # masked during one-hot conversion.
+        pad_len = tf.maximum(max_crop_size - length, 0)
+        n_dims = rank - 1
+        paddings = tf.concat(
+            [
+                tf.zeros((n_dims, 1), dtype=tf.int32),
+                tf.tensor_scatter_nd_update(
+                    tf.zeros((n_dims, 1), dtype=tf.int32),
+                    indices=[[1]],
+                    updates=[[pad_len]],
+                ),
+            ],
+            axis=1,
+        )
+        return tf.pad(crop, paddings)
 
     def _map_fn(
         idx: tf.Tensor, start: tf.Tensor, length: tf.Tensor
@@ -533,7 +611,9 @@ def _load_cropped_numpy_dataset(
                 trans = oh * mask
             elif trans.dtype != tf.float32:
                 trans = tf.cast(trans, tf.int32)
-            features["translated"] = trans
+            features["translated"] = tf.ensure_shape(
+                trans, dense_expected_shapes["translated"]
+            )
         if "nucleotide" in feature_keys:
             nuc = _slice_crop(arrays["nucleotide"], idx, start, length)
             if seq_onehot and nuc.shape.rank == 2:
@@ -541,7 +621,9 @@ def _load_cropped_numpy_dataset(
                 nuc = tf.gather(tf.constant(lookup, dtype=tf.float32), n)
             elif nuc.dtype != tf.float32:
                 nuc = tf.cast(nuc, tf.int32)
-            features["nucleotide"] = nuc
+            features["nucleotide"] = tf.ensure_shape(
+                nuc, dense_expected_shapes["nucleotide"]
+            )
 
         label = labels_t[idx]
         if one_hot_labels and num_classes is not None and num_classes > 1:
