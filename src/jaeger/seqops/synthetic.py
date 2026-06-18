@@ -158,20 +158,25 @@ def apply_mix(
     output_length: int | None = None,
     pad_value: str = "N",
 ) -> str:
-    """Concatenate *sequences* into a chimeric sequence.
+    """Build a chimeric sequence from random subsegments of *sequences*.
 
-    If *output_length* is provided, the concatenation is truncated or padded
-    with *pad_value* to that length. Otherwise the full concatenation is
-    returned.
+    A random subsegment is drawn from each source sequence and concatenated.
+    If *output_length* is provided, the result is truncated or padded with
+    *pad_value* to that length. Otherwise the full concatenation is returned.
     """
     if not sequences:
         raise ValueError("apply_mix requires at least one sequence")
+
+    if output_length is not None and output_length < 0:
+        raise ValueError("output_length must be non-negative")
 
     if output_length is None:
         return "".join(sequences)
 
     n = len(sequences)
     if output_length < n:
+        # Fallback: give each of the first output_length sources one base;
+        # remaining sources receive a zero-length segment.
         cuts = list(range(output_length)) + [output_length]
     else:
         cuts = sorted(random.sample(range(output_length), k=n - 1))

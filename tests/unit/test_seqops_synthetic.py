@@ -118,8 +118,33 @@ def test_apply_mix_pads_to_output_length():
     assert mixed.endswith("NNNNNNNNNNNN")
 
 
-def test_apply_mix_includes_material_from_each_source():
+def test_apply_mix_includes_material_from_each_source(monkeypatch):
+    monkeypatch.setattr(synthetic.random, "sample", lambda population, k: [20])
     seqs = ["A" * 50, "C" * 50]
     mixed = synthetic.apply_mix(seqs, output_length=40)
     assert "A" in mixed
     assert "C" in mixed
+    assert len(mixed) == 40
+
+
+def test_apply_mix_empty_sequences_raises():
+    with pytest.raises(ValueError):
+        synthetic.apply_mix([])
+
+
+def test_apply_mix_output_length_smaller_than_sequence_count():
+    seqs = ["A" * 10, "C" * 10, "G" * 10, "T" * 10]
+    mixed = synthetic.apply_mix(seqs, output_length=2)
+    assert len(mixed) == 2
+
+
+def test_apply_mix_pads_when_sources_are_shorter_than_segments():
+    seqs = ["AAAA", "CC"]
+    mixed = synthetic.apply_mix(seqs, output_length=20, pad_value="N")
+    assert len(mixed) == 20
+    assert mixed.endswith("N" * 14)
+
+
+def test_apply_mix_negative_output_length_raises():
+    with pytest.raises(ValueError):
+        synthetic.apply_mix(["AAAA"], output_length=-1)
