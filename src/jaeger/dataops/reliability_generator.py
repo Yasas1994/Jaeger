@@ -451,11 +451,29 @@ def generate_reliability_data(
         val_id_records, val_ood_records = _select_id_ood_records(
             val_source_records, val_y_true, val_probs, id_threshold
         )
-        val_records = val_id_records + val_ood_records
         logger.info(
             f"Selected {len(val_id_records)} ID and {len(val_ood_records)} "
             "high-confidence wrong OOD samples from validation data"
         )
+
+        logger.info("Generating synthetic OOD samples from validation sequences")
+        val_synthetic_seqs = _generate_synthetic_sequences(
+            val_source_records, synthetic_ood_multiplier, perturbations_cfg
+        )
+        val_synthetic_ood_records = _filter_synthetic_ood(
+            classifier,
+            val_synthetic_seqs,
+            string_processor_config,
+            classifier_out_dim,
+            synthetic_ood_threshold,
+            batch_size,
+            crop_size=crop_size,
+        )
+        logger.info(
+            f"Selected {len(val_synthetic_ood_records)} synthetic OOD samples "
+            "from validation data"
+        )
+        val_records = val_id_records + val_ood_records + val_synthetic_ood_records
 
         train_records_out = id_records + real_ood_records + synthetic_ood_records
         rng = np.random.default_rng()

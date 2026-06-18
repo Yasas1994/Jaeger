@@ -501,3 +501,69 @@ def test_build_inference_dataset_uses_passed_crop_size(tmp_path: Path):
     for x, _ in ds:
         assert x["translated"].shape[2] <= crop_size // 3
         break
+
+
+def test_generate_reliability_data_adds_synthetic_ood_to_validation(
+    monkeypatch, tmp_path: Path
+):
+    """When a separate val CSV is provided, synthetic OOD is also added to validation."""
+    import tensorflow as tf
+
+    train_csv = str(tmp_path / "train.csv")
+    val_csv = str(tmp_path / "val.csv")
+    rg._write_csv([(0, "ATCG" * 50), (1, "TGCA" * 50)], train_csv)
+    rg._write_csv([(0, "AAAA" * 50), (1, "TTTT" * 50)], val_csv)
+    output_dir = str(tmp_path / "rel_out")
+
+    def _mock_build_dataset(*args, **kwargs):
+        records = rg._read_csv_records(args[0])
+        n = len(records)
+        labels = np.array([label for label, _ in records], dtype=np.int32)
+        x = tf.zeros((n, 10), dtype=tf.float32)
+        y = tf.one_hot(labels, depth=2)
+        return tf.data.Dataset.from_tensor_slices((x, y)).batch(2)
+
+    monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
+
+    def _mock_run_inference(classifier, dataset):
+        n = sum(int(batch[0].shape[0]) for batch in dataset)
+        return np.tile(np.array([0.9, 0.1], dtype=np.float32), (n, 1))
+
+    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+
+    def _mock_generate_synthetic(records, multiplier, perturbations_cfg):
+        return ["SYNTHETIC_SEQ"] * int(len(records) * multiplier)
+
+    monkeypatch.setattr(rg, "_generate_synthetic_sequences", _mock_generate_synthetic)
+
+    def _mock_filter_synthetic_ood(*args, **kwargs):
+        return [(0, seq) for seq in args[1]]
+
+    monkeypatch.setattr(rg, "_filter_synthetic_ood", _mock_filter_synthetic_ood)
+
+    class FakeClassifier:
+        pass
+
+    rg.generate_reliability_data(
+        classifier=FakeClassifier(),
+        raw_csv_path=train_csv,
+        output_dir=output_dir,
+        string_processor_config={"crop_size": 100},
+        model_cfg={"string_processor": {}},
+        classifier_out_dim=2,
+        reliability_out_dim=1,
+        batch_size=2,
+        synthetic_ood_multiplier=1.0,
+        generator_cfg={
+            "raw_csv_paths": {"train": train_csv, "val": val_csv},
+            "perturbations": {"shuffle": False},
+        },
+    )
+
+    val_written = rg._read_csv_records(str(Path(output_dir) / "reliability_val.csv"))
+    train_written = rg._read_csv_records(
+        str(Path(output_dir) / "reliability_train.csv")
+    )
+
+    assert any(seq == "SYNTHETIC_SEQ" for _, seq in val_written)
+    assert any(seq == "SYNTHETIC_SEQ" for _, seq in train_written)
