@@ -100,8 +100,8 @@ file_exists "$CONTAINER"
 file_exists "$JAEGER_TRAIN_CONFIG"
 file_exists "$JAEGER_MODEL_CONFIG"
 
-command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
-command -v singularity >/dev/null 2>&1 || die "singularity is required but not installed"
+command -v python3 >/dev/null 2>&1 || die "python3 is required but not installed"
+command -v apptainer >/dev/null 2>&1 || die "apptainer is required but not installed"
 
 for fasta in "${TEST_DATA[@]}"; do
     file_exists "$fasta"
@@ -135,7 +135,7 @@ log "Training Jaeger model with flags: $TRAIN_FLAGS"
 
 srun bash -lc "
 echo \"[\$(date)] Task \$SLURM_PROCID on node \$SLURMD_NODENAME: GPU \$CUDA_VISIBLE_DEVICES, job \$SLURM_JOB_ID\" >&2
-singularity run --nv $CONTAINER jaeger train $TRAIN_FLAGS
+apptainer run --nv $CONTAINER jaeger train $TRAIN_FLAGS
 " 2>> "$PIPELINE_LOG" || die "Training failed"
 
 # ============================================================================
@@ -144,8 +144,8 @@ singularity run --nv $CONTAINER jaeger train $TRAIN_FLAGS
 
 [[ -f "$SINGULARITY_METADATA" ]] || die "Training metadata file was not created: $SINGULARITY_METADATA"
 
-MODEL_PATH=$(jq -r '.model_path' "$SINGULARITY_METADATA")
-EXPERIMENT_PATH=$(jq -r '.experiment_path' "$SINGULARITY_METADATA")
+MODEL_PATH=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['model_path'])" "$SINGULARITY_METADATA")
+EXPERIMENT_PATH=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['experiment_path'])" "$SINGULARITY_METADATA")
 
 [[ -n "$MODEL_PATH" && "$MODEL_PATH" != "null" ]] || die "MODEL_PATH is empty"
 [[ -n "$EXPERIMENT_PATH" && "$EXPERIMENT_PATH" != "null" ]] || die "EXPERIMENT_PATH is empty"
@@ -188,7 +188,7 @@ BEST_RC_FILE="$EXPERIMENT_PATH/metrics/best_reliability_threshold.txt"
 
 log "Tuning reliability threshold (metric=$THRESHOLD_METRIC)"
 
-singularity run \
+apptainer run \
     --bind "$PROJECT_ROOT/scripts:/scripts" \
     --nv "$CONTAINER" \
     python /scripts/tune_reliability_threshold.py \
@@ -234,7 +234,7 @@ for fasta in "${TEST_DATA[@]}"; do
         OVERWRITE_FLAG="--overwrite"
     fi
 
-    singularity run --nv "$CONTAINER" jaeger predict \
+    apptainer run --nv "$CONTAINER" jaeger predict \
         --model_path "$MODEL_PATH" \
         --config "$JAEGER_MODEL_CONFIG" \
         -i "$fasta" \
@@ -255,7 +255,7 @@ done
 
 log "Calculating real-world metrics"
 
-singularity run \
+apptainer run \
     --bind "$PROJECT_ROOT/scripts:/scripts" \
     --nv "$CONTAINER" \
     python /scripts/calculate_metrics_realworld.py \
