@@ -567,6 +567,8 @@ def optimize_data_core(
     max_length: int = 5000,  # deprecated, ignored
     max_memory_mb: int | None = None,
     pad: bool = False,
+    units: str = "nuc",
+    overlap: float | None = None,
 ):
     """Convert Jaeger CSV training data to an optimized ``.npz`` format.
 
@@ -612,7 +614,26 @@ def optimize_data_core(
         If True, pad all crops to the global maximum length. Default is False.
     max_length : int, optional
         Deprecated and ignored. Kept for backward compatibility.
+    units : str, optional
+        Units for ``crop_size`` and ``stride``: ``nuc`` (nucleotides) or
+        ``codon`` (codons; converted to nucleotides by multiplying by 3).
+    overlap : float | None, optional
+        Overlap between crops as a fraction of each crop size (0.0-1.0).
+        If provided, per-crop strides are computed from the (unit-converted)
+        crop sizes and ``stride`` is ignored.
     """
+    if units not in {"nuc", "codon"}:
+        raise ValueError("units must be 'nuc' or 'codon'")
+
+    if units == "codon":
+        crop_size = tuple(cs * 3 for cs in crop_size)
+        stride = stride * 3
+        if strides is not None:
+            strides = [s * 3 for s in strides]
+
+    if strides is None and overlap is not None:
+        strides = [int(cs * (1 - overlap)) for cs in crop_size]
+
     convert_dataset(
         input_path=input_path,
         output_path=output_path,

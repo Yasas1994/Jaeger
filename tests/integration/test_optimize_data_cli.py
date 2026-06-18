@@ -25,6 +25,7 @@ def test_optimize_data_help():
     assert "nucleotide" in result.output
     assert "translated" in result.output
     assert "both" in result.output
+    assert "--units" in result.output
 
 
 def test_optimize_data_translated(tiny_csv: str, tmp_path: Path):
@@ -81,3 +82,32 @@ def test_optimize_data_nucleotide_onehot(tiny_csv: str, tmp_path: Path):
     data = np.load(out)
     assert data["nucleotide"].ndim == 4
     assert data["nucleotide"].dtype == np.float32
+
+
+def test_optimize_data_translated_codon_units(tiny_csv: str, tmp_path: Path):
+    out = tmp_path / "train.npz"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "utils",
+            "optimize-data",
+            "-i",
+            tiny_csv,
+            "-o",
+            str(out),
+            "--format",
+            "translated",
+            "--crop-size",
+            "8",
+            "--units",
+            "codon",
+            "--num-classes",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    data = np.load(out)
+    assert "translated" in data
+    assert "labels" in data

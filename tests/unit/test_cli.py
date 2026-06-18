@@ -59,3 +59,4 @@ def test_optimize_data_help_includes_new_flags():
     assert result.exit_code == 0
     assert "--max-memory-mb" in result.output
     assert "--pad" in result.output
+    assert "--units" in result.output

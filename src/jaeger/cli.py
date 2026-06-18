@@ -1015,14 +1015,21 @@ def convert(**kwargs):
     multiple=True,
     default=(500,),
     show_default=True,
-    help="Crop length(s); can be given multiple times",
+    help="Crop length(s); can be given multiple times (see --units)",
+)
+@click.option(
+    "--units",
+    type=click.Choice(["nuc", "codon"], case_sensitive=False),
+    default="nuc",
+    show_default=True,
+    help="Units for --crop-size and --stride: nuc (nucleotides) or codon",
 )
 @click.option(
     "--stride",
     type=int,
     default=0,
     show_default=True,
-    help="Step between crops (0 = one crop per sequence)",
+    help="Step between crops (0 = one crop per sequence; see --units)",
 )
 @click.option(
     "--overlap",
@@ -1123,20 +1130,14 @@ def optimize_data(**kwargs):
     """Convert CSV training data to an optimized NPZ dataset."""
     from jaeger.commands.utils import optimize_data_core
 
-    crop_sizes = list(kwargs.get("crop_size"))
-    overlap = kwargs.get("overlap")
-    if overlap is not None:
-        strides = [int(cs * (1 - overlap)) for cs in crop_sizes]
-    else:
-        strides = None
-
     optimize_data_core(
         input_path=kwargs.get("input"),
         output_path=kwargs.get("output"),
         format=kwargs.get("format"),
-        crop_size=crop_sizes,
+        crop_size=list(kwargs.get("crop_size")),
         stride=kwargs.get("stride"),
-        strides=strides,
+        overlap=kwargs.get("overlap"),
+        units=kwargs.get("units"),
         num_classes=kwargs.get("num_classes"),
         num_workers=kwargs.get("num_workers"),
         one_hot=kwargs.get("one_hot"),
