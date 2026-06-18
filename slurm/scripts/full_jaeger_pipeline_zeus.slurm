@@ -32,8 +32,8 @@ TEST="1500bp_nmd_merge_6_class"
 
 PROJECT_ROOT="/mnt/beegfs/bioinf/wijesekara/jaeger/Jaeger"
 CONTAINER="/mnt/beegfs/bioinf/wijesekara/jaeger/container/jaeger_dev.sif"
-JAEGER_TRAIN_CONFIG="/mnt/beegfs/bioinf/wijesekara/jaeger/Jaeger/train_config/nn_config_1500bp_nmd_merge_6_class_zeus.yaml"
-JAEGER_MODEL_CONFIG="/mnt/beegfs/bioinf/wijesekara/jaeger/Jaeger/singularity/config.json"
+JAEGER_TRAIN_CONFIG="/mnt/beegfs/bioinf/wijesekara/jaeger/configs/nn_config_1500bp_nmd_merge_6_class_zeus.yaml"
+JAEGER_MODEL_CONFIG="/mnt/beegfs/bioinf/wijesekara/jaeger/configs/config.json"
 SINGULARITY_METADATA="/mnt/beegfs/bioinf/wijesekara/jaeger/tmp/${TEST}_train_meta.json"
 
 # Training flags
