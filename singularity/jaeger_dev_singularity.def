@@ -25,6 +25,17 @@ From: python:3.12.7-bookworm
     pip3 install --root-user-action=ignore --no-cache-dir "jaeger-bio[gpu] @ git+https://github.com/Yasas1994/Jaeger@main" # install jaeger without tensorflow support
     pip3 install --root-user-action=ignore --no-cache-dir  icecream matplotlib seaborn
 
+    # TensorFlow >=2.16 ships CUDA/cuDNN/NCCL libraries via nvidia-* pip packages.
+    # Make their lib/ directories available to the dynamic loader at runtime.
+    python3 - <<'PY'
+import os
+base = os.path.dirname(__import__('nvidia').__file__)
+dirs = [os.path.join(base, d, 'lib') for d in os.listdir(base)
+        if os.path.isdir(os.path.join(base, d, 'lib'))]
+with open('/etc/jaeger-ld-library-path', 'w') as f:
+    f.write(':'.join(dirs))
+PY
+
     # chmod +x /usr/bin/calculate_metrics_realworld.py
 
 %environment
@@ -33,6 +44,11 @@ From: python:3.12.7-bookworm
     export NVIDIA_VISIBLE_DEVICES=all  # Makes all GPUs visible to the container
     export NVIDIA_DRIVER_CAPABILITIES=compute,utility  # Required for GPU support in TensorFlow
     export PATH="/Software/mmseqs/bin:/usr/local/bin:$PATH"
+    # Prepend NVIDIA pip-package libraries so TensorFlow can dlopen CUDA/cuDNN/NCCL.
+    if [ -r /etc/jaeger-ld-library-path ]; then
+        NVIDIA_LIB_DIRS="$(cat /etc/jaeger-ld-library-path)"
+        export LD_LIBRARY_PATH="${NVIDIA_LIB_DIRS}:${LD_LIBRARY_PATH}"
+    fi
 
 
 %labels

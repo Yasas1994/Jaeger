@@ -39,6 +39,7 @@ SINGULARITY_METADATA="/mnt/beegfs/bioinf/wijesekara/jaeger/tmp/${TEST}_train_met
 
 # Training flags
 FROM_LAST_CHECKPOINT=false
+FORCE=true
 ONLY_HEADS=false
 MIXED_PRECISION=true
 XLA=false
@@ -117,6 +118,10 @@ TRAIN_FLAGS="-c $JAEGER_TRAIN_CONFIG --generate_reliability_data --save_model --
 
 if [[ "$MIXED_PRECISION" == true ]]; then
     TRAIN_FLAGS="$TRAIN_FLAGS --mixed_precision"
+fi
+
+if [[ "$FORCE" == true ]]; then
+    TRAIN_FLAGS="$TRAIN_FLAGS --force"
 fi
 
 if [[ "$FROM_LAST_CHECKPOINT" == true ]]; then
