@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import numpy as np
@@ -582,7 +583,7 @@ def test_normalize_perturbation_cfg_mix_boolean():
     specs = rg._normalize_perturbation_cfg(cfg)
     assert len(specs) == 1
     assert specs[0]["name"] == "mix"
-    assert specs[0]["kwargs"]["n_segments"] == 2
+    assert specs[0]["n_segments"] == 2
 
 
 def test_normalize_perturbation_cfg_mix_structured():
@@ -595,7 +596,7 @@ def test_normalize_perturbation_cfg_mix_structured():
     specs = rg._normalize_perturbation_cfg(cfg)
     assert len(specs) == 1
     assert specs[0]["name"] == "mix"
-    assert specs[0]["kwargs"]["n_segments"] == 3
+    assert specs[0]["n_segments"] == 3
 
 
 def test_generate_synthetic_sequences_mix_requires_distinct_classes():
@@ -614,8 +615,17 @@ def test_generate_synthetic_sequences_mix_requires_distinct_classes():
         )
 
 
-def test_generate_synthetic_sequences_mix_produces_chimera():
+def test_generate_synthetic_sequences_mix_produces_chimera(monkeypatch):
     records = [(0, "A" * 100), (1, "C" * 100)]
+    _original_sample = random.sample
+
+    def _patched_sample(population, k):
+        # Fix the interior cut in apply_mix; delegate label sampling normally.
+        if isinstance(population, range):
+            return [25]
+        return _original_sample(population, k)
+
+    monkeypatch.setattr("jaeger.seqops.synthetic.random.sample", _patched_sample)
     seqs = rg._generate_synthetic_sequences(
         records,
         multiplier=1.0,

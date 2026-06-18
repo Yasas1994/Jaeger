@@ -173,6 +173,9 @@ def apply_mix(
     if output_length is None:
         return "".join(sequences)
 
+    if output_length == 0:
+        return ""
+
     n = len(sequences)
     if output_length < n:
         # Fallback: give each of the first output_length sources one base;

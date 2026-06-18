@@ -224,7 +224,8 @@ def _normalize_perturbation_cfg(
             {
                 "name": "mix",
                 "fn": apply_mix,
-                "kwargs": {"n_segments": mix_dict.get("n_segments", 2)},
+                "n_segments": mix_dict.get("n_segments", 2),
+                "kwargs": {},
             }
         )
 
@@ -320,7 +321,7 @@ def _generate_synthetic_sequences(
     counts = _compute_perturbation_counts(records, multiplier, specs, perturbations_cfg)
     for spec, count in zip(specs, counts):
         if spec["name"] == "mix":
-            n_segments = spec["kwargs"]["n_segments"]
+            n_segments = spec["n_segments"]
             for _ in range(count):
                 synthetic.append(_make_mix_chimera(records, n_segments, crop_size))
         else:
