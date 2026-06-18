@@ -135,7 +135,7 @@ log "Training Jaeger model with flags: $TRAIN_FLAGS"
 
 srun bash -lc "
 echo \"[\$(date)] Task \$SLURM_PROCID on node \$SLURMD_NODENAME: GPU \$CUDA_VISIBLE_DEVICES, job \$SLURM_JOB_ID\" >&2
-apptainer run --nv $CONTAINER jaeger train $TRAIN_FLAGS
+apptainer run --bind /mnt/beegfs --nv $CONTAINER jaeger train $TRAIN_FLAGS
 " 2>> "$PIPELINE_LOG" || die "Training failed"
 
 # ============================================================================
@@ -188,7 +188,7 @@ BEST_RC_FILE="$EXPERIMENT_PATH/metrics/best_reliability_threshold.txt"
 
 log "Tuning reliability threshold (metric=$THRESHOLD_METRIC)"
 
-apptainer run \
+apptainer run --bind /mnt/beegfs \
     --bind "$PROJECT_ROOT/scripts:/scripts" \
     --nv "$CONTAINER" \
     python /scripts/tune_reliability_threshold.py \
@@ -234,7 +234,7 @@ for fasta in "${TEST_DATA[@]}"; do
         OVERWRITE_FLAG="--overwrite"
     fi
 
-    apptainer run --nv "$CONTAINER" jaeger predict \
+    apptainer run --bind /mnt/beegfs --nv "$CONTAINER" jaeger predict \
         --model_path "$MODEL_PATH" \
         --config "$JAEGER_MODEL_CONFIG" \
         -i "$fasta" \
@@ -255,7 +255,7 @@ done
 
 log "Calculating real-world metrics"
 
-apptainer run \
+apptainer run --bind /mnt/beegfs \
     --bind "$PROJECT_ROOT/scripts:/scripts" \
     --nv "$CONTAINER" \
     python /scripts/calculate_metrics_realworld.py \
