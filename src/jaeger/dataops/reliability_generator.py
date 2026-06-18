@@ -54,11 +54,33 @@ def _write_csv(records: list[tuple[int, str]], path: str) -> None:
             f.write(f"{label},{seq}\n")
 
 
+def _resolve_reliability_crop_size(
+    generator_cfg: dict[str, Any],
+    string_processor_config: dict[str, Any],
+) -> int:
+    """Return the effective nucleotide crop size for reliability data."""
+    crop_size = generator_cfg.get("crop_size")
+    if crop_size is None:
+        crop_size = string_processor_config.get("crop_size")
+    if crop_size is None:
+        crop_sizes = string_processor_config.get("crop_sizes")
+        crop_size = max(crop_sizes) if crop_sizes else 500
+
+    units = generator_cfg.get("units", "nuc")
+    if units == "codon":
+        crop_size = crop_size * 3
+    elif units != "nuc":
+        raise ValueError("units must be 'nuc' or 'codon'")
+
+    return crop_size
+
+
 def _build_inference_dataset(
     csv_path: str,
     string_processor_config: dict[str, Any],
     classifier_out_dim: int,
     batch_size: int,
+    crop_size: int | None = None,
 ) -> tf.data.Dataset:
     """Build a dataset matching the classifier's training preprocessing."""
     ds = tf.data.TextLineDataset(csv_path, buffer_size=200)
@@ -69,7 +91,7 @@ def _build_inference_dataset(
         class_label_onehot=True,
         seq_onehot=string_processor_config.get("seq_onehot", True),
         num_classes=classifier_out_dim,
-        crop_size=string_processor_config.get("crop_size"),
+        crop_size=crop_size,
         input_type=string_processor_config.get("input_type", "translated"),
         masking=string_processor_config.get("masking", False),
         ngram_width=string_processor_config.get("ngram_width") or 3,
@@ -273,6 +295,7 @@ def _filter_synthetic_ood(
     classifier_out_dim: int,
     threshold: float,
     batch_size: int,
+    crop_size: int | None = None,
 ) -> list[tuple[int, str]]:
     """Keep corrupted sequences that the classifier predicts with high confidence."""
     if not synthetic_seqs:
@@ -285,6 +308,7 @@ def _filter_synthetic_ood(
         string_processor_config,
         classifier_out_dim,
         batch_size,
+        crop_size=crop_size,
     )
     probs = _run_classifier_inference(classifier, ds)
     conf = np.max(probs, axis=1)
@@ -302,18 +326,7 @@ def _convert_to_npz(
     """Convert a reliability CSV to the same NPZ format used for training."""
     generator_cfg = generator_cfg or {}
     sp_cfg = model_cfg.get("string_processor", {})
-    crop_size = generator_cfg.get("crop_size")
-    if crop_size is None:
-        crop_size = string_processor_config.get("crop_size")
-    if crop_size is None:
-        crop_sizes = string_processor_config.get("crop_sizes")
-        crop_size = max(crop_sizes) if crop_sizes else 500
-
-    units = generator_cfg.get("units", "nuc")
-    if units == "codon":
-        crop_size = crop_size * 3
-    elif units != "nuc":
-        raise ValueError("units must be 'nuc' or 'codon'")
+    crop_size = _resolve_reliability_crop_size(generator_cfg, string_processor_config)
 
     convert_dataset(
         input_path=csv_path,
@@ -373,6 +386,11 @@ def generate_reliability_data(
     if not train_csv_path:
         raise ValueError("A training raw CSV path must be provided")
 
+    crop_size = _resolve_reliability_crop_size(generator_cfg, string_processor_config)
+    logger.info(
+        f"Using reliability crop size {crop_size} (nucleotides) for classifier inference"
+    )
+
     logger.info(f"Reading raw training sequences from {train_csv_path}")
     train_records = _read_csv_records(train_csv_path)
     if not train_records:
@@ -385,6 +403,7 @@ def generate_reliability_data(
         string_processor_config,
         classifier_out_dim,
         batch_size,
+        crop_size=crop_size,
     )
     y_true = _extract_true_labels(train_ds)
     probs = _run_classifier_inference(classifier, train_ds)
@@ -408,6 +427,7 @@ def generate_reliability_data(
         classifier_out_dim,
         synthetic_ood_threshold,
         batch_size,
+        crop_size=crop_size,
     )
     logger.info(f"Selected {len(synthetic_ood_records)} synthetic OOD samples")
 
@@ -424,6 +444,7 @@ def generate_reliability_data(
             string_processor_config,
             classifier_out_dim,
             batch_size,
+            crop_size=crop_size,
         )
         val_y_true = _extract_true_labels(val_ds)
         val_probs = _run_classifier_inference(classifier, val_ds)

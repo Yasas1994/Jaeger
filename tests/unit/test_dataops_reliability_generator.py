@@ -129,7 +129,7 @@ def test_generate_reliability_data_smoke(monkeypatch, tmp_path: Path):
 
     # Mock dataset builder so we do not need a real TF preprocessing pipeline.
     def _mock_build_dataset(
-        csv_path, string_processor_config, classifier_out_dim, batch_size
+        csv_path, string_processor_config, classifier_out_dim, batch_size, **kwargs
     ):
         n = len(rg._read_csv_records(csv_path))
         x = tf.zeros((n, 10), dtype=tf.float32)
@@ -210,7 +210,7 @@ def test_generate_reliability_data_accepts_raw_csv_paths(monkeypatch, tmp_path: 
     train_records = rg._read_csv_records(train_csv)
 
     def _mock_build_dataset(
-        csv_path, string_processor_config, classifier_out_dim, batch_size
+        csv_path, string_processor_config, classifier_out_dim, batch_size, **kwargs
     ):
         records = rg._read_csv_records(csv_path)
         n = len(records)
@@ -301,7 +301,7 @@ def test_generate_reliability_data_raw_csv_paths_missing_val_falls_back(
     true_labels = np.array([0, 1, 0, 1], dtype=np.int32)
 
     def _mock_build_dataset(
-        csv_path, string_processor_config, classifier_out_dim, batch_size
+        csv_path, string_processor_config, classifier_out_dim, batch_size, **kwargs
     ):
         n = len(rg._read_csv_records(csv_path))
         x = tf.zeros((n, 10), dtype=tf.float32)
@@ -479,3 +479,25 @@ def test_convert_to_npz_converts_codon_units(monkeypatch, tmp_path: Path):
     )
 
     assert called["crop_size"] == 750
+
+
+def test_build_inference_dataset_uses_passed_crop_size(tmp_path: Path):
+    """_build_inference_dataset crops sequences to the provided crop_size."""
+    csv_path = str(tmp_path / "seqs.csv")
+    rg._write_csv(
+        [(0, "ATCG" * 300), (1, "TGCA" * 300)],
+        csv_path,
+    )
+
+    crop_size = 99
+    ds = rg._build_inference_dataset(
+        csv_path,
+        string_processor_config={"seq_onehot": False, "input_type": "translated"},
+        classifier_out_dim=3,
+        batch_size=2,
+        crop_size=crop_size,
+    )
+
+    for x, _ in ds:
+        assert x["translated"].shape[2] <= crop_size // 3
+        break
