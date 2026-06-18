@@ -297,10 +297,14 @@ def _convert_to_npz(
     string_processor_config: dict[str, Any],
     reliability_out_dim: int,
     model_cfg: dict[str, Any],
+    generator_cfg: dict[str, Any] | None = None,
 ) -> None:
     """Convert a reliability CSV to the same NPZ format used for training."""
+    generator_cfg = generator_cfg or {}
     sp_cfg = model_cfg.get("string_processor", {})
-    crop_size = string_processor_config.get("crop_size")
+    crop_size = generator_cfg.get("crop_size")
+    if crop_size is None:
+        crop_size = string_processor_config.get("crop_size")
     if crop_size is None:
         crop_sizes = string_processor_config.get("crop_sizes")
         crop_size = max(crop_sizes) if crop_sizes else 500
@@ -452,6 +456,7 @@ def generate_reliability_data(
         string_processor_config,
         reliability_out_dim,
         model_cfg,
+        generator_cfg,
     )
     _convert_to_npz(
         val_csv,
@@ -459,6 +464,7 @@ def generate_reliability_data(
         string_processor_config,
         reliability_out_dim,
         model_cfg,
+        generator_cfg,
     )
 
     return {

@@ -431,3 +431,29 @@ def test_convert_to_npz_derives_crop_size_from_crop_sizes(monkeypatch, tmp_path:
     )
 
     assert called["crop_size"] == 600
+
+
+def test_convert_to_npz_uses_generator_cfg_crop_size(monkeypatch, tmp_path: Path):
+    """_convert_to_npz prefers crop_size from generator_cfg over string_processor."""
+    called = {}
+
+    def _fake_convert_dataset(*, crop_size, **kwargs):
+        called["crop_size"] = crop_size
+        return None
+
+    monkeypatch.setattr(rg, "convert_dataset", _fake_convert_dataset)
+
+    rg._convert_to_npz(
+        csv_path=str(tmp_path / "rel.csv"),
+        npz_path=str(tmp_path / "rel.npz"),
+        string_processor_config={
+            "crop_sizes": [100, 200, 300, 400, 500, 600],
+            "seq_onehot": False,
+            "input_type": "translated",
+        },
+        reliability_out_dim=1,
+        model_cfg={"string_processor": {}},
+        generator_cfg={"crop_size": 250},
+    )
+
+    assert called["crop_size"] == 250
