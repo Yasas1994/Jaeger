@@ -353,3 +353,26 @@ def test_generate_reliability_data_raw_csv_paths_missing_val_falls_back(
     assert (Path(output_dir) / "reliability_val.csv").exists()
     assert result["train"]["paths"]
     assert result["validation"]["paths"]
+
+
+def test_build_inference_dataset_produces_batched_dict_input(tmp_path: Path):
+    """_build_inference_dataset pads dict inputs and infers default codon params."""
+    csv_path = str(tmp_path / "seqs.csv")
+    rg._write_csv(
+        [(0, "ATCG" * 300), (1, "TGCA" * 300)],
+        csv_path,
+    )
+
+    ds = rg._build_inference_dataset(
+        csv_path,
+        string_processor_config={"crop_size": 500, "seq_onehot": False},
+        classifier_out_dim=3,
+        batch_size=2,
+    )
+
+    assert ds.element_spec[0]["translated"].shape.as_list() == [None, 6, None]
+    for x, y in ds:
+        assert "translated" in x
+        assert x["translated"].shape[0] == 2
+        assert y.shape == (2, 3)
+        break

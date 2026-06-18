@@ -20,7 +20,7 @@ import numpy as np
 import tensorflow as tf
 
 from jaeger.dataops.convert import convert_dataset
-from jaeger.seqops.encode import process_string_train
+from jaeger.seqops.encode import CODON_ID, CODONS, process_string_train
 from jaeger.seqops.synthetic import (
     apply_dinuc_shuffle,
     apply_kmer_shuffle,
@@ -63,22 +63,22 @@ def _build_inference_dataset(
     """Build a dataset matching the classifier's training preprocessing."""
     ds = tf.data.TextLineDataset(csv_path, buffer_size=200)
     processor = process_string_train(
-        codons=string_processor_config.get("codon"),
-        codon_num=string_processor_config.get("codon_id"),
-        codon_depth=string_processor_config.get("codon_depth"),
+        codons=string_processor_config.get("codon") or CODONS,
+        codon_num=string_processor_config.get("codon_id") or CODON_ID,
+        codon_depth=string_processor_config.get("codon_depth") or 64,
         class_label_onehot=True,
         seq_onehot=string_processor_config.get("seq_onehot", True),
         num_classes=classifier_out_dim,
         crop_size=string_processor_config.get("crop_size"),
         input_type=string_processor_config.get("input_type", "translated"),
         masking=string_processor_config.get("masking", False),
-        ngram_width=string_processor_config.get("ngram_width"),
+        ngram_width=string_processor_config.get("ngram_width") or 3,
         shuffle_frames=string_processor_config.get("shuffle_frames", False),
     )
     ds = ds.map(processor, num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.padded_batch(
         batch_size=batch_size,
-        padded_shapes=ds.element_spec[0],
+        padded_shapes=tf.compat.v1.data.get_output_shapes(ds),
     )
     return ds.prefetch(tf.data.AUTOTUNE)
 
