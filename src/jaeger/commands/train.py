@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import os
+from typing import Any
 
 # temporary fix
 os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
@@ -38,6 +39,32 @@ except ImportError:
 
 
 logger = get_logger(log_file=None, log_path=None, level=3)
+
+
+def _resolve_numpy_crop_params(
+    string_processor_config: dict[str, Any], split: str
+) -> tuple[Any, Any, Any]:
+    """Return crop_sizes, strides, overlap for a train/validation NumPy split.
+
+    Training uses the multi-crop config (``crop_sizes`` / ``strides`` /
+    ``overlap``). Validation defaults to a single ``crop_size`` crop or no
+    runtime cropping, unless ``validation_crop_sizes`` is explicitly provided.
+    This keeps validation throughput high while still allowing multi-crop
+    evaluation when desired.
+    """
+    if split == "validation":
+        crop_sizes = string_processor_config.get("validation_crop_sizes")
+        if crop_sizes is None:
+            crop_size = string_processor_config.get("crop_size")
+            if crop_size is not None:
+                crop_sizes = [crop_size]
+        strides = string_processor_config.get("validation_strides")
+        overlap = string_processor_config.get("validation_overlap")
+    else:
+        crop_sizes = string_processor_config.get("crop_sizes")
+        strides = string_processor_config.get("strides")
+        overlap = string_processor_config.get("overlap")
+    return crop_sizes, strides, overlap
 
 
 # ------------------------------------------------------------------
@@ -275,6 +302,9 @@ def train_fragment_core(**kwargs):
                             if _buffer_size is not None and _buffer_size > 0
                             else None
                         )
+                        _crop_sizes, _strides, _overlap = _resolve_numpy_crop_params(
+                            string_processor_config, k
+                        )
                         _data = _load_numpy_dataset(
                             paths[0],
                             input_type=string_processor_config.get("input_type"),
@@ -286,9 +316,9 @@ def train_fragment_core(**kwargs):
                             num_classes=builder.classifier_out_dim,
                             one_hot_labels=True,
                             buffer_size=_onehot_buffer,
-                            crop_sizes=string_processor_config.get("crop_sizes"),
-                            strides=string_processor_config.get("strides"),
-                            overlap=string_processor_config.get("overlap"),
+                            crop_sizes=_crop_sizes,
+                            strides=_strides,
+                            overlap=_overlap,
                         )
                         padded_shapes = (
                             tf.nest.map_structure(
@@ -531,6 +561,9 @@ def train_fragment_core(**kwargs):
                             if _buffer_size is not None and _buffer_size > 0
                             else None
                         )
+                        _crop_sizes, _strides, _overlap = _resolve_numpy_crop_params(
+                            string_processor_config, k
+                        )
                         _data = _load_numpy_dataset(
                             paths[0],
                             input_type=string_processor_config.get("input_type"),
@@ -542,9 +575,9 @@ def train_fragment_core(**kwargs):
                             num_classes=builder.reliability_out_dim,
                             one_hot_labels=True,
                             buffer_size=_onehot_buffer,
-                            crop_sizes=string_processor_config.get("crop_sizes"),
-                            strides=string_processor_config.get("strides"),
-                            overlap=string_processor_config.get("overlap"),
+                            crop_sizes=_crop_sizes,
+                            strides=_strides,
+                            overlap=_overlap,
                         )
                         padded_shapes = (
                             tf.nest.map_structure(
