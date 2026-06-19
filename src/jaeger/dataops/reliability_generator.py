@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import random
 import tempfile
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Any
 
@@ -306,6 +307,47 @@ def _make_mix_chimera(
     return apply_mix(selected_seqs, output_length=crop_size)
 
 
+# Global shared by worker processes forked for synthetic sequence generation.
+_WORKER_RECORDS: list[tuple[int, str]] | None = None
+
+
+def _init_synthetic_worker(records: list[tuple[int, str]], seed: int) -> None:
+    """Seed RNGs and share the source records with a worker process."""
+    global _WORKER_RECORDS
+    _WORKER_RECORDS = records
+    random.seed(seed)
+    np.random.seed(seed)
+
+
+def _generate_synthetic_chunk(
+    spec_name: str,
+    fn_name: str,
+    kwargs: dict[str, Any],
+    count: int,
+    crop_size: int | None,
+    n_segments: int | None,
+    seed: int,
+) -> list[str]:
+    """Generate a chunk of synthetic sequences in a worker process."""
+    random.seed(seed)
+    np.random.seed(seed)
+    records = _WORKER_RECORDS
+    if records is None:
+        raise RuntimeError("synthetic worker not initialized with records")
+
+    out: list[str] = []
+    n_records = len(records)
+    if spec_name == "mix":
+        for _ in range(count):
+            out.append(_make_mix_chimera(records, n_segments, crop_size))
+    else:
+        fn = globals()[fn_name]
+        for i in range(count):
+            _, seq = records[i % n_records]
+            out.append(fn(seq, **kwargs))
+    return out
+
+
 def _generate_synthetic_sequences(
     records: list[tuple[int, str]],
     multiplier: float,
@@ -319,15 +361,63 @@ def _generate_synthetic_sequences(
         return synthetic
 
     counts = _compute_perturbation_counts(records, multiplier, specs, perturbations_cfg)
-    for spec, count in zip(specs, counts):
-        if spec["name"] == "mix":
-            n_segments = spec["n_segments"]
-            for _ in range(count):
-                synthetic.append(_make_mix_chimera(records, n_segments, crop_size))
-        else:
-            for i in range(count):
-                _, seq = records[i % len(records)]
-                synthetic.append(spec["fn"](seq, **spec["kwargs"]))
+
+    n_workers = max(1, min(cpu_count(), max(counts, default=0)))
+    use_pool = n_workers > 1 and any(c >= n_workers * 2 for c in counts)
+
+    if use_pool:
+        base_seed = random.randint(0, 2**31 - 1)
+        with Pool(
+            processes=n_workers,
+            initializer=_init_synthetic_worker,
+            initargs=(records, base_seed),
+        ) as pool:
+            for spec, count in zip(specs, counts):
+                spec_name = spec["name"]
+                if spec_name == "mix":
+                    fn_name = ""
+                    kwargs: dict[str, Any] = {}
+                    n_segments = spec["n_segments"]
+                else:
+                    fn_name = spec["fn"].__name__
+                    kwargs = spec["kwargs"]
+                    n_segments = None
+
+                chunk_size = max(1, count // n_workers)
+                chunks = []
+                remaining = count
+                for i in range(n_workers):
+                    if remaining <= 0:
+                        break
+                    c = min(chunk_size, remaining)
+                    chunks.append(c)
+                    remaining -= c
+
+                args = [
+                    (
+                        spec_name,
+                        fn_name,
+                        kwargs,
+                        c,
+                        crop_size,
+                        n_segments,
+                        base_seed + i,
+                    )
+                    for i, c in enumerate(chunks)
+                ]
+                results = pool.starmap(_generate_synthetic_chunk, args)
+                for r in results:
+                    synthetic.extend(r)
+    else:
+        for spec, count in zip(specs, counts):
+            if spec["name"] == "mix":
+                n_segments = spec["n_segments"]
+                for _ in range(count):
+                    synthetic.append(_make_mix_chimera(records, n_segments, crop_size))
+            else:
+                for i in range(count):
+                    _, seq = records[i % len(records)]
+                    synthetic.append(spec["fn"](seq, **spec["kwargs"]))
     return synthetic
 
 
