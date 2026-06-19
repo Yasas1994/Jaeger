@@ -46,6 +46,7 @@ from jaeger.nnlib.v2.layers import (
     MaskedLayerNormalization,
     MetricModel,
     MultiScaleConv1D,
+    OODSignalLayer,
     ResidualBlock_wrapper,
     TransformerEncoder,
 )
@@ -168,6 +169,7 @@ class DynamicModelBuilder:
             "local_attention": LocalAttention,
             "residual_block": ResidualBlock_wrapper,
             "nmd": NMDLayer,
+            "ood_signal_layer": OODSignalLayer,
             "dense": tf.keras.layers.Dense,
             "activation": tf.keras.layers.Activation,
             "relu": tf.keras.layers.Activation,
@@ -399,14 +401,12 @@ class DynamicModelBuilder:
         # === 4. RELIABILITY ===
         if "reliability_model" in self.model_cfg:
             reliability_cfg = self.model_cfg["reliability_model"]
-            input_shape = (reliability_cfg.get("input_shape"),)
-            inputs = tf.keras.Input(shape=input_shape, name="reliability_input")
-            x_reliability = self._build_block(
-                inputs, reliability_cfg, prefix="reliability"
-            )
-            models["reliability_head"] = tf.keras.Model(
-                inputs=inputs, outputs=x_reliability, name="reliability_head"
-            )
+            mode = reliability_cfg.get("mode", "nmd")
+            if mode not in ("nmd", "nmd_plus_signals"):
+                raise ValueError(
+                    f"Unsupported reliability_model.mode: {mode!r}. "
+                    "Use 'nmd' or 'nmd_plus_signals'."
+                )
 
             rep_out = models["rep_model"].output
             if not isinstance(rep_out, (list, tuple)) or len(rep_out) < 2:
@@ -416,18 +416,53 @@ class DynamicModelBuilder:
                     "return_nmd: true on a layer that supports it."
                 )
             nmd = rep_out[1]
+            nmd_dim = int(tf.keras.backend.int_shape(nmd)[-1])
+
+            if mode == "nmd_plus_signals":
+                default_signals = [
+                    "max_prob",
+                    "entropy",
+                    "energy",
+                    "margin",
+                    "nmd_norm",
+                ]
+                signals = reliability_cfg.get("signals", default_signals)
+                signal_layer = OODSignalLayer(signals=signals, name="ood_signals")
+                reliability_input_dim = nmd_dim + len(signals)
+            else:
+                reliability_input_dim = nmd_dim
+
             expected_dim = reliability_cfg.get("input_shape")
-            actual_dim = tf.keras.backend.int_shape(nmd)[-1]
-            if (
-                expected_dim is not None
-                and actual_dim is not None
-                and actual_dim != expected_dim
-            ):
+            if expected_dim is None:
+                reliability_cfg = dict(reliability_cfg)
+                reliability_cfg["input_shape"] = reliability_input_dim
+            elif expected_dim != reliability_input_dim:
                 raise ValueError(
-                    f"Merged NMD dimension ({actual_dim}) does not match "
-                    f"reliability_model.input_shape ({expected_dim})."
+                    f"reliability_model.input_shape ({expected_dim}) does not match "
+                    f"computed reliability input dimension ({reliability_input_dim}). "
+                    f"Set input_shape to None or omit it when using mode={mode!r}."
                 )
-            x = models["reliability_head"](nmd)
+
+            inputs = tf.keras.Input(
+                shape=(reliability_input_dim,), name="reliability_input"
+            )
+            x_reliability = self._build_block(
+                inputs, reliability_cfg, prefix="reliability"
+            )
+            models["reliability_head"] = tf.keras.Model(
+                inputs=inputs, outputs=x_reliability, name="reliability_head"
+            )
+
+            def _reliability_from_rep(rep_out):
+                if mode == "nmd_plus_signals":
+                    emb = rep_out[0]
+                    nmd_ = rep_out[1]
+                    logits = models["classification_head"](emb)
+                    sig = signal_layer({"logits": logits, "nmd": nmd_})
+                    return tf.keras.layers.Concatenate(axis=-1)([nmd_, sig])
+                return rep_out[1]
+
+            x = models["reliability_head"](_reliability_from_rep(rep_out))
             models["jaeger_reliability"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_reliability"
             )
@@ -486,7 +521,9 @@ class DynamicModelBuilder:
                         "nmd": x2,
                     }
                     if has_reliability:
-                        outputs["reliability"] = models["reliability_head"](x2)
+                        outputs["reliability"] = models["reliability_head"](
+                            _reliability_from_rep(rep_out)
+                        )
                     models["jaeger_model"] = tf.keras.Model(
                         inputs=models["rep_model"].input,
                         outputs=outputs,
@@ -502,7 +539,9 @@ class DynamicModelBuilder:
                         "gate": g,
                     }
                     if has_reliability:
-                        outputs["reliability"] = models["reliability_head"](x2)
+                        outputs["reliability"] = models["reliability_head"](
+                            _reliability_from_rep(rep_out)
+                        )
                     models["jaeger_model"] = tf.keras.Model(
                         inputs=models["rep_model"].input,
                         outputs=outputs,
@@ -932,6 +971,8 @@ class DynamicModelBuilder:
                 )
                 return
             model.get("rep_model").trainable = False
+            if model.get("classification_head") is not None:
+                model.get("classification_head").trainable = False
             model.get("jaeger_reliability").compile(
                 optimizer=self.optimizer,
                 loss=self.loss_reliability,
