@@ -1332,8 +1332,11 @@ class OODSignalLayer(tf.keras.layers.Layer):
         if isinstance(inputs, dict):
             logits = inputs["logits"]
             nmd = inputs.get("nmd")
-        else:
+        elif isinstance(inputs, (list, tuple)):
             logits, nmd = inputs
+        else:
+            logits = inputs
+            nmd = None
 
         logits = tf.cast(logits, tf.float32)
         probs = tf.nn.softmax(logits, axis=-1)
@@ -1349,30 +1352,28 @@ class OODSignalLayer(tf.keras.layers.Layer):
                 )
                 computed.append(entropy)
             elif signal == "energy":
-                computed.append(
-                    tf.reduce_logsumexp(logits, axis=-1, keepdims=True)
-                )
+                computed.append(tf.reduce_logsumexp(logits, axis=-1, keepdims=True))
             elif signal == "margin":
                 top_2 = tf.nn.top_k(probs, k=2).values  # (batch, 2)
                 margin = top_2[..., 0:1] - top_2[..., 1:2]
                 computed.append(margin)
             elif signal == "nmd_norm":
                 if nmd is None:
-                    raise ValueError(
-                        "signal 'nmd_norm' requires an NMD vector input"
-                    )
+                    raise ValueError("signal 'nmd_norm' requires an NMD vector input")
                 nmd = tf.cast(nmd, tf.float32)
-                computed.append(
-                    tf.norm(nmd, ord="euclidean", axis=-1, keepdims=True)
-                )
+                computed.append(tf.norm(nmd, ord="euclidean", axis=-1, keepdims=True))
 
         return tf.concat(computed, axis=-1)
 
     def compute_output_shape(self, input_shape):
         if isinstance(input_shape, dict):
             logits_shape = input_shape["logits"]
-        else:
+        elif isinstance(input_shape, (list, tuple)) and isinstance(
+            input_shape[0], (list, tuple)
+        ):
             logits_shape = input_shape[0]
+        else:
+            logits_shape = input_shape
         return (logits_shape[0], len(self.signals))
 
     def get_config(self):
