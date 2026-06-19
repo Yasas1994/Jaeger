@@ -311,6 +311,7 @@ def _load_cropped_numpy_dataset(
     nucleotide_onehot_map: dict[str, list[float]] | None,
     num_classes: int | None,
     one_hot_labels: bool,
+    pad_to_max: bool = True,
 ) -> tf.data.Dataset:
     """Load a NumPy NPZ and slice runtime crops from full-length arrays."""
     if input_type == "both":
@@ -402,7 +403,7 @@ def _load_cropped_numpy_dataset(
         # The sequence-length axis is always axis 1.
         shape = list(arr.shape)
         if len(shape) >= 2:
-            shape[1] = max_crop_size
+            shape[1] = max_crop_size if pad_to_max else None
         return tf.TensorSpec(shape=shape, dtype=tf.as_dtype(arr.dtype))
 
     if is_object:
@@ -417,11 +418,13 @@ def _load_cropped_numpy_dataset(
                 arr = np_arrays[key][i]
                 if arr.ndim == 2:
                     crop = arr[:, start : start + length]
-                    pad_width = [(0, 0), (0, max_crop_size - length)]
                 else:
                     crop = arr[:, start : start + length, :]
-                    pad_width = [(0, 0), (0, max_crop_size - length), (0, 0)]
-                if length < max_crop_size:
+                if pad_to_max and length < max_crop_size:
+                    if arr.ndim == 2:
+                        pad_width = [(0, 0), (0, max_crop_size - length)]
+                    else:
+                        pad_width = [(0, 0), (0, max_crop_size - length), (0, 0)]
                     crop = np.pad(crop, pad_width, mode="constant", constant_values=0)
                 raw[key] = crop.astype(np.int32)
             return raw
@@ -460,11 +463,12 @@ def _load_cropped_numpy_dataset(
 
         # After one-hot conversion the tensor shapes become dynamic; pin them
         # back to fixed values so the dataset has a known element spec.
-        object_expected_shapes: dict[str, tuple[int, ...]] = {}
+        object_expected_shapes: dict[str, tuple[int | None, ...]] = {}
         for key, arr in sample.items():
             frames = int(arr.shape[0])
+            length_dim = max_crop_size if pad_to_max else None
             if seq_onehot and arr.ndim == 2 and key == "translated":
-                object_expected_shapes[key] = (frames, max_crop_size, int(codon_depth))
+                object_expected_shapes[key] = (frames, length_dim, int(codon_depth))
             elif (
                 seq_onehot
                 and arr.ndim == 2
@@ -473,17 +477,17 @@ def _load_cropped_numpy_dataset(
             ):
                 object_expected_shapes[key] = (
                     frames,
-                    max_crop_size,
+                    length_dim,
                     int(lookup.shape[1]),
                 )
             elif arr.ndim == 3:
                 object_expected_shapes[key] = (
                     frames,
-                    max_crop_size,
+                    length_dim,
                     int(arr.shape[2]),
                 )
             else:
-                object_expected_shapes[key] = (frames, max_crop_size)
+                object_expected_shapes[key] = (frames, length_dim)
 
         def _convert_crops(
             features: dict[str, tf.Tensor], label: tf.Tensor
@@ -654,6 +658,7 @@ def _load_numpy_dataset(
     crop_sizes: list[int] | None = None,
     strides: list[int] | None = None,
     overlap: float | None = None,
+    pad_to_max: bool = True,
 ) -> tf.data.Dataset:
     """Load a unified NPZ file and return a ``tf.data.Dataset``.
 
@@ -691,6 +696,8 @@ def _load_numpy_dataset(
     overlap:
         Optional overlap fraction between 0 and 1. If ``strides`` is not given,
         strides are computed as ``int(crop_size * (1 - overlap))``.
+    pad_to_max:
+        When cropping, pad each batch to the largest crop size in ``crop_sizes``.
 
     Returns
     -------
@@ -721,6 +728,7 @@ def _load_numpy_dataset(
             nucleotide_onehot_map=nucleotide_onehot_map,
             num_classes=num_classes,
             one_hot_labels=one_hot_labels,
+            pad_to_max=pad_to_max,
         )
 
     if _is_ragged(data, input_type):
