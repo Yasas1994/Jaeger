@@ -546,14 +546,15 @@ def _load_cropped_numpy_dataset(
     starts_t = tf.constant(starts_list, dtype=tf.int32)
     crop_lengths_t = tf.constant(lengths_list, dtype=tf.int32)
 
-    # One-hot / padding ops erase static shapes; precompute the expected fixed
-    # shape for each feature so we can pin them back in the map function.
-    dense_expected_shapes: dict[str, tuple[int, ...]] = {}
+    # One-hot / padding ops erase static shapes; precompute the expected shape
+    # for each feature so we can pin them back in the map function.
+    length_dim = max_crop_size if pad_to_max else None
+    dense_expected_shapes: dict[str, tuple[int | None, ...]] = {}
     for key in feature_keys:
         arr = arrays[key]
         frames = int(arr.shape[1])
         if seq_onehot and arr.shape.rank == 3 and key == "translated":
-            dense_expected_shapes[key] = (frames, max_crop_size, int(codon_depth))
+            dense_expected_shapes[key] = (frames, length_dim, int(codon_depth))
         elif (
             seq_onehot
             and arr.shape.rank == 3
@@ -562,20 +563,24 @@ def _load_cropped_numpy_dataset(
         ):
             dense_expected_shapes[key] = (
                 frames,
-                max_crop_size,
+                length_dim,
                 int(lookup.shape[1]),
             )
         elif arr.shape.rank == 4:
             dense_expected_shapes[key] = (
                 frames,
-                max_crop_size,
+                length_dim,
                 int(arr.shape[3]),
             )
         else:
-            dense_expected_shapes[key] = (frames, max_crop_size)
+            dense_expected_shapes[key] = (frames, length_dim)
 
     def _slice_crop(
-        arr: tf.Tensor, idx: tf.Tensor, start: tf.Tensor, length: tf.Tensor
+        arr: tf.Tensor,
+        idx: tf.Tensor,
+        start: tf.Tensor,
+        length: tf.Tensor,
+        pad: bool,
     ) -> tf.Tensor:
         rank = arr.shape.rank
         begin = [idx, 0, start] + [0] * (rank - 3)
@@ -584,6 +589,8 @@ def _load_cropped_numpy_dataset(
         ]
         crop = tf.slice(arr, begin, size)
         crop = tf.squeeze(crop, axis=0)
+        if not pad:
+            return crop
         # Pad every crop to the same maximum length so batch shapes are fixed
         # and dataset cardinality is known. Token 0 is the padding value and is
         # masked during one-hot conversion.
@@ -607,7 +614,9 @@ def _load_cropped_numpy_dataset(
     ) -> tuple[dict[str, tf.Tensor], tf.Tensor]:
         features: dict[str, tf.Tensor] = {}
         if "translated" in feature_keys:
-            trans = _slice_crop(arrays["translated"], idx, start, length)
+            trans = _slice_crop(
+                arrays["translated"], idx, start, length, pad=pad_to_max
+            )
             if seq_onehot and trans.shape.rank == 2:
                 t = tf.cast(trans, tf.int32)
                 mask = tf.expand_dims(tf.cast(t > 0, tf.float32), -1)
@@ -619,7 +628,9 @@ def _load_cropped_numpy_dataset(
                 trans, dense_expected_shapes["translated"]
             )
         if "nucleotide" in feature_keys:
-            nuc = _slice_crop(arrays["nucleotide"], idx, start, length)
+            nuc = _slice_crop(
+                arrays["nucleotide"], idx, start, length, pad=pad_to_max
+            )
             if seq_onehot and nuc.shape.rank == 2:
                 n = tf.cast(nuc, tf.int32)
                 nuc = tf.gather(tf.constant(lookup, dtype=tf.float32), n)
@@ -697,7 +708,7 @@ def _load_numpy_dataset(
         Optional overlap fraction between 0 and 1. If ``strides`` is not given,
         strides are computed as ``int(crop_size * (1 - overlap))``.
     pad_to_max:
-        When cropping, pad each batch to the largest crop size in ``crop_sizes``.
+        When cropping, pad each crop to ``max(crop_sizes)``.
 
     Returns
     -------
