@@ -145,6 +145,74 @@ def _apply_grouped_batching(
     )
 
 
+def _build_numpy_split(
+    path: str,
+    num_classes: int,
+    string_processor_config: dict[str, Any],
+    batching_cfg: dict[str, Any],
+    batch_size: int,
+    multi_gpu: bool,
+    num_replicas: int,
+    buffer_size: int | None,
+    split: str,
+) -> tf.data.Dataset:
+    """Build a batched/prefetched NumPy dataset for one split."""
+    _crop_sizes, _strides, _overlap = _resolve_numpy_crop_params(
+        string_processor_config, split
+    )
+    _onehot_buffer = (
+        buffer_size if buffer_size is not None and buffer_size > 0 else None
+    )
+    batching_strategy = batching_cfg.get("strategy", "padded")
+    _data = _load_numpy_dataset(
+        path,
+        input_type=string_processor_config.get("input_type"),
+        seq_onehot=string_processor_config.get("seq_onehot"),
+        codon_depth=string_processor_config.get("codon_depth"),
+        nucleotide_onehot_map=string_processor_config.get("nucleotide_onehot_map"),
+        num_classes=num_classes,
+        one_hot_labels=True,
+        buffer_size=_onehot_buffer,
+        crop_sizes=_crop_sizes,
+        strides=_strides,
+        overlap=_overlap,
+        pad_to_max=(batching_strategy != "grouped"),
+    )
+
+    ds = _data
+    if _onehot_buffer is None and not _is_ragged_dataset(_data):
+        ds = ds.cache()
+    ds = ds.shuffle(
+        buffer_size=buffer_size if buffer_size != -1 else 100000,
+    )
+
+    if batching_strategy == "grouped":
+        feature_specs = _data.element_spec[0]
+        if len(feature_specs) != 1:
+            raise ValueError(
+                "grouped batching currently requires a single input feature "
+                f"(got {sorted(feature_specs.keys())})."
+            )
+        feature_key = next(iter(feature_specs.keys()))
+        ds = _apply_grouped_batching(
+            ds,
+            batching_cfg,
+            num_replicas=num_replicas,
+            feature_key=feature_key,
+        )
+    else:
+        padded_shapes = (
+            tf.nest.map_structure(lambda spec: spec.shape, _data.element_spec[0]),
+            _data.element_spec[1].shape,
+        )
+        ds = ds.padded_batch(
+            batch_size=batch_size,
+            padded_shapes=padded_shapes,
+            drop_remainder=multi_gpu,
+        )
+    return ds.prefetch(tf.data.AUTOTUNE)
+
+
 # ------------------------------------------------------------------
 # CLI command
 # ------------------------------------------------------------------
@@ -382,57 +450,17 @@ def train_fragment_core(**kwargs):
                                 "NumPy format only supports a single .npz file per split; using first: %s",
                                 paths[0],
                             )
-                        _onehot_buffer = (
-                            _buffer_size
-                            if _buffer_size is not None and _buffer_size > 0
-                            else None
-                        )
-                        _crop_sizes, _strides, _overlap = _resolve_numpy_crop_params(
-                            string_processor_config, k
-                        )
-                        _data = _load_numpy_dataset(
+                        train_data[k] = _build_numpy_split(
                             paths[0],
-                            input_type=string_processor_config.get("input_type"),
-                            seq_onehot=string_processor_config.get("seq_onehot"),
-                            codon_depth=string_processor_config.get("codon_depth"),
-                            nucleotide_onehot_map=string_processor_config.get(
-                                "nucleotide_onehot_map"
-                            ),
                             num_classes=builder.classifier_out_dim,
-                            one_hot_labels=True,
-                            buffer_size=_onehot_buffer,
-                            crop_sizes=_crop_sizes,
-                            strides=_strides,
-                            overlap=_overlap,
-                            pad_to_max=(batching_strategy != "grouped"),
+                            string_processor_config=string_processor_config,
+                            batching_cfg=batching_cfg,
+                            batch_size=builder.train_cfg.get("batch_size"),
+                            multi_gpu=multi_gpu,
+                            num_replicas=strategy.num_replicas_in_sync,
+                            buffer_size=_buffer_size,
+                            split=k,
                         )
-                        ds = _data
-                        if _onehot_buffer is None and not _is_ragged_dataset(_data):
-                            ds = ds.cache()
-                        ds = ds.shuffle(
-                            buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                        )
-                        if batching_strategy == "grouped":
-                            feature_key = next(iter(_data.element_spec[0].keys()))
-                            ds = _apply_grouped_batching(
-                                ds,
-                                batching_cfg,
-                                num_replicas=strategy.num_replicas_in_sync,
-                                feature_key=feature_key,
-                            )
-                        else:
-                            padded_shapes = (
-                                tf.nest.map_structure(
-                                    lambda spec: spec.shape, _data.element_spec[0]
-                                ),
-                                _data.element_spec[1].shape,
-                            )
-                            ds = ds.padded_batch(
-                                batch_size=builder.train_cfg.get("batch_size"),
-                                padded_shapes=padded_shapes,
-                                drop_remainder=multi_gpu,
-                            )
-                        train_data[k] = ds.prefetch(tf.data.AUTOTUNE)
                     else:
                         raise ValueError(
                             f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
@@ -653,57 +681,17 @@ def train_fragment_core(**kwargs):
                                 "NumPy format only supports a single .npz file per split; using first: %s",
                                 paths[0],
                             )
-                        _onehot_buffer = (
-                            _buffer_size
-                            if _buffer_size is not None and _buffer_size > 0
-                            else None
-                        )
-                        _crop_sizes, _strides, _overlap = _resolve_numpy_crop_params(
-                            string_processor_config, k
-                        )
-                        _data = _load_numpy_dataset(
+                        rel_train_data[k] = _build_numpy_split(
                             paths[0],
-                            input_type=string_processor_config.get("input_type"),
-                            seq_onehot=string_processor_config.get("seq_onehot"),
-                            codon_depth=string_processor_config.get("codon_depth"),
-                            nucleotide_onehot_map=string_processor_config.get(
-                                "nucleotide_onehot_map"
-                            ),
                             num_classes=builder.reliability_out_dim,
-                            one_hot_labels=True,
-                            buffer_size=_onehot_buffer,
-                            crop_sizes=_crop_sizes,
-                            strides=_strides,
-                            overlap=_overlap,
-                            pad_to_max=(batching_strategy != "grouped"),
+                            string_processor_config=string_processor_config,
+                            batching_cfg=batching_cfg,
+                            batch_size=builder.train_cfg.get("batch_size"),
+                            multi_gpu=multi_gpu,
+                            num_replicas=strategy.num_replicas_in_sync,
+                            buffer_size=_buffer_size,
+                            split=k,
                         )
-                        ds = _data
-                        if _onehot_buffer is None and not _is_ragged_dataset(_data):
-                            ds = ds.cache()
-                        ds = ds.shuffle(
-                            buffer_size=_buffer_size if _buffer_size != -1 else 100000,
-                        )
-                        if batching_strategy == "grouped":
-                            feature_key = next(iter(_data.element_spec[0].keys()))
-                            ds = _apply_grouped_batching(
-                                ds,
-                                batching_cfg,
-                                num_replicas=strategy.num_replicas_in_sync,
-                                feature_key=feature_key,
-                            )
-                        else:
-                            padded_shapes = (
-                                tf.nest.map_structure(
-                                    lambda spec: spec.shape, _data.element_spec[0]
-                                ),
-                                _data.element_spec[1].shape,
-                            )
-                            ds = ds.padded_batch(
-                                batch_size=builder.train_cfg.get("batch_size"),
-                                padded_shapes=padded_shapes,
-                                drop_remainder=multi_gpu,
-                            )
-                        rel_train_data[k] = ds.prefetch(tf.data.AUTOTUNE)
                     else:
                         raise ValueError(
                             f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
