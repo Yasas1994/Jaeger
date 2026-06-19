@@ -67,6 +67,69 @@ def _resolve_numpy_crop_params(
     return crop_sizes, strides, overlap
 
 
+def _replica_round(batch_size: int, num_replicas: int) -> int:
+    """Return the largest replica-divisible batch size <= batch_size."""
+    if num_replicas <= 1:
+        return batch_size
+    return (batch_size // num_replicas) * num_replicas
+
+
+def _apply_grouped_batching(
+    ds: tf.data.Dataset,
+    batching_cfg: dict[str, Any],
+    num_replicas: int,
+) -> tf.data.Dataset:
+    """Batch sequences so every batch contains one exact length.
+
+    Per-length batch sizes come from ``length_batch_sizes``; unlisted lengths
+    use ``default_batch_size``. Batch sizes are rounded down to multiples of
+    ``num_replicas`` when running on multiple devices.
+    """
+    length_batch_sizes = {
+        int(k): int(v) for k, v in batching_cfg.get("length_batch_sizes", {}).items()
+    }
+    default_batch_size = int(batching_cfg["default_batch_size"])
+
+    # Build a lookup table: length -> effective batch size.
+    # StaticHashTable does not accept empty key/value tensors, so we always
+    # seed it with at least one dummy entry.
+    default_value = _replica_round(default_batch_size, num_replicas)
+    if length_batch_sizes:
+        keys = tf.constant(list(length_batch_sizes.keys()), dtype=tf.int64)
+        vals = tf.constant(
+            [
+                _replica_round(length_batch_sizes[k], num_replicas)
+                for k in length_batch_sizes.keys()
+            ],
+            dtype=tf.int64,
+        )
+    else:
+        keys = tf.constant([-1], dtype=tf.int64)
+        vals = tf.constant([default_value], dtype=tf.int64)
+    table = tf.lookup.StaticHashTable(
+        tf.lookup.KeyValueTensorInitializer(keys, vals),
+        default_value=tf.constant(default_value, dtype=tf.int64),
+    )
+
+    def _key_fn(features, _label):
+        # Sequence length is axis 1 for all feature tensors.
+        first_feature = tf.nest.flatten(features)[0]
+        return tf.cast(tf.shape(first_feature)[1], tf.int64)
+
+    def _reduce_func(_key, dataset):
+        batch_size = table.lookup(_key)
+        return dataset.batch(batch_size, drop_remainder=True)
+
+    def _window_size_func(key):
+        return table.lookup(key)
+
+    return ds.group_by_window(
+        key_func=_key_fn,
+        reduce_func=_reduce_func,
+        window_size_func=_window_size_func,
+    )
+
+
 # ------------------------------------------------------------------
 # CLI command
 # ------------------------------------------------------------------
