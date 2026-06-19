@@ -628,9 +628,7 @@ def _load_cropped_numpy_dataset(
                 trans, dense_expected_shapes["translated"]
             )
         if "nucleotide" in feature_keys:
-            nuc = _slice_crop(
-                arrays["nucleotide"], idx, start, length, pad=pad_to_max
-            )
+            nuc = _slice_crop(arrays["nucleotide"], idx, start, length, pad=pad_to_max)
             if seq_onehot and nuc.shape.rank == 2:
                 n = tf.cast(nuc, tf.int32)
                 nuc = tf.gather(tf.constant(lookup, dtype=tf.float32), n)

@@ -655,6 +655,35 @@ class TestRuntimeCropLoader:
         # The largest crop is unpadded.
         np.testing.assert_array_equal(crops[2][0]["translated"], translated[0, :, :20])
 
+    def test_runtime_crops_keep_natural_length(self, tmp_path: Path):
+        path = tmp_path / "translated_natural.npz"
+        seq_len = 20
+        translated = np.arange(6 * seq_len, dtype=np.int32).reshape(1, 6, seq_len) + 1
+        labels = np.array([1], dtype=np.int32)
+        translated_lengths = np.array([seq_len], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=2,
+            crop_sizes=[10, 20],
+            overlap=0.0,
+            pad_to_max=False,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 3
+        assert crops[0][0]["translated"].shape == (6, 10)
+        assert crops[1][0]["translated"].shape == (6, 10)
+        assert crops[2][0]["translated"].shape == (6, 20)
+
     def test_int8_npz_cast_to_int32(self, tmp_path: Path):
         path = tmp_path / "translated_int8.npz"
         translated = np.random.randint(1, 65, size=(2, 6, 12), dtype=np.int8)
