@@ -154,6 +154,16 @@ model:
           kernel_regularizer: l2
           kernel_regularizer_w: 0.00001
   reliability_model:
+    mode: nmd                     # default, NMD-only reliability head
+    # mode: nmd_plus_signals      # optional: concatenate NMD + OOD signals
+    # signals:                    # used only when mode == nmd_plus_signals
+    #   - max_prob
+    #   - entropy
+    #   - energy
+    #   - margin
+    #   - nmd_norm
+    # NOTE: when using nmd_plus_signals, omit input_shape or set it to None;
+    #       the builder computes it automatically as nmd_dim + len(signals).
     merge:
       mode: concat
       axis: -1
