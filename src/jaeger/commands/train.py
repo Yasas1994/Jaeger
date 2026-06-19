@@ -78,6 +78,7 @@ def _apply_grouped_batching(
     ds: tf.data.Dataset,
     batching_cfg: dict[str, Any],
     num_replicas: int,
+    feature_key: str,
 ) -> tf.data.Dataset:
     """Batch sequences so every batch contains one exact length.
 
@@ -85,6 +86,11 @@ def _apply_grouped_batching(
     use ``default_batch_size``. Batch sizes are rounded down to multiples of
     ``num_replicas`` when running on multiple devices.
     """
+    if "default_batch_size" not in batching_cfg:
+        raise ValueError(
+            "grouped batching requires string_processor.batching.default_batch_size"
+        )
+
     length_batch_sizes = {
         int(k): int(v) for k, v in batching_cfg.get("length_batch_sizes", {}).items()
     }
@@ -98,7 +104,10 @@ def _apply_grouped_batching(
         keys = tf.constant(list(length_batch_sizes.keys()), dtype=tf.int64)
         vals = tf.constant(
             [
-                _replica_round(length_batch_sizes[k], num_replicas)
+                max(
+                    _replica_round(length_batch_sizes[k], num_replicas),
+                    default_value,
+                )
                 for k in length_batch_sizes.keys()
             ],
             dtype=tf.int64,
@@ -112,9 +121,8 @@ def _apply_grouped_batching(
     )
 
     def _key_fn(features, _label):
-        # Sequence length is axis 1 for all feature tensors.
-        first_feature = tf.nest.flatten(features)[0]
-        return tf.cast(tf.shape(first_feature)[1], tf.int64)
+        feature = features[feature_key]
+        return tf.cast(tf.shape(feature)[1], tf.int64)
 
     def _reduce_func(_key, dataset):
         batch_size = table.lookup(_key)
