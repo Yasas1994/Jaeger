@@ -371,6 +371,67 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
         return config
 
 
+class MaskedDYT(tf.keras.layers.Layer):
+    """Masked Dynamic Tanh (DyT) layer.
+
+    A normalization-free drop-in replacement that applies a learnable scaled
+    hyperbolic tangent followed by a per-channel affine transform. Masked
+    positions are kept at zero.
+    """
+
+    def __init__(self, alpha_init: float = 0.5, **kwargs):
+        super().__init__(**kwargs)
+        self.alpha_init = alpha_init
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        channel_dim = int(input_shape[-1])
+        if channel_dim is None:
+            raise ValueError("The last (channel) dimension must be defined.")
+
+        self.alpha = self.add_weight(
+            name="alpha",
+            shape=(1,),
+            initializer=tf.keras.initializers.Constant(self.alpha_init),
+            trainable=True,
+        )
+        self.gamma = self.add_weight(
+            name="gamma",
+            shape=(channel_dim,),
+            initializer="ones",
+            trainable=True,
+        )
+        self.beta = self.add_weight(
+            name="beta",
+            shape=(channel_dim,),
+            initializer="zeros",
+            trainable=True,
+        )
+        super().build(input_shape)
+
+    def call(self, inputs, mask=None):
+        x = tf.cast(inputs, tf.float32)
+        out = tf.math.tanh(self.alpha * x)
+        out = out * self.gamma + self.beta
+        out = tf.cast(out, self.compute_dtype)
+
+        if mask is not None:
+            mask_f = tf.cast(mask, out.dtype)
+            if mask_f.shape.rank is None or mask_f.shape.rank < out.shape.rank:
+                mask_f = tf.expand_dims(mask_f, axis=-1)
+            out = out * mask_f
+
+        return out
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"alpha_init": self.alpha_init})
+        return config
+
+
 class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -1491,6 +1552,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.kernel_regularizer = kwargs.pop("kernel_regularizer", None)
         self.kernel_initializer = kwargs.pop("kernel_initializer", "glorot_uniform")
         self.bias_initializer = kwargs.pop("bias_initializer", "zeros")
+        self.norm_type = kwargs.pop("norm_type", "masked_batchnorm").lower()
 
         # now kwargs only contains things Layer.__init__ understands (name, dtype, trainable, etc.)
         super().__init__(**kwargs)
@@ -1512,6 +1574,15 @@ class ResidualBlock(tf.keras.layers.Layer):
             bias_initializer=self.bias_initializer,
             kernel_regularizer=self.kernel_regularizer,
         )
+
+        def _make_norm(name, return_nmd=False):
+            if self.norm_type == "masked_batchnorm":
+                return MaskedBatchNorm(name=name, return_nmd=return_nmd)
+            if self.norm_type == "masked_layernorm":
+                return MaskedLayerNormalization(name=name)
+            if self.norm_type == "masked_dyt":
+                return MaskedDYT(name=name)
+            raise ValueError(f"Unsupported norm_type: {self.norm_type}")
 
         # first conv
         self.conv1 = MaskedConv1D(
@@ -1537,15 +1608,15 @@ class ResidualBlock(tf.keras.layers.Layer):
                 name=f"masked_conv1d_blk{self.block_number}_bypass",
                 **bypass_common,
             )
-            self.bn3 = MaskedBatchNorm(
-                name=f"masked_batchnorm_blk{self.block_number}_bypass",
+            self.bn3 = _make_norm(
+                name=f"{self.norm_type}_blk{self.block_number}_bypass",
             )
 
-        self.bn1 = MaskedBatchNorm(
-            name=f"masked_batchnorm_blk{self.block_number}_1",
+        self.bn1 = _make_norm(
+            name=f"{self.norm_type}_blk{self.block_number}_1",
         )
-        self.bn2 = MaskedBatchNorm(
-            name=f"masked_batchnorm_blk{self.block_number}_2",
+        self.bn2 = _make_norm(
+            name=f"{self.norm_type}_blk{self.block_number}_2",
             return_nmd=return_nmd,
         )
 
@@ -1556,7 +1627,10 @@ class ResidualBlock(tf.keras.layers.Layer):
 
     def call(self, inputs, mask=None, training=None):
         x = self.conv1(inputs, mask=mask)
-        x = self.bn1(x, training=training)
+        if self.norm_type == "masked_batchnorm":
+            x = self.bn1(x, training=training)
+        else:
+            x = self.bn1(x)
         x = self.activation_layer(x)
 
         x = self.conv2(x)
@@ -1567,7 +1641,10 @@ class ResidualBlock(tf.keras.layers.Layer):
 
         if self.conv3 is not None:
             shortcut = self.conv3(inputs, mask=mask)
-            shortcut = self.bn3(shortcut, training=training)
+            if self.norm_type == "masked_batchnorm":
+                shortcut = self.bn3(shortcut, training=training)
+            else:
+                shortcut = self.bn3(shortcut)
         else:
             shortcut = inputs
 
@@ -1613,6 +1690,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                     self.activation_layer.activation
                 ),
                 "return_nmd": self.return_nmd,
+                "norm_type": self.norm_type,
                 "filters": self.filters,
                 "kernel_size": self.kernel_size,
                 "strides": self.strides,
