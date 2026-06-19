@@ -260,6 +260,13 @@ def train_fragment_core(**kwargs):
         builder.compile_model(models, train_branch="classifier")
 
         string_processor_config = builder._get_string_processor_config()
+        batching_cfg = string_processor_config.get("batching", {})
+        batching_strategy = batching_cfg.get("strategy", "padded")
+        if batching_strategy not in ("padded", "grouped"):
+            raise ValueError(
+                f"Invalid batching strategy: {batching_strategy!r}. "
+                "Use 'padded' or 'grouped'."
+            )
         _train_data = builder._get_fragment_paths()
         train_data = {"train": None, "validation": None}
 
@@ -397,29 +404,35 @@ def train_fragment_core(**kwargs):
                             crop_sizes=_crop_sizes,
                             strides=_strides,
                             overlap=_overlap,
-                        )
-                        padded_shapes = (
-                            tf.nest.map_structure(
-                                lambda spec: spec.shape, _data.element_spec[0]
-                            ),
-                            _data.element_spec[1].shape,
+                            pad_to_max=(batching_strategy != "grouped"),
                         )
                         ds = _data
                         if _onehot_buffer is None and not _is_ragged_dataset(_data):
                             ds = ds.cache()
-                        train_data[k] = (
-                            ds.shuffle(
-                                buffer_size=_buffer_size
-                                if _buffer_size != -1
-                                else 100000,
+                        ds = ds.shuffle(
+                            buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                        )
+                        if batching_strategy == "grouped":
+                            feature_key = next(iter(_data.element_spec[0].keys()))
+                            ds = _apply_grouped_batching(
+                                ds,
+                                batching_cfg,
+                                num_replicas=strategy.num_replicas_in_sync,
+                                feature_key=feature_key,
                             )
-                            .padded_batch(
+                        else:
+                            padded_shapes = (
+                                tf.nest.map_structure(
+                                    lambda spec: spec.shape, _data.element_spec[0]
+                                ),
+                                _data.element_spec[1].shape,
+                            )
+                            ds = ds.padded_batch(
                                 batch_size=builder.train_cfg.get("batch_size"),
                                 padded_shapes=padded_shapes,
                                 drop_remainder=multi_gpu,
                             )
-                            .prefetch(tf.data.AUTOTUNE)
-                        )
+                        train_data[k] = ds.prefetch(tf.data.AUTOTUNE)
                     else:
                         raise ValueError(
                             f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
@@ -662,29 +675,35 @@ def train_fragment_core(**kwargs):
                             crop_sizes=_crop_sizes,
                             strides=_strides,
                             overlap=_overlap,
-                        )
-                        padded_shapes = (
-                            tf.nest.map_structure(
-                                lambda spec: spec.shape, _data.element_spec[0]
-                            ),
-                            _data.element_spec[1].shape,
+                            pad_to_max=(batching_strategy != "grouped"),
                         )
                         ds = _data
                         if _onehot_buffer is None and not _is_ragged_dataset(_data):
                             ds = ds.cache()
-                        rel_train_data[k] = (
-                            ds.shuffle(
-                                buffer_size=_buffer_size
-                                if _buffer_size != -1
-                                else 100000,
+                        ds = ds.shuffle(
+                            buffer_size=_buffer_size if _buffer_size != -1 else 100000,
+                        )
+                        if batching_strategy == "grouped":
+                            feature_key = next(iter(_data.element_spec[0].keys()))
+                            ds = _apply_grouped_batching(
+                                ds,
+                                batching_cfg,
+                                num_replicas=strategy.num_replicas_in_sync,
+                                feature_key=feature_key,
                             )
-                            .padded_batch(
+                        else:
+                            padded_shapes = (
+                                tf.nest.map_structure(
+                                    lambda spec: spec.shape, _data.element_spec[0]
+                                ),
+                                _data.element_spec[1].shape,
+                            )
+                            ds = ds.padded_batch(
                                 batch_size=builder.train_cfg.get("batch_size"),
                                 padded_shapes=padded_shapes,
                                 drop_remainder=multi_gpu,
                             )
-                            .prefetch(tf.data.AUTOTUNE)
-                        )
+                        rel_train_data[k] = ds.prefetch(tf.data.AUTOTUNE)
                     else:
                         raise ValueError(
                             f"Unsupported data_format: {data_format}. Use 'csv' or 'numpy'."
