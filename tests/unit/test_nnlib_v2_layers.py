@@ -42,6 +42,37 @@ class TestResidualBlock:
         out = layer(x, mask=mask)
         assert out.shape == x.shape
 
+    def test_residual_block_masked_dyt_builds(self):
+        x = tf.random.normal((2, 6, 32, 4))
+        mask = tf.ones((2, 6, 32), dtype=tf.bool)
+        layer = layers.ResidualBlock(
+            filters=4, kernel_size=3, block_number=0, norm_type="masked_dyt"
+        )
+        out = layer(x, mask=mask)
+        assert out.shape == x.shape
+
+    def test_residual_block_return_nmd_requires_masked_batchnorm(self):
+        with pytest.raises(ValueError, match="return_nmd=True is only supported"):
+            layers.ResidualBlock(
+                filters=4,
+                kernel_size=3,
+                block_number=0,
+                norm_type="masked_dyt",
+                return_nmd=True,
+            )
+
+    @pytest.mark.parametrize(
+        "norm_type", ["masked_batchnorm", "masked_layernorm", "masked_dyt"]
+    )
+    def test_residual_block_various_norm_types(self, norm_type):
+        x = tf.random.normal((2, 6, 32, 4))
+        mask = tf.ones((2, 6, 32), dtype=tf.bool)
+        layer = layers.ResidualBlock(
+            filters=4, kernel_size=3, block_number=0, norm_type=norm_type
+        )
+        out = layer(x, mask=mask)
+        assert out.shape == x.shape
+
 
 class TestMaskedBatchNorm:
     def test_output_shape(self):

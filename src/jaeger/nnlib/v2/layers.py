@@ -1554,6 +1554,12 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.bias_initializer = kwargs.pop("bias_initializer", "zeros")
         self.norm_type = kwargs.pop("norm_type", "masked_batchnorm").lower()
 
+        if return_nmd and self.norm_type != "masked_batchnorm":
+            raise ValueError(
+                "return_nmd=True is only supported with norm_type='masked_batchnorm'. "
+                f"Got norm_type={self.norm_type!r}."
+            )
+
         # now kwargs only contains things Layer.__init__ understands (name, dtype, trainable, etc.)
         super().__init__(**kwargs)
 
