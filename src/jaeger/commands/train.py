@@ -100,13 +100,20 @@ def _apply_grouped_batching(
     # StaticHashTable does not accept empty key/value tensors, so we always
     # seed it with at least one dummy entry.
     default_value = _replica_round(default_batch_size, num_replicas)
+    if default_value <= 0:
+        raise ValueError(
+            f"default_batch_size ({default_batch_size}) rounds to 0 for "
+            f"{num_replicas} replicas; increase it."
+        )
+
     if length_batch_sizes:
         keys = tf.constant(list(length_batch_sizes.keys()), dtype=tf.int64)
         vals = tf.constant(
             [
-                max(
-                    _replica_round(length_batch_sizes[k], num_replicas),
-                    default_value,
+                (
+                    default_value
+                    if _replica_round(length_batch_sizes[k], num_replicas) == 0
+                    else _replica_round(length_batch_sizes[k], num_replicas)
                 )
                 for k in length_batch_sizes.keys()
             ],
