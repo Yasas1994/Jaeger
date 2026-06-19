@@ -201,6 +201,7 @@ training:
     crop_sizes: [500]
     units: codon
     synthetic_ood_multiplier: 1.0
+    inference_batch_size: 512
     perturbations:
       shuffle:
         enabled: true

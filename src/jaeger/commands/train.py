@@ -576,6 +576,7 @@ def train_fragment_core(**kwargs):
                 synthetic_ood_threshold=synthetic_ood_threshold,
                 synthetic_ood_multiplier=synthetic_ood_multiplier,
                 generator_cfg=generator_cfg,
+                inference_batch_size=generator_cfg.get("inference_batch_size"),
             )
             data_format = "numpy"
             logger.info(

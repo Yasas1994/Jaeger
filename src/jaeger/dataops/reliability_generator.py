@@ -427,7 +427,7 @@ def _filter_synthetic_ood(
     string_processor_config: dict[str, Any],
     classifier_out_dim: int,
     threshold: float,
-    batch_size: int,
+    inference_batch_size: int,
     crop_size: int | None = None,
 ) -> list[tuple[int, str]]:
     """Keep corrupted sequences that the classifier predicts with high confidence."""
@@ -440,7 +440,7 @@ def _filter_synthetic_ood(
         str(tmp_csv),
         string_processor_config,
         classifier_out_dim,
-        batch_size,
+        inference_batch_size,
         crop_size=crop_size,
     )
     probs = _run_classifier_inference(classifier, ds)
@@ -491,6 +491,7 @@ def generate_reliability_data(
     synthetic_ood_threshold: float = 0.8,
     synthetic_ood_multiplier: float = 1.0,
     generator_cfg: dict[str, Any] | None = None,
+    inference_batch_size: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Generate reliability training data and return path metadata for the builder.
 
@@ -500,6 +501,9 @@ def generate_reliability_data(
     generator_cfg = generator_cfg or {}
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Inference can use a larger batch than training because no gradients are kept.
+    inference_batch_size = inference_batch_size or max(batch_size, 512)
 
     train_npz = str(output_dir_path / "reliability_train.npz")
     val_npz = str(output_dir_path / "reliability_val.npz")
@@ -535,7 +539,7 @@ def generate_reliability_data(
         train_csv_path,
         string_processor_config,
         classifier_out_dim,
-        batch_size,
+        inference_batch_size,
         crop_size=crop_size,
     )
     y_true = _extract_true_labels(train_ds)
@@ -562,7 +566,7 @@ def generate_reliability_data(
         string_processor_config,
         classifier_out_dim,
         synthetic_ood_threshold,
-        batch_size,
+        inference_batch_size,
         crop_size=crop_size,
     )
     logger.info(f"Selected {len(synthetic_ood_records)} synthetic OOD samples")
@@ -579,7 +583,7 @@ def generate_reliability_data(
             val_csv_path,
             string_processor_config,
             classifier_out_dim,
-            batch_size,
+            inference_batch_size,
             crop_size=crop_size,
         )
         val_y_true = _extract_true_labels(val_ds)
@@ -605,7 +609,7 @@ def generate_reliability_data(
             string_processor_config,
             classifier_out_dim,
             synthetic_ood_threshold,
-            batch_size,
+            inference_batch_size,
             crop_size=crop_size,
         )
         logger.info(
