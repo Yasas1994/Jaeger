@@ -750,3 +750,7 @@ def train_fragment_core(**kwargs):
                 suffix="fragment",
                 metadata=kwargs.get("meta", None),
             )
+
+
+if __name__ == "__main__":
+    train_fragment()
