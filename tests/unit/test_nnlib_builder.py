@@ -193,3 +193,94 @@ def test_dvf_model_builds():
     assert "jaeger_classifier" in models
     assert models["jaeger_classifier"].output.shape[-1] == 3
     assert "jaeger_model" in models
+
+
+def _reliability_config(mode=None):
+    """Return a minimal config for testing reliability model modes."""
+    model_cfg = {
+        "classifier_out_dim": 3,
+        "reliability_out_dim": 2,
+        "embedding": {
+            "input_type": "nucleotide",
+            "input_shape": (None, 4),
+            "use_embedding_layer": False,
+        },
+        "representation_learner": {
+            "hidden_layers": [
+                {"name": "conv1d", "config": {"filters": 8, "kernel_size": 3}},
+                {"name": "relu"},
+                {"name": "nmd"},
+            ],
+            "pooling": "average1d",
+        },
+        "classifier": {
+            "input_shape": 8,
+            "hidden_layers": [
+                {"name": "dense", "config": {"units": 8}},
+                {"name": "relu"},
+                {"name": "dense", "config": {"units": 3}},
+            ],
+        },
+        "reliability_model": {
+            "hidden_layers": [
+                {"name": "dense", "config": {"units": 4}},
+                {"name": "relu"},
+                {"name": "dense", "config": {"units": 2}},
+            ],
+        },
+    }
+    if mode is not None:
+        model_cfg["reliability_model"]["mode"] = mode
+    return {"model": model_cfg, "training": {"loss_reliability": "binary_crossentropy"}}
+
+
+class TestReliabilityModes:
+    """Tests for reliability_model mode handling in DynamicModelBuilder."""
+
+    def test_reliability_nmd_mode_builds(self):
+        """Default nmd mode should produce a jaeger_reliability output."""
+        config = _reliability_config(mode="nmd")
+        builder = DynamicModelBuilder(config)
+        models = builder.build_fragment_classifier()
+
+        assert "jaeger_reliability" in models
+        assert models["jaeger_reliability"].output.shape[-1] == 2
+        assert list(models["jaeger_reliability"].output.shape) == [None, 2]
+        assert "reliability" in models["jaeger_model"].output
+
+    def test_reliability_nmd_plus_signals_builds(self):
+        """nmd_plus_signals mode should concatenate NMD and OOD signals."""
+        config = _reliability_config(mode="nmd_plus_signals")
+        builder = DynamicModelBuilder(config)
+        models = builder.build_fragment_classifier()
+
+        assert models["jaeger_reliability"].output.shape[-1] == 2
+        assert list(models["jaeger_reliability"].output.shape) == [None, 2]
+
+        nmd_dim = int(models["rep_model"].output[1].shape[-1])
+        default_signals = [
+            "max_prob",
+            "entropy",
+            "energy",
+            "margin",
+            "nmd_norm",
+        ]
+        expected_dim = nmd_dim + len(default_signals)
+        assert int(models["reliability_head"].input.shape[-1]) == expected_dim
+
+    def test_reliability_invalid_mode_raises(self):
+        """An unsupported reliability mode should raise ValueError."""
+        config = _reliability_config(mode="unknown")
+        builder = DynamicModelBuilder(config)
+        with pytest.raises(ValueError, match="Unsupported reliability_model.mode"):
+            builder.build_fragment_classifier()
+
+    def test_compile_reliability_freezes_classifier(self):
+        """Compiling for reliability training should freeze earlier branches."""
+        config = _reliability_config(mode="nmd_plus_signals")
+        builder = DynamicModelBuilder(config)
+        models = builder.build_fragment_classifier()
+        builder.compile_model(models, train_branch="reliability")
+
+        assert models["rep_model"].trainable is False
+        assert models["classification_head"].trainable is False
