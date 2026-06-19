@@ -604,7 +604,9 @@ def train_fragment_core(**kwargs):
                 for k, v in _rel_train_data.items():
                     paths = check_files(v.get("paths"))
                     if not paths:
-                        logger.warning("no valid files in paths=%r", k, v.get("paths"))
+                        logger.warning(
+                            "no valid files in paths=%r %r", k, v.get("paths")
+                        )
                         exit(1)
 
                     if data_format == "csv":
