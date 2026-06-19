@@ -1294,6 +1294,93 @@ class MultiScaleConv1D(tf.keras.layers.Layer):
         return config
 
 
+class OODSignalLayer(tf.keras.layers.Layer):
+    """Compute scalar out-of-distribution signals from classifier logits and an optional NMD vector.
+
+    Inputs can be a dict ``{"logits": ..., "nmd": ...}`` or a sequence ``[logits, nmd]``.
+    Output shape is ``(batch, num_signals)``.
+    """
+
+    _SUPPORTED_SIGNALS = {
+        "max_prob",
+        "entropy",
+        "energy",
+        "margin",
+        "nmd_norm",
+    }
+
+    def __init__(
+        self,
+        signals: list[str] | None = None,
+        epsilon: float = 1e-10,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        if signals is None:
+            signals = ["max_prob"]
+        self.signals = list(signals)
+        self.epsilon = epsilon
+
+        unsupported = set(self.signals) - self._SUPPORTED_SIGNALS
+        if unsupported:
+            raise ValueError(
+                f"Unsupported signal(s): {sorted(unsupported)}. "
+                f"Supported: {sorted(self._SUPPORTED_SIGNALS)}"
+            )
+
+    def call(self, inputs, training=None):
+        if isinstance(inputs, dict):
+            logits = inputs["logits"]
+            nmd = inputs.get("nmd")
+        else:
+            logits, nmd = inputs
+
+        logits = tf.cast(logits, tf.float32)
+        probs = tf.nn.softmax(logits, axis=-1)
+
+        computed = []
+        for signal in self.signals:
+            if signal == "max_prob":
+                computed.append(tf.reduce_max(probs, axis=-1, keepdims=True))
+            elif signal == "entropy":
+                safe_probs = tf.maximum(probs, self.epsilon)
+                entropy = -tf.reduce_sum(
+                    safe_probs * tf.math.log(safe_probs), axis=-1, keepdims=True
+                )
+                computed.append(entropy)
+            elif signal == "energy":
+                computed.append(
+                    tf.reduce_logsumexp(logits, axis=-1, keepdims=True)
+                )
+            elif signal == "margin":
+                top_2 = tf.nn.top_k(probs, k=2).values  # (batch, 2)
+                margin = top_2[..., 0:1] - top_2[..., 1:2]
+                computed.append(margin)
+            elif signal == "nmd_norm":
+                if nmd is None:
+                    raise ValueError(
+                        "signal 'nmd_norm' requires an NMD vector input"
+                    )
+                nmd = tf.cast(nmd, tf.float32)
+                computed.append(
+                    tf.norm(nmd, ord="euclidean", axis=-1, keepdims=True)
+                )
+
+        return tf.concat(computed, axis=-1)
+
+    def compute_output_shape(self, input_shape):
+        if isinstance(input_shape, dict):
+            logits_shape = input_shape["logits"]
+        else:
+            logits_shape = input_shape[0]
+        return (logits_shape[0], len(self.signals))
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"signals": self.signals, "epsilon": self.epsilon})
+        return config
+
+
 # class ResidualBlock(tf.keras.layers.Layer):
 #     """The Residual block of ResNet models."""
 
