@@ -343,19 +343,28 @@ def _encode_nucleotide_batch(
 # ---------------------------------------------------------------------------
 # Crop generation and padding helpers
 # ---------------------------------------------------------------------------
-def _crop_starts(seq_len: int, crop_size: int, stride: int) -> list[int]:
+def _crop_starts(
+    seq_len: int, crop_size: int, stride: int, pad_to_max: bool = True
+) -> list[int]:
     """Return start indices for sliding-window crops.
 
     If ``stride`` is 0 or the sequence fits in one crop, a single start at 0 is
     returned. Otherwise the sequence is tiled with overlapping crops of
     ``crop_size``; a final tail window is appended when needed so the last base
     is covered.
+
+    When ``pad_to_max`` is ``False``, starts are aligned to ``stride`` without
+    the overlap-extension tail, so the final crop may be shorter than
+    ``crop_size``.
     """
     if stride == 0 or seq_len <= crop_size:
         return [0]
-    starts = list(range(0, seq_len - crop_size + 1, stride))
-    if starts[-1] + crop_size < seq_len:
-        starts.append(seq_len - crop_size)
+    if pad_to_max:
+        starts = list(range(0, seq_len - crop_size + 1, stride))
+        if starts[-1] + crop_size < seq_len:
+            starts.append(seq_len - crop_size)
+    else:
+        starts = list(range(0, seq_len, stride))
     return starts
 
 

@@ -731,3 +731,35 @@ class TestRuntimeCropLoader:
         np.testing.assert_array_equal(crops[0][0]["translated"], items[0][:, :10])
         # Tail crop for length 15 starts at 5 so it stays 10-long.
         np.testing.assert_array_equal(crops[-1][0]["translated"], items[1][:, 5:15])
+
+    def test_object_array_crops_keep_natural_length(self, tmp_path: Path):
+        path = tmp_path / "translated_obj_natural.npz"
+        items = [
+            np.arange(6 * 20, dtype=np.int32).reshape(6, 20) + 1,
+            np.arange(6 * 15, dtype=np.int32).reshape(6, 15) + 1,
+        ]
+        translated = np.empty(2, dtype=object)
+        translated[:] = items
+        labels = np.array([0, 1], dtype=np.int32)
+        translated_lengths = np.array([20, 15], dtype=np.int32)
+        np.savez(
+            path,
+            translated=translated,
+            labels=labels,
+            translated_lengths=translated_lengths,
+            codon_map="codon_id",
+        )
+
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=2,
+            crop_sizes=[10],
+            overlap=0.0,
+            pad_to_max=False,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 4
+        assert crops[0][0]["translated"].shape == (6, 10)
+        assert crops[-1][0]["translated"].shape == (6, 5)

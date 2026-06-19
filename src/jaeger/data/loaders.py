@@ -433,7 +433,9 @@ def _load_cropped_numpy_dataset(
         first_start, first_length = next(
             (
                 (start, min(crop_sizes[0], int(lengths[0]) - start))
-                for start in _crop_starts(int(lengths[0]), crop_sizes[0], strides[0])
+                for start in _crop_starts(
+                    int(lengths[0]), crop_sizes[0], strides[0], pad_to_max=pad_to_max
+                )
             ),
             None,
         )
@@ -457,7 +459,9 @@ def _load_cropped_numpy_dataset(
                 actual_len = int(lengths[i])
                 label = _encode_label(int(labels[i]))
                 for cs, stride in zip(crop_sizes, strides):
-                    for start in _crop_starts(actual_len, cs, stride):
+                    for start in _crop_starts(
+                        actual_len, cs, stride, pad_to_max=pad_to_max
+                    ):
                         length = min(cs, actual_len - start)
                         yield _sample_features(i, start, length), label
 
@@ -533,7 +537,7 @@ def _load_cropped_numpy_dataset(
     for i in range(n):
         actual_len = int(lengths[i])
         for cs, stride in zip(crop_sizes, strides):
-            for start in _crop_starts(actual_len, cs, stride):
+            for start in _crop_starts(actual_len, cs, stride, pad_to_max=pad_to_max):
                 length = min(cs, actual_len - start)
                 sample_indices.append(i)
                 starts_list.append(start)
