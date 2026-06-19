@@ -45,7 +45,7 @@ FROM_LAST_CHECKPOINT=false
 FORCE=true
 ONLY_HEADS=false
 MIXED_PRECISION=true
-XLA=true
+XLA=false
 WRITE_WINDOW_SCORES=false
 OVERWRITE=false
 
@@ -75,11 +75,17 @@ PIPELINE_LOG="$(dirname "$SINGULARITY_METADATA")/${TEST}_pipeline.log"
 # ============================================================================
 
 run_in_container() {
-    singularity run --bind /home/wijesekary/jaeger --nv "$CONTAINER" "$@"
+    singularity run \
+        --bind /home/wijesekary/jaeger \
+        --bind "$PROJECT_ROOT/src/jaeger:/usr/local/lib/python3.12/site-packages/jaeger" \
+        --nv "$CONTAINER" "$@"
 }
 
 exec_in_container() {
-    singularity exec --bind /home/wijesekary/jaeger --nv "$CONTAINER" "$@"
+    singularity exec \
+        --bind /home/wijesekary/jaeger \
+        --bind "$PROJECT_ROOT/src/jaeger:/usr/local/lib/python3.12/site-packages/jaeger" \
+        --nv "$CONTAINER" "$@"
 }
 
 log() {
@@ -152,7 +158,10 @@ srun bash -lc "
 . /etc/profile.d/modules.sh
 module load singularity/3.11.3
 echo \"[\\\"\$(date)\\\"] Task \$SLURM_PROCID on node \$SLURMD_NODENAME: GPUs \$CUDA_VISIBLE_DEVICES, job \$SLURM_JOB_ID\" >&2
-singularity run --bind /home/wijesekary/jaeger --nv $CONTAINER jaeger train $TRAIN_FLAGS
+singularity run \
+    --bind /home/wijesekary/jaeger \
+    --bind "$PROJECT_ROOT/src/jaeger:/usr/local/lib/python3.12/site-packages/jaeger" \
+    --nv $CONTAINER jaeger train $TRAIN_FLAGS
 " 2>> "$PIPELINE_LOG" || die "Training failed"
 
 # ============================================================================

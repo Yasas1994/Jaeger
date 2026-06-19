@@ -642,7 +642,13 @@ def train_fragment_core(**kwargs):
         # ============= test final model =========================
         logger.info("testing the final model")
         models.get("jaeger_model").trainable = False
-        models.get("jaeger_model").predict(train_data.get("validation").take(100))
+        # Classifier validation data is unloaded earlier; prefer reliability
+        # validation data when available.
+        test_val_data = rel_train_data.get("validation") or train_data.get("validation")
+        if test_val_data is not None:
+            models.get("jaeger_model").predict(test_val_data.take(100))
+        else:
+            logger.info("no validation data available for final test, skipping")
         logger.info("training completed!")
 
         # ============= saving ===================================

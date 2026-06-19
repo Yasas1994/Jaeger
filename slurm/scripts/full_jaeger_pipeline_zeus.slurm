@@ -140,7 +140,10 @@ log "Training Jaeger model with flags: $TRAIN_FLAGS"
 
 srun bash -lc "
 echo \"[\$(date)] Task \$SLURM_PROCID on node \$SLURMD_NODENAME: GPU \$CUDA_VISIBLE_DEVICES, job \$SLURM_JOB_ID\" >&2
-apptainer run --bind /mnt/beegfs --nv $CONTAINER jaeger train $TRAIN_FLAGS
+apptainer run \
+    --bind /mnt/beegfs \
+    --bind "$PROJECT_ROOT/src/jaeger:/usr/local/lib/python3.12/site-packages/jaeger" \
+    --nv $CONTAINER jaeger train $TRAIN_FLAGS
 " 2>> "$PIPELINE_LOG" || die "Training failed"
 
 # ============================================================================
