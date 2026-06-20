@@ -1553,6 +1553,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.kernel_initializer = kwargs.pop("kernel_initializer", "glorot_uniform")
         self.bias_initializer = kwargs.pop("bias_initializer", "zeros")
         self.norm_type = kwargs.pop("norm_type", "masked_batchnorm").lower()
+        self.alpha_init = kwargs.pop("alpha_init", 0.5)
 
         if return_nmd and self.norm_type != "masked_batchnorm":
             raise ValueError(
@@ -1587,7 +1588,7 @@ class ResidualBlock(tf.keras.layers.Layer):
             if self.norm_type == "masked_layernorm":
                 return MaskedLayerNormalization(name=name)
             if self.norm_type == "masked_dyt":
-                return MaskedDYT(name=name)
+                return MaskedDYT(name=name, alpha_init=self.alpha_init)
             raise ValueError(f"Unsupported norm_type: {self.norm_type}")
 
         # first conv
@@ -1697,6 +1698,7 @@ class ResidualBlock(tf.keras.layers.Layer):
                 ),
                 "return_nmd": self.return_nmd,
                 "norm_type": self.norm_type,
+                "alpha_init": self.alpha_init,
                 "filters": self.filters,
                 "kernel_size": self.kernel_size,
                 "strides": self.strides,
@@ -2099,6 +2101,7 @@ class AxialAttention(tf.keras.layers.Layer):
         num_blocks=1,
         epsilon=1e-6,
         norm_type="layernorm",
+        alpha_init=0.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -2109,6 +2112,7 @@ class AxialAttention(tf.keras.layers.Layer):
         self.num_blocks = num_blocks
         self.epsilon = epsilon
         self.norm_type = norm_type.lower()
+        self.alpha_init = alpha_init
 
         self.supports_masking = True
 
@@ -2122,7 +2126,7 @@ class AxialAttention(tf.keras.layers.Layer):
             if self.norm_type == "masked_layernorm":
                 return MaskedLayerNormalization(epsilon=epsilon, name=name)
             if self.norm_type == "masked_dyt":
-                return MaskedDYT(name=name)
+                return MaskedDYT(name=name, alpha_init=self.alpha_init)
             if self.norm_type == "masked_batchnorm":
                 return MaskedBatchNorm(epsilon=epsilon, name=name)
             raise ValueError(f"Unsupported norm_type: {self.norm_type}")
@@ -2182,6 +2186,7 @@ class AxialAttention(tf.keras.layers.Layer):
                 "num_blocks": self.num_blocks,
                 "epsilon": self.epsilon,
                 "norm_type": self.norm_type,
+                "alpha_init": self.alpha_init,
             }
         )
         return cfg
