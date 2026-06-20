@@ -325,24 +325,14 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
             mask = tf.cast(mask, inputs.dtype)
             mask = tf.expand_dims(mask, -1)
             mask = tf.stop_gradient(mask)
-
-            # Compute the mean over unmasked positions
-            masked_inputs = inputs * mask
-            mask_sum = tf.reduce_sum(mask, axis=[1, 2], keepdims=True)
-            mean = tf.reduce_sum(masked_inputs, axis=-1, keepdims=True) / (
-                mask_sum + self.epsilon
-            )
-
-            # Compute the variance over unmasked positions
-            squared_diff = tf.square((inputs - mean) * mask)
-            variance = tf.reduce_sum(squared_diff, axis=-1, keepdims=True) / (
-                mask_sum + self.epsilon
-            )
+            # Zero masked positions so they do not affect per-position channel stats
+            x = inputs * mask
         else:
-            mean, variance = tf.nn.moments(inputs, axes=-1, keepdims=True)
+            x = inputs
 
-        # Normalize the inputs
-        normalized = (inputs - mean) / tf.sqrt(variance + self.epsilon)
+        # Normalize over the channel axis (last axis), as in standard layer norm.
+        mean, variance = tf.nn.moments(x, axes=-1, keepdims=True)
+        normalized = (x - mean) / tf.sqrt(variance + self.epsilon)
 
         # Apply scale and center
         if self.scale:

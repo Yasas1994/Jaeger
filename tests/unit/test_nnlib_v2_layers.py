@@ -83,6 +83,30 @@ class TestMaskedBatchNorm:
         assert out.shape == x.shape
 
 
+class TestMaskedLayerNormalization:
+    def test_output_shape(self):
+        x = tf.random.normal((2, 6, 32, 4))
+        mask = tf.ones((2, 6, 32), dtype=tf.bool)
+        layer = layers.MaskedLayerNormalization()
+        out = layer(x, mask=mask)
+        assert out.shape == x.shape
+
+    def test_masked_positions_zero_and_unmasked_normalized(self):
+        x = tf.random.normal((2, 4, 8, 16), stddev=5.0)
+        mask = tf.ones((2, 4, 8), dtype=tf.bool)
+        mask = tf.tensor_scatter_nd_update(mask, [[0, 0, 0], [1, 2, 3]], [False, False])
+
+        layer = layers.MaskedLayerNormalization(epsilon=1e-3)
+        out = layer(x, mask=mask)
+
+        masked_values = tf.boolean_mask(out, ~mask)
+        unmasked_values = tf.boolean_mask(out, mask)
+
+        assert tf.reduce_max(tf.abs(masked_values)) < 1e-5
+        assert abs(float(tf.reduce_mean(unmasked_values))) < 0.05
+        assert abs(float(tf.math.reduce_std(unmasked_values)) - 1.0) < 0.05
+
+
 class TestMaskedGlobalAvgPooling:
     def test_output_shape(self):
         x = tf.random.normal((2, 6, 32, 4))
