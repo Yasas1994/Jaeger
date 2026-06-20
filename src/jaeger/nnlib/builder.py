@@ -450,9 +450,7 @@ class DynamicModelBuilder:
 
             # Decide whether we can compute the bias now or need to defer/skip.
             reliability_train_paths = (
-                self._get_reliability_fragment_paths()
-                .get("train", {})
-                .get("paths", [])
+                self._get_reliability_fragment_paths().get("train", {}).get("paths", [])
             )
             reliability_data_exists = (
                 bool(reliability_train_paths)
@@ -673,17 +671,13 @@ class DynamicModelBuilder:
                 elif "label" in data:
                     labels = data["label"]
                 else:
-                    label_keys = [
-                        k for k in data.files if k.startswith("labels_")
-                    ]
+                    label_keys = [k for k in data.files if k.startswith("labels_")]
                     if not label_keys:
                         raise ValueError(
                             f"NPZ file {path!r} contains no 'labels', 'label', "
                             f"or sharded 'labels_*' arrays."
                         )
-                    labels = np.concatenate(
-                        [data[k] for k in sorted(label_keys)]
-                    )
+                    labels = np.concatenate([data[k] for k in sorted(label_keys)])
                 labels = np.asarray(labels)
                 if labels.ndim > 1:
                     labels = np.argmax(labels, axis=-1)
@@ -718,9 +712,7 @@ class DynamicModelBuilder:
         )
         bias = self._get_bias(
             data_path,
-            kind="sigmoid"
-            if "binary" in self.loss_reliability_name
-            else "softmax",
+            kind="sigmoid" if "binary" in self.loss_reliability_name else "softmax",
             label_map=reliability_label_map,
         )
 
@@ -733,11 +725,11 @@ class DynamicModelBuilder:
             raise ValueError(
                 "Cannot set reliability bias: no Dense layer found in reliability head"
             )
-        bias_arr = np.broadcast_to(np.asarray(bias, dtype=np.float32), (dense_layer.units,))
-        dense_layer.bias.assign(bias_arr)
-        logger.info(
-            f"Updated reliability head bias from generated data: {data_path}"
+        bias_arr = np.broadcast_to(
+            np.asarray(bias, dtype=np.float32), (dense_layer.units,)
         )
+        dense_layer.bias.assign(bias_arr)
+        logger.info(f"Updated reliability head bias from generated data: {data_path}")
 
     def _build_block(
         self,
