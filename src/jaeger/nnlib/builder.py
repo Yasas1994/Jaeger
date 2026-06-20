@@ -452,8 +452,9 @@ class DynamicModelBuilder:
             reliability_train_paths = (
                 self._get_reliability_fragment_paths().get("train", {}).get("paths", [])
             )
+            reliability_data_configured = bool(reliability_train_paths)
             reliability_data_exists = (
-                bool(reliability_train_paths)
+                reliability_data_configured
                 and Path(reliability_train_paths[-1]).exists()
             )
 
@@ -466,13 +467,21 @@ class DynamicModelBuilder:
                 reliability_cfg.pop("bias_initializer", None)
                 for layer in reliability_cfg.get("hidden_layers", []):
                     layer.get("config", {}).pop("bias_initializer", None)
-            elif not reliability_data_exists:
+            elif reliability_data_configured and not reliability_data_exists:
                 logger.warning(
-                    "Reliability training data is missing and "
+                    "Reliability training data is configured but missing and "
                     "--generate_reliability_data is not set. "
                     "The reliability model will not be constructed."
                 )
                 build_reliability_head = False
+            elif not reliability_data_configured:
+                logger.info(
+                    "No reliability training data is configured; "
+                    "building reliability head with default bias."
+                )
+                reliability_cfg.pop("bias_initializer", None)
+                for layer in reliability_cfg.get("hidden_layers", []):
+                    layer.get("config", {}).pop("bias_initializer", None)
 
             if build_reliability_head:
                 inputs = tf.keras.Input(
