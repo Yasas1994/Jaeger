@@ -125,6 +125,22 @@ class TestAxialAttention:
         out = layer(x)
         assert out.shape == x.shape
 
+    @pytest.mark.parametrize(
+        "norm_type",
+        ["layernorm", "masked_layernorm", "masked_dyt", "masked_batchnorm"],
+    )
+    def test_output_shape_with_norm_type(self, norm_type):
+        x = tf.random.normal((2, 6, 32, 8))
+        mask = tf.ones((2, 6, 32), dtype=tf.bool)
+        layer = layers.AxialAttention(
+            embed_dim=8,
+            num_heads=2,
+            feed_forward_dim=16,
+            norm_type=norm_type,
+        )
+        out = layer(x, mask=mask)
+        assert out.shape == x.shape
+
 
 class TestPositionEmbedding:
     def test_output_shape(self):

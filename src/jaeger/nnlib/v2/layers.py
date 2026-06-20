@@ -2084,6 +2084,10 @@ class AxialAttention(tf.keras.layers.Layer):
         feed_forward_dim: FFN hidden dimension.
         dropout_rate: Dropout rate.
         num_blocks: Number of (length-attn + frame-attn) blocks to stack.
+        epsilon: Small constant for normalization layers.
+        norm_type: Normalization layer to use after each (length + frame) block.
+            One of ``layernorm``, ``masked_layernorm``, ``masked_dyt``,
+            ``masked_batchnorm``.
     """
 
     def __init__(
@@ -2094,6 +2098,7 @@ class AxialAttention(tf.keras.layers.Layer):
         dropout_rate=0.1,
         num_blocks=1,
         epsilon=1e-6,
+        norm_type="layernorm",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -2103,10 +2108,24 @@ class AxialAttention(tf.keras.layers.Layer):
         self.dropout_rate = dropout_rate
         self.num_blocks = num_blocks
         self.epsilon = epsilon
+        self.norm_type = norm_type.lower()
+
+        self.supports_masking = True
 
         self.length_attns = []
         self.frame_attns = []
-        self.layer_norms = []
+        self.norms = []
+
+        def _make_norm(name):
+            if self.norm_type in ("layernorm", "layer_normalization"):
+                return tf.keras.layers.LayerNormalization(epsilon=epsilon, name=name)
+            if self.norm_type == "masked_layernorm":
+                return MaskedLayerNormalization(epsilon=epsilon, name=name)
+            if self.norm_type == "masked_dyt":
+                return MaskedDYT(name=name)
+            if self.norm_type == "masked_batchnorm":
+                return MaskedBatchNorm(epsilon=epsilon, name=name)
+            raise ValueError(f"Unsupported norm_type: {self.norm_type}")
 
         for i in range(num_blocks):
             # Attention over length (intra-frame) — uses existing TransformerEncoder logic
@@ -2120,7 +2139,7 @@ class AxialAttention(tf.keras.layers.Layer):
                     name=f"length_attn_{i}",
                 )
             )
-            self.layer_norms.append(tf.keras.layers.LayerNormalization(epsilon=epsilon))
+            self.norms.append(_make_norm(name=f"{self.norm_type}_post_{i}"))
 
             # Attention over frames (cross-frame)
             self.frame_attns.append(
@@ -2134,15 +2153,20 @@ class AxialAttention(tf.keras.layers.Layer):
                 )
             )
 
-    def call(self, inputs, training=False):
+    def call(self, inputs, mask=None, training=False):
         x = inputs
-        for length_attn, frame_attn, layer_norm in zip(
-            self.length_attns, self.frame_attns, self.layer_norms
+        for length_attn, frame_attn, norm in zip(
+            self.length_attns, self.frame_attns, self.norms
         ):
             residual = x
             x = length_attn(x, training=training)
             x = frame_attn(x, training=training)
-            x = layer_norm(x, training=training)
+            if self.norm_type == "masked_batchnorm":
+                x = norm(x, training=training)
+            elif self.norm_type in ("masked_layernorm", "masked_dyt"):
+                x = norm(x, mask=mask)
+            else:
+                x = norm(x, training=training)
             x += residual
 
         return x
@@ -2156,6 +2180,8 @@ class AxialAttention(tf.keras.layers.Layer):
                 "feed_forward_dim": self.feed_forward_dim,
                 "dropout_rate": self.dropout_rate,
                 "num_blocks": self.num_blocks,
+                "epsilon": self.epsilon,
+                "norm_type": self.norm_type,
             }
         )
         return cfg
