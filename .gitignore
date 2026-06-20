@@ -48,6 +48,7 @@ compress*
 setup_remote_office.sh
 TRAINING_STATUS.md
 DATA_FORMAT_PROPOSAL.md
+ZEUS_*.md
 
 # CLI smoke-test outputs
 test_cli/outputs/
@@ -61,12 +62,20 @@ kimi-export-*.md
 *.fxi
 
 # Local/test train configs
-train_config/nn_config_500bp_*_test.yaml
-train_config/nn_config_500bp_*_zeus_v2.yaml
+train_config/*
 
 # Git worktrees
 .worktrees/
 
 # Superpowers brainstorming sessions
 .superpowers/
+docs/superpowers
 
+# agent skills
+.agents/
+
+#slurm scripts
+slurm/
+
+#singularity containers
+singularity/*.sif

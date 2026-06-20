@@ -312,6 +312,9 @@ def train_fragment_core(**kwargs):
         config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
         config["force"] = kwargs.get("force")
         config["use_xla"] = kwargs.get("xla", False)
+        config["generate_reliability_data"] = kwargs.get(
+            "generate_reliability_data", False
+        )
         if config["use_xla"]:
             logger.info("Using XLA JIT compilation for training")
 
@@ -582,6 +585,13 @@ def train_fragment_core(**kwargs):
             logger.info(
                 "Reliability data generated; switching reliability loader to numpy"
             )
+
+            if models.get("reliability_head") is not None:
+                rel_train_paths = _rel_train_data.get("train", {}).get("paths", [])
+                if rel_train_paths:
+                    builder._set_reliability_bias(
+                        models["reliability_head"], rel_train_paths[-1]
+                    )
 
         # ============== reliability model ========================
         builder.compile_model(models, train_branch="reliability")

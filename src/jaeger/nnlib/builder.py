@@ -133,6 +133,9 @@ class DynamicModelBuilder:
         )
         self._force: bool = bool(config.get("force", False))
         self.use_xla: bool = bool(config.get("use_xla", False))
+        self.generate_reliability_data: bool = bool(
+            config.get("generate_reliability_data", False)
+        )
         self._checkpoints: dict[str, Path] = {}
 
         self.classifier_out_dim: int = int(self.model_cfg.get("classifier_out_dim", 0))
@@ -445,54 +448,85 @@ class DynamicModelBuilder:
                     f"Set input_shape to None or omit it when using mode={mode!r}."
                 )
 
-            inputs = tf.keras.Input(
-                shape=(reliability_input_dim,), name="reliability_input"
+            # Decide whether we can compute the bias now or need to defer/skip.
+            reliability_train_paths = (
+                self._get_reliability_fragment_paths()
+                .get("train", {})
+                .get("paths", [])
             )
-            x_reliability = self._build_block(
-                inputs, reliability_cfg, prefix="reliability"
-            )
-            models["reliability_head"] = tf.keras.Model(
-                inputs=inputs, outputs=x_reliability, name="reliability_head"
+            reliability_data_exists = (
+                bool(reliability_train_paths)
+                and Path(reliability_train_paths[-1]).exists()
             )
 
-            def _reliability_from_rep(rep_out):
-                if mode == "nmd_plus_signals":
-                    emb = rep_out[0]
-                    nmd_ = rep_out[1]
-                    logits = models["classification_head"](emb)
-                    sig = signal_layer({"logits": logits, "nmd": nmd_})
-                    return tf.keras.layers.Concatenate(axis=-1)([nmd_, sig])
-                return rep_out[1]
+            build_reliability_head = True
+            if self.generate_reliability_data:
+                logger.info(
+                    "Deferring reliability head bias initialization until "
+                    "after OOD data generation."
+                )
+                reliability_cfg.pop("bias_initializer", None)
+                for layer in reliability_cfg.get("hidden_layers", []):
+                    layer.get("config", {}).pop("bias_initializer", None)
+            elif not reliability_data_exists:
+                logger.warning(
+                    "Reliability training data is missing and "
+                    "--generate_reliability_data is not set. "
+                    "The reliability model will not be constructed."
+                )
+                build_reliability_head = False
 
-            x = models["reliability_head"](_reliability_from_rep(rep_out))
-            models["jaeger_reliability"] = tf.keras.Model(
-                inputs=models["rep_model"].input, outputs=x, name="Jaeger_reliability"
-            )
-            try:
-                if self._checkpoints.get("reliability", {}).get("path", False):
+            if build_reliability_head:
+                inputs = tf.keras.Input(
+                    shape=(reliability_input_dim,), name="reliability_input"
+                )
+                x_reliability = self._build_block(
+                    inputs, reliability_cfg, prefix="reliability"
+                )
+                models["reliability_head"] = tf.keras.Model(
+                    inputs=inputs, outputs=x_reliability, name="reliability_head"
+                )
+
+                def _reliability_from_rep(rep_out):
+                    if mode == "nmd_plus_signals":
+                        emb = rep_out[0]
+                        nmd_ = rep_out[1]
+                        logits = models["classification_head"](emb)
+                        sig = signal_layer({"logits": logits, "nmd": nmd_})
+                        return tf.keras.layers.Concatenate(axis=-1)([nmd_, sig])
+                    return rep_out[1]
+
+                x = models["reliability_head"](_reliability_from_rep(rep_out))
+                models["jaeger_reliability"] = tf.keras.Model(
+                    inputs=models["rep_model"].input,
+                    outputs=x,
+                    name="Jaeger_reliability",
+                )
+                try:
+                    if self._checkpoints.get("reliability", {}).get("path", False):
+                        models["jaeger_reliability"].load_weights(
+                            self._checkpoints.get("reliability").get("path"),
+                            skip_mismatch=True,
+                        )
+                        logger.info(
+                            f"Loaded reliability model weights from "
+                            f"{self._checkpoints.get('reliability').get('path')}"
+                        )
+                except Exception:
+                    logger.warning(
+                        "could not load the weights to reliability model from checkpoint. "
+                        "trying to load weights partially"
+                    )
                     models["jaeger_reliability"].load_weights(
                         self._checkpoints.get("reliability").get("path"),
                         skip_mismatch=True,
                     )
-                    logger.info(
-                        f"Loaded reliability model weights from "
-                        f"{self._checkpoints.get('reliability').get('path')}"
-                    )
-            except Exception:
-                logger.warning(
-                    "could not load the weights to reliability model from checkpoint. "
-                    "trying to load weights partially"
-                )
-                models["jaeger_reliability"].load_weights(
-                    self._checkpoints.get("reliability").get("path"),
-                    skip_mismatch=True,
-                )
-                self._checkpoints["reliability"] = {
-                    "path": None,
-                    "epoch": 0,
-                    "loss": None,
-                    "is_converged": False,
-                }
+                    self._checkpoints["reliability"] = {
+                        "path": None,
+                        "epoch": 0,
+                        "loss": None,
+                        "is_converged": False,
+                    }
 
         # === 5. COMBINED MODEL ===
         rep_out = models["rep_model"].output
@@ -615,7 +649,6 @@ class DynamicModelBuilder:
 
     def _get_bias(self, data_path: str, kind: str, label_map: list) -> np.ndarray:
         """Compute class-frequency bias for the final layer."""
-        import polars as pl
 
         def _sigmoid(f: dict):
             n, p = f.values()
@@ -632,10 +665,40 @@ class DynamicModelBuilder:
                 _tmp[label_map[k]] += v
             return _tmp
 
-        df = pl.read_csv(data_path, columns=[0], has_header=False)
-        counts_dict = df["column_1"].value_counts().to_dict(as_series=False)
-        counts_dict = dict(zip(counts_dict["column_1"], counts_dict["count"]))
-        counts_dict = {k: counts_dict[k] for k in sorted(list(counts_dict.keys()))}
+        def _load_counts(path: str) -> dict[int, int]:
+            if path.endswith(".npz"):
+                data = np.load(path, allow_pickle=True)
+                if "labels" in data:
+                    labels = data["labels"]
+                elif "label" in data:
+                    labels = data["label"]
+                else:
+                    label_keys = [
+                        k for k in data.files if k.startswith("labels_")
+                    ]
+                    if not label_keys:
+                        raise ValueError(
+                            f"NPZ file {path!r} contains no 'labels', 'label', "
+                            f"or sharded 'labels_*' arrays."
+                        )
+                    labels = np.concatenate(
+                        [data[k] for k in sorted(label_keys)]
+                    )
+                labels = np.asarray(labels)
+                if labels.ndim > 1:
+                    labels = np.argmax(labels, axis=-1)
+                labels = labels.ravel()
+                unique, counts = np.unique(labels, return_counts=True)
+                return {int(k): int(v) for k, v in zip(unique, counts)}
+            else:
+                import polars as pl
+
+                df = pl.read_csv(path, columns=[0], has_header=False)
+                counts = df["column_1"].value_counts().to_dict(as_series=False)
+                counts = dict(zip(counts["column_1"], counts["count"]))
+                return {k: counts[k] for k in sorted(list(counts.keys()))}
+
+        counts_dict = _load_counts(data_path)
         if len(label_map) > 0:
             counts_dict = _correct_label_map(counts_dict, label_map)
         match kind:
@@ -643,6 +706,38 @@ class DynamicModelBuilder:
                 return _softmax(counts_dict)
             case "sigmoid":
                 return _sigmoid(counts_dict)
+
+    def _set_reliability_bias(self, model: tf.keras.Model, data_path: str) -> None:
+        """Recompute and assign class-frequency bias to the reliability head.
+
+        This is used when the reliability head was built before the training
+        data existed (e.g. ``--generate_reliability_data``).
+        """
+        reliability_label_map = self.model_cfg.get("string_processor", {}).get(
+            "reliability_labels_map", []
+        )
+        bias = self._get_bias(
+            data_path,
+            kind="sigmoid"
+            if "binary" in self.loss_reliability_name
+            else "softmax",
+            label_map=reliability_label_map,
+        )
+
+        dense_layer = None
+        for layer in reversed(model.layers):
+            if isinstance(layer, tf.keras.layers.Dense):
+                dense_layer = layer
+                break
+        if dense_layer is None:
+            raise ValueError(
+                "Cannot set reliability bias: no Dense layer found in reliability head"
+            )
+        bias_arr = np.broadcast_to(np.asarray(bias, dtype=np.float32), (dense_layer.units,))
+        dense_layer.bias.assign(bias_arr)
+        logger.info(
+            f"Updated reliability head bias from generated data: {data_path}"
+        )
 
     def _build_block(
         self,
