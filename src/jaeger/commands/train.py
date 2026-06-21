@@ -54,16 +54,19 @@ def _resolve_numpy_crop_params(
     """
     if split == "validation":
         crop_sizes = string_processor_config.get("validation_crop_sizes")
-        if crop_sizes is None:
-            crop_size = string_processor_config.get("crop_size")
-            if crop_size is not None:
-                crop_sizes = [crop_size]
         strides = string_processor_config.get("validation_strides")
         overlap = string_processor_config.get("validation_overlap")
     else:
         crop_sizes = string_processor_config.get("crop_sizes")
         strides = string_processor_config.get("strides")
         overlap = string_processor_config.get("overlap")
+
+    # Fallback to a single crop_size if crop_sizes is not provided.
+    if crop_sizes is None:
+        crop_size = string_processor_config.get("crop_size")
+        if crop_size is not None:
+            crop_sizes = [crop_size]
+
     return crop_sizes, strides, overlap
 
 
