@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import keras
 import numpy as np
 import pytest
@@ -476,3 +478,52 @@ class TestReliabilityBiasInitialization:
 
         assert "reliability_head" not in models
         assert "jaeger_reliability" not in models
+
+
+class TestCheckpointConvergence:
+    """Tests for convergence marker handling in checkpoint metadata."""
+
+    @pytest.fixture
+    def builder(self, tmp_path):
+        builder = DynamicModelBuilder.__new__(DynamicModelBuilder)
+        builder.output_dir = tmp_path / "output"
+        builder.output_dir.mkdir(parents=True, exist_ok=True)
+        return builder
+
+    def test_converged_marker_detected(self, builder, tmp_path):
+        checkpoint_dir = tmp_path / "classifier"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "epoch:03-loss:1.23.weights.h5").write_text("dummy")
+        (checkpoint_dir / "converged.json").write_text(
+            json.dumps({"is_converged": True, "branch": "classifier", "epoch": 3})
+        )
+        meta = builder.get_latest_h5_with_metadata(checkpoint_dir)
+        assert meta["is_converged"] is True
+        assert meta["epoch"] == 3
+
+    def test_no_marker_not_converged(self, builder, tmp_path):
+        checkpoint_dir = tmp_path / "classifier"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "epoch:05-loss:0.99.weights.h5").write_text("dummy")
+        meta = builder.get_latest_h5_with_metadata(checkpoint_dir)
+        assert meta["is_converged"] is False
+        assert meta["epoch"] == 5
+
+    def test_marker_without_checkpoint(self, builder, tmp_path):
+        checkpoint_dir = tmp_path / "classifier"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "converged.json").write_text(
+            json.dumps({"is_converged": True, "branch": "classifier", "epoch": 0})
+        )
+        meta = builder.get_latest_h5_with_metadata(checkpoint_dir)
+        assert meta["is_converged"] is True
+        assert meta["path"] is None
+
+    def test_malformed_marker_defaults_to_not_converged(self, builder, tmp_path):
+        checkpoint_dir = tmp_path / "classifier"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "epoch:02-loss:1.00.weights.h5").write_text("dummy")
+        (checkpoint_dir / "converged.json").write_text("not json")
+        meta = builder.get_latest_h5_with_metadata(checkpoint_dir)
+        assert meta["is_converged"] is False
+        assert meta["epoch"] == 2
