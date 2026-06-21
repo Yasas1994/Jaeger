@@ -527,3 +527,33 @@ class TestCheckpointConvergence:
         meta = builder.get_latest_h5_with_metadata(checkpoint_dir)
         assert meta["is_converged"] is False
         assert meta["epoch"] == 2
+
+    def test_branch_checkpoint_dirs_scanned_even_when_not_in_callbacks(self, tmp_path):
+        """Classifier, reliability and projection checkpoint dirs are always scanned."""
+        classifier_dir = tmp_path / "checkpoints" / "classifier"
+        reliability_dir = tmp_path / "checkpoints" / "reliability"
+        projection_dir = tmp_path / "checkpoints" / "projection"
+        for directory in (classifier_dir, reliability_dir, projection_dir):
+            directory.mkdir(parents=True)
+            (directory / "epoch:05-loss:1.23.weights.h5").write_text("dummy")
+
+        builder = DynamicModelBuilder.__new__(DynamicModelBuilder)
+        builder.output_dir = tmp_path / "output"
+        builder.output_dir.mkdir(parents=True, exist_ok=True)
+        builder.train_cfg = {
+            "classifier_dir": str(classifier_dir),
+            "reliability_dir": str(reliability_dir),
+            "projection_dir": str(projection_dir),
+            "projection_epochs": 2,
+            "callbacks": {"directories": [str(classifier_dir)]},
+        }
+        builder.reliability_out_dim = 1
+        builder._from_last_checkpoint = True
+        builder._force = False
+        builder._checkpoints = {}
+        builder.cfg = {"training": builder.train_cfg}
+        builder._prepare_checkpoint_dirs()
+
+        assert builder._checkpoints["classifier"]["epoch"] == 5
+        assert builder._checkpoints["reliability"]["epoch"] == 5
+        assert builder._checkpoints["projection"]["epoch"] == 5

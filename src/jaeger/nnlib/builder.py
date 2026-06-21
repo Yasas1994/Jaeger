@@ -197,16 +197,45 @@ class DynamicModelBuilder:
         if not config:
             config = self.cfg
         callbacks_cfg = config.get("training", {}).get("callbacks", {})
-        directories = callbacks_cfg.get("directories", []) or []
+        directories = list(callbacks_cfg.get("directories", []) or [])
 
-        should_exit = False
+        # Always include the canonical branch checkpoint directories so that
+        # resuming can find classifier, reliability, and projection checkpoints
+        # even when they are not explicitly listed in callbacks.directories.
+        branch_dirs: dict[str, Path] = {}
+        classifier_dir = self.train_cfg.get("classifier_dir")
+        if classifier_dir:
+            branch_dirs["classifier"] = Path(classifier_dir)
+        reliability_dir = self.train_cfg.get("reliability_dir")
+        if reliability_dir and self.reliability_out_dim:
+            branch_dirs["reliability"] = Path(reliability_dir)
+        projection_dir = self.train_cfg.get("projection_dir")
+        if (
+            not projection_dir
+            and classifier_dir
+            and self.train_cfg.get("projection_epochs", 0) > 0
+        ):
+            projection_dir = Path(classifier_dir).parent / "projection"
+        if projection_dir:
+            branch_dirs["projection"] = Path(projection_dir)
+
+        # Merge callback directories. If a callback directory matches a branch
+        # directory, use the branch name as the checkpoint key.
+        dir_map = dict(branch_dirs)
         for dir_str in directories:
             path = Path(dir_str)
+            key = path.name
+            for branch, branch_path in branch_dirs.items():
+                if path == branch_path:
+                    key = branch
+                    break
+            dir_map[key] = path
+
+        should_exit = False
+        for key, path in dir_map.items():
             if path.exists():
                 if self._from_last_checkpoint:
-                    self._checkpoints[path.name] = self.get_latest_h5_with_metadata(
-                        path
-                    )
+                    self._checkpoints[key] = self.get_latest_h5_with_metadata(path)
                 elif self._force:
                     shutil.rmtree(path)
                 else:
