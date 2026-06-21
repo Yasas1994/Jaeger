@@ -347,7 +347,12 @@ class AvailableModels:
         models: DefaultDict[str, dict] = defaultdict(dict)
 
         for path in self.paths:
-            for model_dir in path.rglob("model"):
+            model_dirs = [p for p in path.rglob("model") if p.is_dir()]
+            # Also allow the user to pass the model directory directly.
+            if path.name == "model" and path.is_dir():
+                model_dirs.append(path)
+
+            for model_dir in model_dirs:
                 if not model_dir.is_dir():
                     continue
 

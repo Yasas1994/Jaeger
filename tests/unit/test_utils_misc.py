@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from decimal import Decimal
 from pathlib import Path
-
-import pytest
 
 from jaeger.utils import misc
 
@@ -79,6 +76,32 @@ class TestAvailableModels:
     def test_empty_directory(self, tmp_path: Path):
         am = misc.AvailableModels(tmp_path)
         assert am.info == {}
+
+    def test_scan_model_directory_given_directly(self, tmp_path: Path):
+        model_dir = tmp_path / "experiment" / "model"
+        model_dir.mkdir(parents=True)
+        graph_dir = model_dir / "test_model_graph"
+        graph_dir.mkdir()
+        (model_dir / "test_model_classes.yaml").write_text("classes:\n")
+        (model_dir / "test_model_project.yaml").write_text("project:\n")
+
+        am = misc.AvailableModels(model_dir)
+        assert "test_model" in am.info
+        assert am.info["test_model"]["graph"] == graph_dir
+
+    def test_scan_separates_classification_and_embedding_graphs(self, tmp_path: Path):
+        model_dir = tmp_path / "experiment" / "model"
+        model_dir.mkdir(parents=True)
+        class_graph = model_dir / "test_model_graph"
+        class_graph.mkdir()
+        embed_graph = model_dir / "test_model_embedding_graph"
+        embed_graph.mkdir()
+        (model_dir / "test_model_classes.yaml").write_text("classes:\n")
+        (model_dir / "test_model_project.yaml").write_text("project:\n")
+
+        am = misc.AvailableModels(tmp_path / "experiment")
+        assert am.info["test_model"]["graph"] == class_graph
+        assert am.info["test_model_embedding"]["graph"] == embed_graph
 
 
 class TestGetModelId:

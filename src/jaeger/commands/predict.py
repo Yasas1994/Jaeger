@@ -38,9 +38,42 @@ def run_core(**kwargs):
         # Use provided model path
         info = AvailableModels(path=USER_MODEL_PATH).info
         model_paths = USER_MODEL_PATH
-        model_name = next(iter(info))
+
+        if not info:
+            print(f"No model found in {model_paths}", file=sys.stderr)
+            sys.exit(1)
+
+        # A model directory may contain both a classification graph
+        # (e.g. *_fragment_graph) and an embedding-only graph
+        # (e.g. *_fragment_embedding_graph). Predict needs the classification
+        # model, which is the one with classes, project, and weights files.
+        classification_models = {
+            name: meta
+            for name, meta in info.items()
+            if meta.get("graph") is not None and meta.get("classes") is not None
+        }
+        if not classification_models:
+            print(
+                f"No classification model found in {model_paths}. "
+                "Expected a *_graph directory, *_classes.yaml, "
+                "*_project.yaml, and *.weights.h5 files.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if len(classification_models) > 1:
+            # Prefer the non-embedding model if both are present.
+            non_embedding = {
+                name: meta
+                for name, meta in classification_models.items()
+                if not name.endswith("_embedding")
+            }
+            if non_embedding:
+                classification_models = non_embedding
+
+        model_name = next(iter(classification_models))
         model_id = get_model_id(model_name)
-        model_info = info[model_name]
+        model_info = classification_models[model_name]
 
     MEMORY_LIMIT = 1024 * kwargs.get("mem", 4)
     THREADS = kwargs.get("workers")
