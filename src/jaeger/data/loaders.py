@@ -9,6 +9,7 @@ and configurable nucleotide one-hot mappings.
 from __future__ import annotations
 
 import json
+import os
 
 import numpy as np
 import tensorflow as tf
@@ -273,7 +274,8 @@ def _densify_object_array(arr: np.ndarray, pad_value: int = 0) -> np.ndarray | N
 
     Returns ``None`` if the array is not an object array or if the inner arrays
     have incompatible shapes. Fixed-length inputs are stacked directly;
-    variable-length inputs are padded to the maximum length along each axis.
+    variable-length inputs are padded to the maximum length along each axis only
+    when the resulting dense array is small enough to be practical.
     """
     if arr.ndim != 1 or arr.dtype != object:
         return arr
@@ -289,6 +291,15 @@ def _densify_object_array(arr: np.ndarray, pad_value: int = 0) -> np.ndarray | N
     if not shapes:
         return arr
     max_shape = tuple(max(s) for s in zip(*shapes))
+
+    # Avoid creating enormous dense arrays (e.g. reliability data with many
+    # variable-length full sequences). Falling back to the generator path is
+    # slower but memory-safe.
+    max_total_elements = int(os.environ.get("JAEGER_MAX_DENSIFY_ELEMENTS", 100_000_000))
+    total_elements = len(arr) * int(np.prod(max_shape, dtype=np.int64))
+    if total_elements > max_total_elements:
+        return None
+
     try:
         padded = []
         for a in arr:
