@@ -191,9 +191,7 @@ def test_convergence_resume_skips_and_override():
         _write_resume_config(config_path, base_dir, data_dir, epochs=10)
 
         # First run: early stopping fires, marker written.
-        result = runner.invoke(
-            cli.main, ["train", "-c", str(config_path), "--force"]
-        )
+        result = runner.invoke(cli.main, ["train", "-c", str(config_path), "--force"])
         assert result.exit_code == 0, result.output
         classifier_dir = (
             base_dir

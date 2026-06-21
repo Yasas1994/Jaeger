@@ -315,7 +315,7 @@ class TestGetBias:
     def test_get_bias_csv(self, builder, tmp_path):
         """CSV first-column labels should produce correct softmax bias."""
         csv_path = tmp_path / "labels.csv"
-        csv_path.write_text("\n".join(str(l) for l in self._labels()))
+        csv_path.write_text("\n".join(str(label) for label in self._labels()))
         bias = builder._get_bias(str(csv_path), kind="softmax", label_map=[0, 1, 2])
         np.testing.assert_allclose(bias, self._expected_softmax())
 
