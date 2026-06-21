@@ -275,7 +275,7 @@ def _build_numpy_split(
     "--ignore_convergence",
     is_flag=True,
     default=False,
-    help="Ignore convergence markers and re-train from the last checkpoint.",
+    help="Ignore convergence markers and re-train from the last checkpoint",
 )
 @click.option("--meta", type=click.Path(), default=None)
 def train_fragment(

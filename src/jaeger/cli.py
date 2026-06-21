@@ -389,6 +389,12 @@ def tune(**kwargs):
     help="delete existing checkpoints and continue",
 )
 @click.option(
+    "--ignore_convergence",
+    is_flag=True,
+    required=False,
+    help="Ignore convergence markers and re-train from the last checkpoint",
+)
+@click.option(
     "--save_model",
     is_flag=True,
     required=False,
