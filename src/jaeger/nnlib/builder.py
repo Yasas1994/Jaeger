@@ -228,11 +228,24 @@ class DynamicModelBuilder:
     def get_latest_h5_with_metadata(
         self,
         path: str | Path,
-        check_convergence: str = "classifier",
         pattern: str = r"epoch:(\d+)-loss:(\d+\.\d+)",
-    ) -> dict:
-        """Scan *path* for the most recent ``.h5`` checkpoint matching *pattern*."""
+    ) -> dict[str, Any]:
+        """Scan *path* for the most recent ``.h5`` checkpoint matching *pattern*.
+
+        Also checks for a ``converged.json`` marker. If present and valid, the
+        value of ``is_converged`` is read from the marker; otherwise it defaults
+        to ``False``.
+        """
         path = Path(path)
+        marker_path = path / "converged.json"
+        converged = False
+        if marker_path.exists():
+            try:
+                marker = json.loads(marker_path.read_text())
+                converged = bool(marker.get("is_converged", False))
+            except (json.JSONDecodeError, OSError):
+                converged = False
+
         h5_files = sorted(
             path.glob("*.h5"), key=lambda f: f.stat().st_mtime, reverse=True
         )
@@ -244,9 +257,9 @@ class DynamicModelBuilder:
                     "path": file,
                     "epoch": int(epoch),
                     "loss": float(loss),
-                    "is_converged": False if path.name == check_convergence else False,
+                    "is_converged": converged,
                 }
-        return {"path": None, "epoch": 0, "loss": None, "is_converged": False}
+        return {"path": None, "epoch": 0, "loss": None, "is_converged": converged}
 
     # ------------------------------------------------------------------
     # Model construction
