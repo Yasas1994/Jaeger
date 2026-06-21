@@ -136,7 +136,7 @@ class DynamicModelBuilder:
         self.generate_reliability_data: bool = bool(
             config.get("generate_reliability_data", False)
         )
-        self._checkpoints: dict[str, Path] = {}
+        self._checkpoints: dict[str, dict[str, Any]] = {}
 
         self.classifier_out_dim: int = int(self.model_cfg.get("classifier_out_dim", 0))
         self.reliability_out_dim: int = int(

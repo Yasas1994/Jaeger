@@ -57,6 +57,23 @@ def _write_convergence_marker(
     logger.info(f"Recorded convergence for {branch} at epoch {epoch}")
 
 
+def _apply_ignore_convergence(
+    checkpoint: dict[str, Any], ignore: bool, branches: list[str]
+) -> None:
+    """Reset ``is_converged`` for listed branches when asked to ignore markers.
+
+    This mutates ``checkpoint`` in place so that downstream training gates
+    treat converged branches as runnable for the current invocation only.
+    """
+    if not ignore:
+        return
+    for branch in branches:
+        branch_ckpt = checkpoint.get(branch)
+        if branch_ckpt is not None:
+            branch_ckpt["is_converged"] = False
+            logger.info(f"Ignoring convergence marker for {branch}")
+
+
 def _resolve_numpy_crop_params(
     string_processor_config: dict[str, Any], split: str
 ) -> tuple[Any, Any, Any]:
@@ -374,11 +391,19 @@ def train_fragment_core(**kwargs):
 
         # ============ check convergence & train classifier ===========
         checkpoint = builder._checkpoints
+        _apply_ignore_convergence(
+            checkpoint, kwargs.get("ignore_convergence", False), ["classifier"]
+        )
         cls_converged = checkpoint and checkpoint.get("classifier", {}).get(
             "is_converged", False
         )
         if kwargs.get("only_save", False) is False:
-            if not cls_converged and not kwargs.get("only_reliability_head", False):
+            if cls_converged:
+                logger.info(
+                    "Classifier training already converged; skipping. "
+                    "Use --ignore_convergence to retrain."
+                )
+            elif not kwargs.get("only_reliability_head", False):
                 if kwargs.get("only_classification_head", False) or kwargs.get(
                     "only_heads", False
                 ):
@@ -645,13 +670,20 @@ def train_fragment_core(**kwargs):
 
         # ============== check convergence & train reliability ========
         checkpoint = builder._checkpoints
+        _apply_ignore_convergence(
+            checkpoint, kwargs.get("ignore_convergence", False), ["reliability"]
+        )
         rel_converged = checkpoint and checkpoint.get("reliability", {}).get(
             "is_converged", False
         )
         if kwargs.get("only_save", False) is False:
-            if (
-                not rel_converged
-                and not kwargs.get("only_classification_head", False)
+            if rel_converged:
+                logger.info(
+                    "Reliability training already converged; skipping. "
+                    "Use --ignore_convergence to retrain."
+                )
+            elif (
+                not kwargs.get("only_classification_head", False)
                 and models.get("jaeger_reliability") is not None
             ):
                 # load reliability model data
