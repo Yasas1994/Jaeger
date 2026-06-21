@@ -11,6 +11,7 @@ This module is a thin Click wrapper that orchestrates:
 from __future__ import annotations
 
 import gc
+import json
 import os
 from typing import Any
 
@@ -39,6 +40,21 @@ except ImportError:
 
 
 logger = get_logger(log_file=None, log_path=None, level=3)
+
+
+def _write_convergence_marker(
+    checkpoint_dir: str | Path, branch: str, epoch: int
+) -> None:
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = checkpoint_dir / "converged.json"
+    marker_path.write_text(
+        json.dumps(
+            {"is_converged": True, "branch": branch, "epoch": epoch},
+            indent=2,
+        )
+    )
+    logger.info(f"Recorded convergence for {branch} at epoch {epoch}")
 
 
 def _resolve_numpy_crop_params(
@@ -516,13 +532,28 @@ def train_fragment_core(**kwargs):
                     )
 
                 # train classification model
-                models.get("jaeger_classifier").fit(
+                classifier_history = models.get("jaeger_classifier").fit(
                     train_data.get("train").take(
                         builder.train_cfg.get("classifier_train_steps"),
                     ),
                     class_weight=builder.train_cfg.get("classifier_class_weights"),
                     **train_args,
                 )
+                if (
+                    classifier_history.epoch
+                    and classifier_history.epoch[-1] < train_args["epochs"] - 1
+                ):
+                    classifier_dir = builder.train_cfg.get("classifier_dir")
+                    if classifier_dir is not None:
+                        _write_convergence_marker(
+                            classifier_dir,
+                            branch="classifier",
+                            epoch=int(classifier_history.epoch[-1]),
+                        )
+                    else:
+                        logger.warning(
+                            "classifier_dir is not configured; skipping convergence marker"
+                        )
 
                 # unload classifier data before loading reliability data
                 logger.info("unloading classifier training data")
@@ -739,13 +770,28 @@ def train_fragment_core(**kwargs):
                             "reliability", {}
                         ).get("epoch", 0)
 
-                    models.get("jaeger_reliability").fit(
+                    reliability_history = models.get("jaeger_reliability").fit(
                         rel_train.take(
                             builder.train_cfg.get("reliability_train_steps")
                         ),
                         class_weight=builder.train_cfg.get("reliability_class_weights"),
                         **train_args,
                     )
+                    if (
+                        reliability_history.epoch
+                        and reliability_history.epoch[-1] < train_args["epochs"] - 1
+                    ):
+                        reliability_dir = builder.train_cfg.get("reliability_dir")
+                        if reliability_dir is not None:
+                            _write_convergence_marker(
+                                reliability_dir,
+                                branch="reliability",
+                                epoch=int(reliability_history.epoch[-1]),
+                            )
+                        else:
+                            logger.warning(
+                                "reliability_dir is not configured; skipping convergence marker"
+                            )
             else:
                 logger.info("Skipping training — reliability model")
 
