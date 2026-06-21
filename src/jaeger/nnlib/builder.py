@@ -1156,6 +1156,7 @@ class DynamicModelBuilder:
                 dict(classes=self.model_cfg.get("class_label_map")),
                 yaml_file,
                 default_flow_style=False,
+                sort_keys=False,
             )
 
         shutil.copy(self.cfg.get("config_path"), path / f"{model_name}_project.yaml")

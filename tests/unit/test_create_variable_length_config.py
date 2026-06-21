@@ -18,7 +18,7 @@ def test_create_variable_length_config(tmp_path):
             "string_processor": {"crop_size": 500, "length": 500},
         }
     }
-    base.write_text(yaml.dump(cfg))
+    base.write_text(yaml.dump(cfg, sort_keys=False))
 
     old_argv = sys.argv
     try:
