@@ -238,6 +238,12 @@ def _build_numpy_split(
     default=False,
     help="Enable XLA JIT compilation for training.",
 )
+@click.option(
+    "--ignore_convergence",
+    is_flag=True,
+    default=False,
+    help="Ignore convergence markers and re-train from the last checkpoint.",
+)
 @click.option("--meta", type=click.Path(), default=None)
 def train_fragment(
     config,
@@ -251,6 +257,7 @@ def train_fragment(
     save_model,
     self_supervised_pretraining,
     xla,
+    ignore_convergence,
     meta,
 ):
     """Train a fragment-level Jaeger model."""
@@ -266,6 +273,7 @@ def train_fragment(
         save_model=save_model,
         self_supervised_pretraining=self_supervised_pretraining,
         xla=xla,
+        ignore_convergence=ignore_convergence,
         meta=meta,
     )
 
@@ -314,6 +322,7 @@ def train_fragment_core(**kwargs):
         config["mix_precision"] = kwargs.get("mixed_precision", False)
         config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
         config["force"] = kwargs.get("force")
+        config["ignore_convergence"] = kwargs.get("ignore_convergence", False)
         config["use_xla"] = kwargs.get("xla", False)
         config["generate_reliability_data"] = kwargs.get(
             "generate_reliability_data", False
