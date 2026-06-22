@@ -551,7 +551,7 @@ def train_fragment_core(**kwargs):
             )
             if crop_size and rf > crop_size:
                 logger.warning(
-                    "receptive field (%d bp) is larger than crop size (%d bp)",
+                    "receptive field (%d) is larger than crop size (%d)",
                     rf,
                     crop_size,
                 )

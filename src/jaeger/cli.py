@@ -1387,8 +1387,8 @@ def receptive_field_cmd(config):
     click.echo(receptive_field_summary(hidden_layers, crop_size=crop_size))
     if crop_size and rf > crop_size:
         click.echo(
-            f"  Warning: receptive field ({rf} bp) is larger than the crop size "
-            f"({crop_size} bp)."
+            f"  Warning: receptive field ({rf}) is larger than the crop size "
+            f"({crop_size})."
         )
 
 

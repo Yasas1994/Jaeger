@@ -32,7 +32,7 @@ def compute_receptive_field(
     Returns
     -------
     rf:
-        The final receptive-field size in base pairs / sequence positions.
+        The final receptive-field size in sequence positions.
     trace:
         A per-layer breakdown of ``(layer_name, receptive_field)``.
     """
@@ -67,10 +67,10 @@ def receptive_field_summary(
 ) -> str:
     """Return a human-readable receptive-field summary."""
     rf, trace = compute_receptive_field(hidden_layers)
-    lines = [f"Receptive field: {rf} bp"]
+    lines = [f"Receptive field: {rf}"]
     for name, layer_rf in trace:
-        lines.append(f"  {name}: {layer_rf} bp")
+        lines.append(f"  {name}: {layer_rf}")
     if crop_size is not None:
         coverage = min(100, int(rf / crop_size * 100)) if crop_size else 0
-        lines.append(f"  crop size: {crop_size} bp ({coverage}% coverage)")
+        lines.append(f"  crop size: {crop_size} ({coverage}% coverage)")
     return "\n".join(lines)

@@ -102,13 +102,13 @@ class TestReceptiveFieldSummary:
             {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}}
         ]
         summary = receptive_field_summary(layers, crop_size=500)
-        assert "Receptive field: 7 bp" in summary
-        assert "crop size: 500 bp" in summary
+        assert "Receptive field: 7" in summary
+        assert "crop size: 500" in summary
 
     def test_summary_without_crop_size(self):
         layers = [
             {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}}
         ]
         summary = receptive_field_summary(layers)
-        assert "Receptive field: 7 bp" in summary
+        assert "Receptive field: 7" in summary
         assert "crop size" not in summary
