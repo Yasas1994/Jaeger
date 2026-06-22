@@ -1085,7 +1085,10 @@ class DynamicModelBuilder:
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
-        jit_compile = self.use_xla
+        # XLA-compiling the ArcFace projection head under mixed precision
+        # produces NaN gradients on the first batch, so disable it for the
+        # pre-training branch while keeping it for classifier/reliability.
+        jit_compile = self.use_xla and train_branch != "pretrain"
         if train_branch == "pretrain":
             model.get("rep_model").trainable = True
             model.get("jaeger_projection").compile(
