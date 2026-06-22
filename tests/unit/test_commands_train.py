@@ -4,7 +4,11 @@ import pytest
 import tensorflow as tf
 from click import UsageError
 
-from jaeger.commands.train import _precision_policy_name, _resolve_precision
+from jaeger.commands.train import (
+    _precision_policy_name,
+    _resolve_batch_size,
+    _resolve_precision,
+)
 
 
 class TestResolvePrecision:
@@ -43,3 +47,26 @@ class TestPrecisionPolicyName:
             assert tf.keras.mixed_precision.global_policy().name == "mixed_bfloat16"
         finally:
             tf.keras.mixed_precision.set_global_policy(old)
+
+
+class TestResolveBatchSize:
+    def test_global_fallback(self):
+        assert _resolve_batch_size({"batch_size": 64}, "classifier") == 64
+        assert _resolve_batch_size({"batch_size": 64}, "projection") == 64
+        assert _resolve_batch_size({"batch_size": 64}, "reliability") == 64
+
+    def test_branch_specific_override(self):
+        cfg = {
+            "batch_size": 64,
+            "classifier_batch_size": 128,
+            "projection_batch_size": 32,
+            "reliability_batch_size": 256,
+        }
+        assert _resolve_batch_size(cfg, "classifier") == 128
+        assert _resolve_batch_size(cfg, "projection") == 32
+        assert _resolve_batch_size(cfg, "reliability") == 256
+
+    def test_partial_override_uses_global(self):
+        cfg = {"batch_size": 64, "classifier_batch_size": 128}
+        assert _resolve_batch_size(cfg, "classifier") == 128
+        assert _resolve_batch_size(cfg, "projection") == 64
