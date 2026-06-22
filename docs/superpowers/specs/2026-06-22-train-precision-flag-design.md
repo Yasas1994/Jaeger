@@ -32,10 +32,15 @@ bfloat16 on supported hardware.
    `config["mix_precision"]`). The old key is not read anywhere else in the
    codebase, so this is safe.
 5. Update help text so `--help` documents the new flag.
-6. Keep XLA disabled for the self-supervised pretrain branch. An isolated
-   projection-head test with XLA + bf16/fp16 passed, but the full
-   `jaeger train` pipeline hung / OOM'd on the local GPU when XLA was enabled
-   for pretrain. XLA remains enabled for classifier/reliability training.
+6. XLA behavior for the self-supervised pretrain branch:
+   - `--precision fp16` + `--xla`: XLA is forcibly disabled for pretrain and a
+     warning explains why (known NaN-gradient / OOM issues).
+   - `--precision fp32` or `--bf16` + `--xla`: XLA is enabled for pretrain, but
+     a prominent warning informs the user that this is experimental and may
+     hang or OOM on some GPUs (observed locally with bf16 + XLA; fp32 + XLA
+     worked locally).
+   - XLA remains enabled for classifier/reliability training regardless of
+     precision.
 
 ## Migration / Backwards Compatibility
 
@@ -51,3 +56,7 @@ the same behavior as `--precision fp16`, but will print a deprecation warning.
 - End-to-end smoke test that `jaeger train --precision bf16` completes
   projection pretraining without NaN.
 - End-to-end smoke test that `jaeger train --precision fp16` still works.
+- End-to-end smoke test that `jaeger train --precision fp32 --xla` enables
+  XLA for pretrain and completes training.
+- End-to-end check that `jaeger train --precision fp16 --xla` logs the
+  XLA-disabled warning for pretrain.

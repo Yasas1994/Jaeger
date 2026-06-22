@@ -1085,11 +1085,28 @@ class DynamicModelBuilder:
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
         self.optimizer = self._get_optimizer(opt_name, opt_params)
-        # XLA-compiling the full pretrain graph (representation learner +
-        # ArcFace projection head) under mixed precision still hangs / OOMs on
-        # the local GPU, even though the projection head alone works in isolation.
-        # Keep XLA enabled for classifier/reliability but disable it for pretrain.
-        jit_compile = self.use_xla and train_branch != "pretrain"
+        # XLA for the pretrain branch is only enabled for fp32 and bf16.
+        # mixed_float16 has been observed to produce NaN gradients / OOMs when
+        # the full representation learner + ArcFace graph is XLA-compiled.
+        jit_compile = self.use_xla
+        if train_branch == "pretrain" and self.use_xla:
+            precision = self.cfg.get("precision", "fp32")
+            if precision == "fp16":
+                jit_compile = False
+                logger.warning(
+                    "Disabling XLA for the self-supervised pretrain branch because "
+                    "--precision fp16 with XLA is known to produce NaN gradients or "
+                    "OOM on this pipeline. Use --precision bf16 or fp32, or omit "
+                    "--xla, to avoid this message."
+                )
+            else:
+                logger.warning(
+                    "XLA is enabled for the self-supervised pretrain branch with "
+                    "%s. This is experimental: on some GPUs the full representation "
+                    "learner + ArcFace graph may hang or OOM during compilation. "
+                    "If training freezes, restart without --xla.",
+                    precision,
+                )
         if train_branch == "pretrain":
             model.get("rep_model").trainable = True
             model.get("jaeger_projection").compile(
