@@ -842,7 +842,9 @@ def train_fragment_core(**kwargs):
                                 else _buffer_size,
                             )
                             .padded_batch(
-                                batch_size=_resolve_batch_size(builder.train_cfg, "reliability"),
+                                batch_size=_resolve_batch_size(
+                                    builder.train_cfg, "reliability"
+                                ),
                                 padded_shapes=(
                                     padded_shape,
                                     [builder.reliability_out_dim],
@@ -863,7 +865,9 @@ def train_fragment_core(**kwargs):
                             num_classes=builder.reliability_out_dim,
                             string_processor_config=string_processor_config,
                             batching_cfg=batching_cfg,
-                            batch_size=_resolve_batch_size(builder.train_cfg, "reliability"),
+                            batch_size=_resolve_batch_size(
+                                builder.train_cfg, "reliability"
+                            ),
                             multi_gpu=multi_gpu,
                             num_replicas=strategy.num_replicas_in_sync,
                             buffer_size=_buffer_size,
