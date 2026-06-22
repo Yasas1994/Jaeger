@@ -29,7 +29,9 @@ class TestNpairsLoss:
 
 class TestArcFaceLoss:
     def test_loss_and_gradients(self):
-        layer = losses.ArcFaceLoss(num_classes=3, embedding_dim=8, margin=0.5, scale=30.0, onehot=True)
+        layer = losses.ArcFaceLoss(
+            num_classes=3, embedding_dim=8, margin=0.5, scale=30.0, onehot=True
+        )
         labels = tf.constant([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=tf.float32)
         embeddings = tf.random.normal((2, 8))
         with tf.GradientTape() as tape:
@@ -38,6 +40,34 @@ class TestArcFaceLoss:
         grads = tape.gradient(loss, embeddings)
         assert loss.shape.rank == 0
         assert grads is not None
+
+
+class TestArcFaceLossMixedPrecision:
+    def test_zero_and_small_embeddings_stay_finite(self):
+        old_policy = tf.keras.mixed_precision.global_policy()
+        try:
+            tf.keras.mixed_precision.set_global_policy("mixed_float16")
+            layer = losses.ArcFaceLoss(
+                num_classes=3, embedding_dim=8, margin=0.5, scale=64.0, onehot=True
+            )
+            labels = tf.constant(
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=tf.float32
+            )
+            # One zero vector, one near-zero vector, and one normal vector.
+            embeddings = tf.constant(
+                [[0.0] * 8, [1e-8] * 8, [1.0, 2.0, -1.0, 0.5, 0.1, -0.2, 0.3, 0.4]],
+                dtype=tf.float16,
+            )
+            with tf.GradientTape() as tape:
+                tape.watch(embeddings)
+                loss = layer(labels, embeddings)
+            grads = tape.gradient(loss, embeddings)
+            assert loss.shape.rank == 0
+            assert np.isfinite(loss.numpy())
+            assert grads is not None
+            assert np.all(np.isfinite(grads.numpy()))
+        finally:
+            tf.keras.mixed_precision.set_global_policy(old_policy)
 
 
 class TestHierarchicalLoss:

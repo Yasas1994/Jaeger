@@ -106,6 +106,24 @@ class TestMaskedLayerNormalization:
         assert abs(float(tf.reduce_mean(unmasked_values))) < 0.05
         assert abs(float(tf.math.reduce_std(unmasked_values)) - 1.0) < 0.05
 
+    def test_large_values_mixed_precision(self):
+        old_policy = tf.keras.mixed_precision.global_policy()
+        try:
+            tf.keras.mixed_precision.set_global_policy("mixed_float16")
+            x = tf.random.normal((2, 6, 100, 128), stddev=50.0, dtype=tf.float16)
+            mask = tf.ones((2, 6, 100), dtype=tf.bool)
+            layer = layers.MaskedLayerNormalization()
+            with tf.GradientTape() as tape:
+                tape.watch(x)
+                out = layer(x, mask=mask)
+            grads = tape.gradient(out, x)
+            assert out.dtype == tf.float16
+            assert np.all(np.isfinite(out.numpy()))
+            assert grads is not None
+            assert np.all(np.isfinite(grads.numpy()))
+        finally:
+            tf.keras.mixed_precision.set_global_policy(old_policy)
+
 
 class TestMaskedGlobalAvgPooling:
     def test_output_shape(self):

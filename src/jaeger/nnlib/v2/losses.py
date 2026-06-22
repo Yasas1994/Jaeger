@@ -63,21 +63,21 @@ class ArcFaceLoss(tf.keras.layers.Layer):
             - one-hot labels (batch_size, num_classes) if self.onehot=True
             - integer labels (batch_size,) or (batch_size, 1) if self.onehot=False
         """
-        # Work in the compute dtype (usually float16 in mixed precision)
-        compute_dtype = embeddings.dtype
+        # ArcFace involves l2-normalization, acos and cos, which are numerically
+        # unstable in float16. In particular, l2-normalizing a zero vector under
+        # mixed_float16 produces NaN because the default epsilon (1e-12) is below
+        # the float16 minimum and rounds to zero. Always perform these
+        # calculations in float32 and return a float32 loss; the caller's
+        # mixed-precision optimizer will handle the downstream cast.
+        embeddings = tf.cast(embeddings, tf.float32)
+        class_weights = tf.cast(self.class_weights, tf.float32)
 
-        # eps depends on dtype
-        eps = tf.constant(
-            6.55e-4 if compute_dtype == tf.float16 else 1.0e-9,
-            dtype=compute_dtype,
-        )
-
-        # Normalize embeddings and class weights in compute dtype
-        embeddings = tf.cast(embeddings, compute_dtype)
-        class_weights = tf.cast(self.class_weights, compute_dtype)
-
-        embeddings = tf.nn.l2_normalize(embeddings, axis=1)
-        class_weights = tf.nn.l2_normalize(class_weights, axis=1)
+        # Use tf.nn.l2_normalize with a larger epsilon so that zero/near-zero
+        # vectors do not produce NaN/Inf gradients. The default epsilon (1e-12)
+        # is too small for mixed-precision training; 1e-4 bounds the gradient
+        # while keeping the normalized vectors close to unit length.
+        embeddings = tf.nn.l2_normalize(embeddings, axis=1, epsilon=1e-4)
+        class_weights = tf.nn.l2_normalize(class_weights, axis=1, epsilon=1e-4)
 
         # Cosine similarity: (batch_size, num_classes)
         cosine = tf.matmul(embeddings, class_weights, transpose_b=True)
@@ -85,15 +85,16 @@ class ArcFaceLoss(tf.keras.layers.Layer):
         # Labels -> one-hot
         if self.onehot:
             # Assume labels already one-hot, just cast
-            labels_one_hot = tf.cast(labels, compute_dtype)
+            labels_one_hot = tf.cast(labels, tf.float32)
         else:
             labels = tf.reshape(labels, [-1])  # (batch_size,)
             labels = tf.cast(labels, tf.int32)
             labels_one_hot = tf.one_hot(
-                labels, depth=self.num_classes, dtype=compute_dtype
+                labels, depth=self.num_classes, dtype=tf.float32
             )
 
         # Angle and margin
+        eps = tf.constant(1.0e-9, dtype=tf.float32)
         theta = tf.acos(tf.clip_by_value(cosine, -1.0 + eps, 1.0 - eps))
         target_logits = tf.cos(theta + self.margin)
 
@@ -103,13 +104,8 @@ class ArcFaceLoss(tf.keras.layers.Layer):
         # Apply scaling
         logits = logits * self.scale
 
-        # ---- IMPORTANT PART FOR MIXED PRECISION ----
-        # Do the actual loss calculation in float32
-        logits_fp32 = tf.cast(logits, tf.float32)
-        labels_fp32 = tf.cast(labels_one_hot, tf.float32)
-
         loss_vec = tf.nn.softmax_cross_entropy_with_logits(
-            labels=labels_fp32, logits=logits_fp32
+            labels=labels_one_hot, logits=logits
         )
         loss = tf.reduce_mean(loss_vec)
 

@@ -321,30 +321,36 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
         super(MaskedLayerNormalization, self).build(input_shape)
 
     def call(self, inputs, mask=None):
+        # Layer-normalization statistics are prone to float16 overflow when the
+        # channel values are large, so compute the moments in float32 and cast
+        # the result back to the layer's compute dtype.
+        compute_dtype = tf.float32
         if mask is not None:
-            mask = tf.cast(mask, inputs.dtype)
+            mask = tf.cast(mask, compute_dtype)
             mask = tf.expand_dims(mask, -1)
             mask = tf.stop_gradient(mask)
             # Zero masked positions so they do not affect per-position channel stats
-            x = inputs * mask
+            x = tf.cast(inputs, compute_dtype) * mask
         else:
-            x = inputs
+            x = tf.cast(inputs, compute_dtype)
 
         # Normalize over the channel axis (last axis), as in standard layer norm.
         mean, variance = tf.nn.moments(x, axes=-1, keepdims=True)
-        normalized = (x - mean) / tf.sqrt(variance + self.epsilon)
+        normalized = (x - mean) / tf.sqrt(
+            variance + tf.cast(self.epsilon, compute_dtype)
+        )
 
         # Apply scale and center
         if self.scale:
-            normalized = normalized * self.gamma
+            normalized = normalized * tf.cast(self.gamma, compute_dtype)
         if self.center:
-            normalized = normalized + self.beta
+            normalized = normalized + tf.cast(self.beta, compute_dtype)
 
         # Re-apply the mask to keep masked positions at zero
         if mask is not None:
             normalized = normalized * mask
 
-        return normalized
+        return tf.cast(normalized, inputs.dtype)
 
     def compute_output_shape(self, input_shape):
         return input_shape
