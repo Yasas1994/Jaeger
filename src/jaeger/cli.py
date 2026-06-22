@@ -1343,6 +1343,55 @@ def convert_graph_cmd(model, output, mode, int8, verbose):
     convert_graph(model, output, mode, verbose, int8=int8)
 
 
+@utils.command(
+    name="receptive_field",
+    context_settings=dict(ignore_unknown_options=True, show_default=True),
+    help="""
+        Compute and display the 1-D sequence receptive field of a Jaeger model
+        described by a YAML config.
+
+        usage
+        -----
+
+        jaeger utils receptive_field -c train_config/nn_config.yaml
+    """,
+)
+@click.option(
+    "-c",
+    "--config",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to the Jaeger YAML config file.",
+)
+def receptive_field_cmd(config):
+    """Compute the receptive field of a Jaeger model."""
+    from pathlib import Path
+
+    from jaeger.utils.misc import load_model_config
+    from jaeger.utils.receptive_field import (
+        compute_receptive_field,
+        receptive_field_summary,
+    )
+
+    cfg = load_model_config(Path(config))
+    hidden_layers = (
+        cfg.get("model", {}).get("representation_learner", {}).get("hidden_layers", [])
+    )
+    string_processor = cfg.get("model", {}).get("string_processor", {})
+    crop_size = string_processor.get("crop_size")
+    crop_sizes = string_processor.get("crop_sizes")
+    if crop_size is None and crop_sizes:
+        crop_size = crop_sizes[0] if isinstance(crop_sizes, list) else crop_sizes
+
+    rf, _ = compute_receptive_field(hidden_layers)
+    click.echo(receptive_field_summary(hidden_layers, crop_size=crop_size))
+    if crop_size and rf > crop_size:
+        click.echo(
+            f"  Warning: receptive field ({rf} bp) is larger than the crop size "
+            f"({crop_size} bp)."
+        )
+
+
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.pass_context
 def taxonomy(obj):

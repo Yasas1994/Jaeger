@@ -26,6 +26,10 @@ from pathlib import Path
 from jaeger.nnlib.builder import DynamicModelBuilder, check_files
 from jaeger.seqops.encode import process_string_train
 from jaeger.utils.misc import load_model_config, numerize
+from jaeger.utils.receptive_field import (
+    compute_receptive_field,
+    receptive_field_summary,
+)
 from jaeger.utils.logging import get_logger
 from jaeger.data.loaders import _load_numpy_dataset
 from jaeger.dataops.reliability_generator import generate_reliability_data
@@ -528,6 +532,29 @@ def train_fragment_core(**kwargs):
     with strategy.scope():
         logger.info("initializing model")
         config = load_model_config(Path(kwargs.get("config")))
+        hidden_layers = (
+            config.get("model", {})
+            .get("representation_learner", {})
+            .get("hidden_layers", [])
+        )
+        if hidden_layers:
+            rf, _ = compute_receptive_field(hidden_layers)
+            string_processor = config.get("model", {}).get("string_processor", {})
+            crop_size = string_processor.get("crop_size")
+            crop_sizes = string_processor.get("crop_sizes")
+            if crop_size is None and crop_sizes:
+                crop_size = (
+                    crop_sizes[0] if isinstance(crop_sizes, list) else crop_sizes
+                )
+            logger.info(
+                "\n%s", receptive_field_summary(hidden_layers, crop_size=crop_size)
+            )
+            if crop_size and rf > crop_size:
+                logger.warning(
+                    "receptive field (%d bp) is larger than crop size (%d bp)",
+                    rf,
+                    crop_size,
+                )
         config["precision"] = precision
         config["mix_precision"] = precision != "fp32"
         config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
