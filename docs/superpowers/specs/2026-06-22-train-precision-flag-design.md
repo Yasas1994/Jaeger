@@ -32,6 +32,10 @@ bfloat16 on supported hardware.
    `config["mix_precision"]`). The old key is not read anywhere else in the
    codebase, so this is safe.
 5. Update help text so `--help` documents the new flag.
+6. Keep XLA disabled for the self-supervised pretrain branch. An isolated
+   projection-head test with XLA + bf16/fp16 passed, but the full
+   `jaeger train` pipeline hung / OOM'd on the local GPU when XLA was enabled
+   for pretrain. XLA remains enabled for classifier/reliability training.
 
 ## Migration / Backwards Compatibility
 
@@ -44,3 +48,6 @@ the same behavior as `--precision fp16`, but will print a deprecation warning.
 - Unit test that `--precision bf16` sets `mixed_bfloat16`.
 - Unit test that `--mixed_precision` still works and emits a deprecation warning.
 - Unit test that passing both flags raises a usage error.
+- End-to-end smoke test that `jaeger train --precision bf16` completes
+  projection pretraining without NaN.
+- End-to-end smoke test that `jaeger train --precision fp16` still works.

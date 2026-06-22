@@ -434,10 +434,18 @@ def tune(**kwargs):
     help="Number of synthetic OOD sequences to generate per real training sequence (default: 1.0)",
 )
 @click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"], case_sensitive=False),
+    default="fp32",
+    show_default=True,
+    help="Numeric precision: fp32, fp16 (mixed_float16), or bf16 (mixed_bfloat16).",
+)
+@click.option(
     "--mixed_precision",
     is_flag=True,
     required=False,
-    help="use mix-precision floats to speed up training",
+    hidden=True,
+    help="Deprecated: use --precision fp16 instead.",
 )
 @click.option(
     "--xla",
@@ -503,6 +511,20 @@ def train(**kwargs):
         raise click.UsageError(
             "--from_last_checkpoint and --force are mutually exclusive. Please specify only one."
         )
+
+    precision = kwargs.get("precision", "fp32")
+    if kwargs.get("mixed_precision", False):
+        if precision != "fp32":
+            raise click.UsageError(
+                "--mixed_precision and --precision are mutually exclusive. "
+                "Use --precision fp16 instead of --mixed_precision."
+            )
+        warnings.warn(
+            "--mixed_precision is deprecated; use --precision fp16 instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        kwargs["precision"] = "fp16"
 
     from jaeger.commands.train import train_fragment_core
 

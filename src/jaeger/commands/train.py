@@ -13,6 +13,7 @@ from __future__ import annotations
 import gc
 import json
 import os
+import warnings
 from typing import Any
 
 # temporary fix
@@ -40,6 +41,28 @@ except ImportError:
 
 
 logger = get_logger(log_file=None, log_path=None, level=3)
+
+
+def _precision_policy_name(precision: str) -> str | None:
+    """Map a precision shorthand to a Keras mixed-precision policy name."""
+    return {"fp16": "mixed_float16", "bf16": "mixed_bfloat16"}.get(precision)
+
+
+def _resolve_precision(precision: str, mixed_precision: bool) -> str:
+    """Resolve CLI precision flags, handling the deprecated --mixed_precision alias."""
+    if mixed_precision:
+        if precision != "fp32":
+            raise click.UsageError(
+                "--mixed_precision and --precision are mutually exclusive. "
+                "Use --precision fp16 instead of --mixed_precision."
+            )
+        warnings.warn(
+            "--mixed_precision is deprecated; use --precision fp16 instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return "fp16"
+    return precision
 
 
 def _write_convergence_marker(
@@ -256,7 +279,20 @@ def _build_numpy_split(
 
 @click.command()
 @click.option("--config", type=click.Path(exists=True), required=True)
-@click.option("--mixed_precision", is_flag=True, default=False)
+@click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"], case_sensitive=False),
+    default="fp32",
+    show_default=True,
+    help="Numeric precision: fp32, fp16 (mixed_float16), or bf16 (mixed_bfloat16).",
+)
+@click.option(
+    "--mixed_precision",
+    is_flag=True,
+    default=False,
+    hidden=True,
+    help="Deprecated: use --precision fp16 instead.",
+)
 @click.option("--from_last_checkpoint", is_flag=True, default=False)
 @click.option("--force", is_flag=True, default=False)
 @click.option("--only_classification_head", is_flag=True, default=False)
@@ -280,6 +316,7 @@ def _build_numpy_split(
 @click.option("--meta", type=click.Path(), default=None)
 def train_fragment(
     config,
+    precision,
     mixed_precision,
     from_last_checkpoint,
     force,
@@ -294,9 +331,11 @@ def train_fragment(
     meta,
 ):
     """Train a fragment-level Jaeger model."""
+    precision = _resolve_precision(precision, mixed_precision)
+
     train_fragment_core(
         config=config,
-        mixed_precision=mixed_precision,
+        precision=precision,
         from_last_checkpoint=from_last_checkpoint,
         force=force,
         only_classification_head=only_classification_head,
@@ -342,9 +381,18 @@ def train_fragment_core(**kwargs):
         strategy = tf.distribute.get_strategy()
         logger.info("No GPU detected, using default CPU strategy")
 
-    if kwargs.get("mixed_precision", False):
-        logger.info("experimental: using mix precision floats for faster training")
-        policy = tf.keras.mixed_precision.Policy("mixed_float16")
+    precision = kwargs.get("precision", "fp32")
+    if precision not in ("fp32", "fp16", "bf16"):
+        raise ValueError(
+            f"Unknown precision '{precision}'. Choose one of: fp32, fp16, bf16."
+        )
+    policy_name = _precision_policy_name(precision)
+    if policy_name is not None:
+        logger.info(
+            f"experimental: using mixed precision ({precision} / {policy_name}) "
+            "for faster training"
+        )
+        policy = tf.keras.mixed_precision.Policy(policy_name)
         tf.keras.mixed_precision.set_global_policy(policy)
 
     multi_gpu = strategy.num_replicas_in_sync > 1
@@ -352,7 +400,8 @@ def train_fragment_core(**kwargs):
     with strategy.scope():
         logger.info("initializing model")
         config = load_model_config(Path(kwargs.get("config")))
-        config["mix_precision"] = kwargs.get("mixed_precision", False)
+        config["precision"] = precision
+        config["mix_precision"] = precision != "fp32"
         config["from_last_checkpoint"] = kwargs.get("from_last_checkpoint")
         config["force"] = kwargs.get("force")
         config["ignore_convergence"] = kwargs.get("ignore_convergence", False)
