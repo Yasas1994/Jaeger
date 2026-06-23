@@ -163,3 +163,44 @@ class TestReceptiveFieldSummary:
         ]
         rf, _ = compute_receptive_field(layers)
         assert rf == 7
+
+    def test_parallel_branches_reports_per_branch_rf(self):
+        layers = [
+            {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}},
+            {
+                "name": "parallel_branches",
+                "config": {
+                    "merge": "concat",
+                    "branches": [
+                        {
+                            "hidden_layers": [
+                                {
+                                    "name": "residual_block",
+                                    "config": {
+                                        "block_size": 1,
+                                        "kernel_size": 5,
+                                        "dilation_rate": 6,
+                                    },
+                                }
+                            ]
+                        },
+                        {
+                            "hidden_layers": [
+                                {
+                                    "name": "residual_block",
+                                    "config": {
+                                        "block_size": 1,
+                                        "kernel_size": 5,
+                                        "dilation_rate": 30,
+                                    },
+                                }
+                            ]
+                        },
+                    ],
+                },
+            },
+        ]
+        rf, trace = compute_receptive_field(layers)
+        assert rf == 127
+        assert ("parallel_branches.branch_0", 31) in trace
+        assert ("parallel_branches.branch_1", 127) in trace
