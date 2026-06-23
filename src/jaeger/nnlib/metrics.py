@@ -104,3 +104,59 @@ class SpecificityForClass(tf.keras.metrics.Metric):
     def reset_state(self):
         self.tn.assign(0.0)
         self.fp.assign(0.0)
+
+
+class MacroF1Score(tf.keras.metrics.Metric):
+    """Macro-averaged F1 score for multi-class classification.
+
+    Expects one-hot or integer labels and logits / probabilities.
+    """
+
+    def __init__(self, num_classes: int, name="macro_f1", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.num_classes = num_classes
+        self.true_positives = self.add_weight(
+            name="tp", shape=(num_classes,), initializer="zeros"
+        )
+        self.false_positives = self.add_weight(
+            name="fp", shape=(num_classes,), initializer="zeros"
+        )
+        self.false_negatives = self.add_weight(
+            name="fn", shape=(num_classes,), initializer="zeros"
+        )
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        if y_true.shape.rank > 1 and y_true.shape[-1] > 1:
+            y_true = tf.argmax(y_true, axis=-1)
+        y_pred = tf.argmax(y_pred, axis=-1)
+
+        y_true = tf.cast(y_true, tf.int32)
+        y_pred = tf.cast(y_pred, tf.int32)
+
+        y_true_one_hot = tf.one_hot(y_true, self.num_classes, dtype=self.dtype)
+        y_pred_one_hot = tf.one_hot(y_pred, self.num_classes, dtype=self.dtype)
+
+        tp = tf.reduce_sum(y_true_one_hot * y_pred_one_hot, axis=0)
+        fp = tf.reduce_sum((1 - y_true_one_hot) * y_pred_one_hot, axis=0)
+        fn = tf.reduce_sum(y_true_one_hot * (1 - y_pred_one_hot), axis=0)
+
+        self.true_positives.assign_add(tp)
+        self.false_positives.assign_add(fp)
+        self.false_negatives.assign_add(fn)
+
+    def result(self):
+        tp = self.true_positives
+        fp = self.false_positives
+        fn = self.false_negatives
+        per_class_f1 = (2 * tp) / (2 * tp + fp + fn + tf.keras.backend.epsilon())
+        return tf.reduce_mean(per_class_f1)
+
+    def reset_state(self):
+        self.true_positives.assign(tf.zeros_like(self.true_positives))
+        self.false_positives.assign(tf.zeros_like(self.false_positives))
+        self.false_negatives.assign(tf.zeros_like(self.false_negatives))
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"num_classes": self.num_classes})
+        return config

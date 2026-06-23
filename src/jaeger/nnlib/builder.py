@@ -31,6 +31,7 @@ from jaeger.seqops.maps import (
     PC5_ID,
 )
 from jaeger.nnlib.metrics import (
+    MacroF1Score,
     PrecisionForClass,
     RecallForClass,
     SpecificityForClass,
@@ -1026,20 +1027,27 @@ class DynamicModelBuilder:
             "auc": tf.keras.metrics.AUC,
             "precision": tf.keras.metrics.Precision,
             "recall": tf.keras.metrics.Recall,
+            "macro_f1": MacroF1Score,
             "per_class_precision": PrecisionForClass,
             "per_class_recall": RecallForClass,
             "per_class_specificity": SpecificityForClass,
         }
         metrics = []
         for c in config:
-            if "per_class_" not in c.get("name"):
+            metric_name = c.get("name")
+            if metric_name == "macro_f1":
+                params = c.get("params") or {}
+                if "num_classes" not in params:
+                    params = {**params, "num_classes": self.classifier_out_dim}
+                metrics.append(_metrics[metric_name](**params))
+            elif "per_class_" not in metric_name:
                 if c.get("params") is not None:
-                    metrics.append(_metrics.get(c.get("name"))(**c.get("params")))
+                    metrics.append(_metrics.get(metric_name)(**c.get("params")))
                 else:
-                    metrics.append(_metrics.get(c.get("name"))())
+                    metrics.append(_metrics.get(metric_name)())
             else:
                 for cls in range(self.classifier_out_dim):
-                    metrics.append(_metrics.get(c.get("name"))(class_id=cls))
+                    metrics.append(_metrics.get(metric_name)(class_id=cls))
         return metrics
 
     def _load_training_params(self) -> None:
