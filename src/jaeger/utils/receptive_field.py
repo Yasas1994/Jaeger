@@ -17,6 +17,15 @@ def _format_rf(rf: int | float) -> str:
     return str(int(rf))
 
 
+def _attends_over_length(attention_axes: int | tuple | list) -> bool:
+    """Return True if the attention axis set includes the length axis (2)."""
+    if attention_axes is None:
+        return False
+    if isinstance(attention_axes, int):
+        return attention_axes == 2
+    return 2 in tuple(attention_axes)
+
+
 def compute_receptive_field(
     hidden_layers: list[dict[str, Any]],
 ) -> tuple[int | float, list[tuple[str, int | float]]]:
@@ -28,9 +37,9 @@ def compute_receptive_field(
 
     Layers that do not change the receptive field (normalization, activation,
     dropout, NMD, pooling) are tracked in the trace but do not increase the
-    value. Bidirectional LSTM makes every output position depend on the entire
-    sequence, so the receptive field becomes the full sequence from that point
-    onward.
+    value. Bidirectional LSTM and axial/length attention make every output
+    position depend on the entire sequence, so the receptive field becomes the
+    full sequence from that point onward.
 
     Parameters
     ----------
@@ -65,6 +74,12 @@ def compute_receptive_field(
             delta = _conv_rf_delta(kernel_size, dilation_rate)
             rf += block_size * delta
         elif name == "masked_bilstm":
+            rf = math.inf
+        elif name == "axial_attention":
+            rf = math.inf
+        elif name == "transformer_encoder" and _attends_over_length(
+            cfg.get("attention_axes", 2)
+        ):
             rf = math.inf
         # All other layers do not change the RF size.
 

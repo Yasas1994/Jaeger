@@ -133,3 +133,33 @@ class TestReceptiveFieldSummary:
         assert "Receptive field: full sequence" in summary
         assert "crop size: 500" in summary
         assert "coverage" not in summary
+
+    def test_axial_attention_makes_full_sequence_rf(self):
+        layers = [
+            {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}},
+            {"name": "axial_attention", "config": {"embed_dim": 128, "num_heads": 4}},
+        ]
+        rf, _ = compute_receptive_field(layers)
+        assert math.isinf(rf)
+
+    def test_transformer_encoder_length_axis_full_rf(self):
+        layers = [
+            {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}},
+            {
+                "name": "transformer_encoder",
+                "config": {"embed_dim": 128, "attention_axes": 2},
+            },
+        ]
+        rf, _ = compute_receptive_field(layers)
+        assert math.isinf(rf)
+
+    def test_transformer_encoder_frame_axis_no_change(self):
+        layers = [
+            {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}},
+            {
+                "name": "transformer_encoder",
+                "config": {"embed_dim": 128, "attention_axes": 1},
+            },
+        ]
+        rf, _ = compute_receptive_field(layers)
+        assert rf == 7
