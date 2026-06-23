@@ -7,6 +7,7 @@ import yaml
 TEMPLATE = Path("train_config/nn_config_1500bp_nmd_merge_6_class.yaml")
 OUT_DIR = Path("receptive_field_experiments")
 BASE_DIR = Path("/mnt/beegfs/bioinf/wijesekara/jaeger/receptive_field_experiments")
+DATA_DIR = Path("/mnt/beegfs/bioinf/wijesekara/jaeger/data/jaeger_train_data/numpy")
 
 BRANCHES = [
     ("rf_031", 6),
@@ -89,6 +90,7 @@ def _configure_training(cfg):
     cfg["training"]["classifier_validation_steps"] = 1000
     cfg["training"]["projection_epochs"] = 0
     cfg["training"]["reliability_epochs"] = 0
+    cfg["training"]["data_dir"] = str(DATA_DIR)
     cfg["model"]["string_processor"]["mutate"] = False
     return cfg
 

@@ -183,7 +183,7 @@ model:
         kernel_regularizer: l2
         kernel_regularizer_w: 1.0e-05
 training:
-  data_dir: /home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/jaeger_train_data
+  data_dir: /mnt/beegfs/bioinf/wijesekara/jaeger/data/jaeger_train_data/numpy
   experiment_root: experiments/experiment_{{ model.experiment }}_{{ model.seed }}
   classifier_dir: '{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/classifier'
   reliability_dir: '{{ model.base_dir }}/{{ training.experiment_root }}/checkpoints/reliability'
