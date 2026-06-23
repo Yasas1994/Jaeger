@@ -814,7 +814,7 @@ class DynamicModelBuilder:
             cfg_layer["name"] = f"{prefix}_{layer_name}_{i}"
 
             layer_class = self._layers.get(layer_name)
-            if layer_class is None:
+            if layer_class is None and layer_name != "parallel_branches":
                 raise ValueError(f"Unknown layer type: {layer_name}")
 
             if layer_name in {"relu", "gelu", "sigmoid", "softmax", "tanh"}:
@@ -900,6 +900,52 @@ class DynamicModelBuilder:
             if layer_name == "nmd":
                 nmd_ = layer_class(**cfg_layer)(x)
                 nmd.append(nmd_)
+                continue
+
+            if layer_name == "parallel_branches":
+                merge_method = cfg_layer.get("merge", "concat").lower()
+                branch_cfgs = cfg_layer.get("branches", [])
+                if not branch_cfgs:
+                    raise ValueError("parallel_branches requires at least one branch")
+
+                branch_outputs = []
+                for b_idx, branch_cfg in enumerate(branch_cfgs):
+                    branch_out = self._build_block(
+                        x,
+                        branch_cfg,
+                        prefix=f"{prefix}_branch_{b_idx}",
+                        nmd_merge=None,
+                    )
+                    # Branches must return a single tensor (vectors when pooling is set).
+                    if isinstance(branch_out, (list, tuple)):
+                        branch_out = branch_out[0]
+                    branch_outputs.append(branch_out)
+
+                if merge_method == "average":
+                    x = tf.keras.layers.Average(name=f"{prefix}_merge_avg")(
+                        branch_outputs
+                    )
+                elif merge_method == "sum":
+                    x = tf.keras.layers.Add(name=f"{prefix}_merge_sum")(branch_outputs)
+                elif merge_method == "max":
+                    x = tf.keras.layers.Maximum(name=f"{prefix}_merge_max")(
+                        branch_outputs
+                    )
+                elif merge_method == "concat":
+                    x = tf.keras.layers.Concatenate(
+                        axis=-1, name=f"{prefix}_merge_concat"
+                    )(branch_outputs)
+                else:
+                    raise ValueError(
+                        f"Unknown parallel_branches merge method: {merge_method}"
+                    )
+
+                if merge_method == "concat":
+                    previous_channels = sum(
+                        int(out.shape[-1]) for out in branch_outputs
+                    )
+                else:
+                    previous_channels = int(branch_outputs[0].shape[-1])
                 continue
 
             x = layer_class(**cfg_layer)(x)
