@@ -140,7 +140,7 @@ model:
   projection:
     margin: 0.5
     scale: 64
-    input_shape: 128
+    input_shape: 512
     hidden_layers:
     - name: dense
       config:

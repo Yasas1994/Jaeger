@@ -77,8 +77,7 @@ def _multiscale_representation_learner():
 
 def _single_rf_representation_learner(dilation):
     return {
-        "hidden_layers": _shared_stem()
-        + [_residual_block(dilation), {"name": "nmd"}],
+        "hidden_layers": _shared_stem() + [_residual_block(dilation), {"name": "nmd"}],
         "pooling": "max",
     }
 
@@ -105,6 +104,7 @@ def main():
     cfg["model"]["base_dir"] = str(BASE_DIR)
     cfg["model"]["representation_learner"] = _multiscale_representation_learner()
     cfg["model"]["classifier"]["input_shape"] = 512
+    cfg["model"]["projection"]["input_shape"] = 512
     cfg = _configure_training(cfg)
     (OUT_DIR / "multiscale_rf.yaml").write_text(
         yaml.dump(cfg, sort_keys=False, default_flow_style=False)
@@ -118,6 +118,7 @@ def main():
     cfg["model"]["base_dir"] = str(BASE_DIR)
     cfg["model"]["representation_learner"] = _single_rf_representation_learner(30)
     cfg["model"]["classifier"]["input_shape"] = 128
+    cfg["model"]["projection"]["input_shape"] = 128
     cfg = _configure_training(cfg)
     (OUT_DIR / "single_rf_127_baseline.yaml").write_text(
         yaml.dump(cfg, sort_keys=False, default_flow_style=False)

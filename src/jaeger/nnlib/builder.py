@@ -808,6 +808,8 @@ class DynamicModelBuilder:
         """
         nmd = []
         previous_channels = None
+        if x.shape[-1] is not None:
+            previous_channels = int(x.shape[-1])
         for i, layer_cfg in enumerate(cfg.get("hidden_layers", [])):
             layer_name = layer_cfg.get("name", "").lower()
             cfg_layer = dict(layer_cfg.get("config", {}))
