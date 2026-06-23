@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import os
 import warnings
 from typing import Any
@@ -549,10 +550,10 @@ def train_fragment_core(**kwargs):
             logger.info(
                 "\n%s", receptive_field_summary(hidden_layers, crop_size=crop_size)
             )
-            if crop_size and rf > crop_size:
+            if crop_size and not math.isinf(rf) and rf > crop_size:
                 logger.warning(
                     "receptive field (%d) is larger than crop size (%d)",
-                    rf,
+                    int(rf),
                     crop_size,
                 )
         config["precision"] = precision

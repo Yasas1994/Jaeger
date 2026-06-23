@@ -10,6 +10,7 @@ The Jaeger approach uses homology-free machine learning to identify
 both phages and prophages in metagenomic assemblies.
 """
 
+import math
 import os
 import sys
 
@@ -1385,7 +1386,7 @@ def receptive_field_cmd(config):
 
     rf, _ = compute_receptive_field(hidden_layers)
     click.echo(receptive_field_summary(hidden_layers, crop_size=crop_size))
-    if crop_size and rf > crop_size:
+    if crop_size and not math.isinf(rf) and rf > crop_size:
         click.echo(
             f"  Warning: receptive field ({rf}) is larger than the crop size "
             f"({crop_size})."

@@ -1186,6 +1186,88 @@ class MaskedConv1D(tf.keras.layers.Layer):
             return (input_shape[0], input_shape[1], input_shape[2], self.filters)
 
 
+class MaskedBiLSTM(tf.keras.layers.Layer):
+    """Bidirectional LSTM for 4-D fragment inputs with optional masking.
+
+    Input shape: ``(batch, frames, length, channels)``
+    Output shape: ``(batch, frames, length, 2 * units)`` when
+    ``return_sequences=True`` (the default).
+
+    The layer reshapes the input to ``(batch * frames, length, channels)``,
+    applies a standard Keras ``Bidirectional(LSTM(...))``, then reshapes the
+    result back to the 4-D fragment layout. If a mask is supplied it is
+    flattened in the same way so the LSTM ignores padded positions.
+    """
+
+    def __init__(
+        self,
+        units: int,
+        dropout: float = 0.0,
+        recurrent_dropout: float = 0.0,
+        return_sequences: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.units = units
+        self.dropout = dropout
+        self.recurrent_dropout = recurrent_dropout
+        self.return_sequences = return_sequences
+
+        self.bilstm = tf.keras.layers.Bidirectional(
+            tf.keras.layers.LSTM(
+                units,
+                return_sequences=return_sequences,
+                dropout=dropout,
+                recurrent_dropout=recurrent_dropout,
+            ),
+            merge_mode="concat",
+        )
+
+    def call(self, inputs, mask=None):
+        b = tf.shape(inputs)[0]
+        f = tf.shape(inputs)[1]
+        t = tf.shape(inputs)[2]
+        c = tf.shape(inputs)[3]
+
+        # Collapse frames into the batch dimension so the LSTM sees 3-D data.
+        x = tf.reshape(inputs, (b * f, t, c))
+
+        lstm_mask = None
+        if mask is not None:
+            mask = tf.cast(mask, tf.bool)
+            lstm_mask = tf.reshape(mask, (b * f, t))
+
+        x = self.bilstm(x, mask=lstm_mask)
+
+        # Restore the original (batch, frames, ...) layout.
+        out_c = tf.shape(x)[-1]
+        if self.return_sequences:
+            return tf.reshape(x, (b, f, t, out_c))
+        return tf.reshape(x, (b, f, out_c))
+
+    def compute_mask(self, inputs, mask=None):
+        # Mask shape is unchanged by the LSTM.
+        return mask
+
+    def compute_output_shape(self, input_shape):
+        batch, frames, length, _ = input_shape
+        if self.return_sequences:
+            return (batch, frames, length, self.units * 2)
+        return (batch, frames, self.units * 2)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "units": self.units,
+                "dropout": self.dropout,
+                "recurrent_dropout": self.recurrent_dropout,
+                "return_sequences": self.return_sequences,
+            }
+        )
+        return config
+
+
 class MultiScaleConv1D(tf.keras.layers.Layer):
     """Parallel masked 1D convolutions at multiple scales.
 

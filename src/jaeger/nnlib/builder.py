@@ -41,6 +41,7 @@ from jaeger.nnlib.v2.layers import (
     GatedFrameGlobalMaxPooling,
     LocalAttention,
     MaskedBatchNorm,
+    MaskedBiLSTM,
     MaskedDYT,
     MaskedGlobalAvgPooling,
     MaskedConv1D,
@@ -164,6 +165,7 @@ class DynamicModelBuilder:
             "multi_scale_conv": MultiScaleConv1D,
             "conv1d": tf.keras.layers.Conv1D,
             "masked_batchnorm": MaskedBatchNorm,
+            "masked_bilstm": MaskedBiLSTM,
             "masked_dyt": MaskedDYT,
             "masked_layernorm": MaskedLayerNormalization,
             "layernorm": tf.keras.layers.LayerNormalization,
@@ -900,6 +902,10 @@ class DynamicModelBuilder:
                 continue
 
             x = layer_class(**cfg_layer)(x)
+
+            if layer_name == "masked_bilstm":
+                previous_channels = cfg_layer.get("units", 64) * 2
+                continue
 
             if "filters" in cfg_layer:
                 previous_channels = cfg_layer.get("filters")

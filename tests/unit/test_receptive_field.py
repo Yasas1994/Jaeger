@@ -1,3 +1,5 @@
+import math
+
 from jaeger.utils.receptive_field import (
     compute_receptive_field,
     receptive_field_summary,
@@ -112,3 +114,22 @@ class TestReceptiveFieldSummary:
         summary = receptive_field_summary(layers)
         assert "Receptive field: 7" in summary
         assert "crop size" not in summary
+
+    def test_bilstm_makes_full_sequence_rf(self):
+        layers = [
+            {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}},
+            {"name": "masked_bilstm", "config": {"units": 64}},
+        ]
+        rf, trace = compute_receptive_field(layers)
+        assert math.isinf(rf)
+        assert trace[-1] == ("masked_bilstm", math.inf)
+
+    def test_bilstm_summary(self):
+        layers = [
+            {"name": "masked_conv1d", "config": {"kernel_size": 7, "dilation_rate": 1}},
+            {"name": "masked_bilstm", "config": {"units": 64}},
+        ]
+        summary = receptive_field_summary(layers, crop_size=500)
+        assert "Receptive field: full sequence" in summary
+        assert "crop size: 500" in summary
+        assert "coverage" not in summary
