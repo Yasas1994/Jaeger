@@ -1,6 +1,15 @@
+from __future__ import annotations
+
+import importlib.util
+
 import pytest
 import yaml
+
 from jaeger.nnlib.builder import DynamicModelBuilder
+
+HAS_TF = importlib.util.find_spec("tensorflow") is not None
+
+pytestmark = pytest.mark.skipif(not HAS_TF, reason="tensorflow not installed")
 
 MINIMAL_CONFIG = """
 model:
