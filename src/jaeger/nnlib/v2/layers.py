@@ -1195,8 +1195,14 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
 
     The layer reshapes the input to ``(batch * frames, length, channels)``,
     applies a standard Keras ``Bidirectional(LSTM(...))``, then reshapes the
-    result back to the 4-D fragment layout. If a mask is supplied it is
-    flattened in the same way so the LSTM ignores padded positions.
+    result back to the 4-D fragment layout.
+
+    If ``ignore_mask=False`` (the default) any supplied mask is flattened and
+    passed to the LSTM so padded positions are ignored. This requires
+    ``use_cudnn=False`` because cuDNN only supports right-padded masks. If you
+    want to use cuDNN for speed, set ``use_cudnn=True`` and ``ignore_mask=True``;
+    this tells the layer not to pass a mask to the LSTM and is safe when all
+    input positions are valid (e.g. fixed-length crops).
     """
 
     def __init__(
@@ -1206,6 +1212,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
         recurrent_dropout: float = 0.0,
         return_sequences: bool = True,
         use_cudnn: bool = False,
+        ignore_mask: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -1214,6 +1221,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
         self.recurrent_dropout = recurrent_dropout
         self.return_sequences = return_sequences
         self.use_cudnn = use_cudnn
+        self.ignore_mask = ignore_mask
 
         self.bilstm = tf.keras.layers.Bidirectional(
             tf.keras.layers.LSTM(
@@ -1236,7 +1244,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
         x = tf.reshape(inputs, (b * f, t, c))
 
         lstm_mask = None
-        if mask is not None:
+        if mask is not None and not self.ignore_mask:
             mask = tf.cast(mask, tf.bool)
             lstm_mask = tf.reshape(mask, (b * f, t))
 
@@ -1249,6 +1257,9 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
         return tf.reshape(x, (b, f, out_c))
 
     def compute_mask(self, inputs, mask=None):
+        # If the LSTM ignores the mask, downstream layers should too.
+        if self.ignore_mask:
+            return None
         # Mask shape is unchanged by the LSTM.
         return mask
 
@@ -1267,6 +1278,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
                 "recurrent_dropout": self.recurrent_dropout,
                 "return_sequences": self.return_sequences,
                 "use_cudnn": self.use_cudnn,
+                "ignore_mask": self.ignore_mask,
             }
         )
         return config
