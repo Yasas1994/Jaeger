@@ -38,3 +38,4 @@ class TestMaskedBiLSTM:
         assert config["dropout"] == 0.1
         assert config["recurrent_dropout"] == 0.2
         assert config["return_sequences"] is True
+        assert config["use_cudnn"] is False

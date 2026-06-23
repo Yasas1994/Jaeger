@@ -1205,6 +1205,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
         dropout: float = 0.0,
         recurrent_dropout: float = 0.0,
         return_sequences: bool = True,
+        use_cudnn: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -1212,6 +1213,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
         self.dropout = dropout
         self.recurrent_dropout = recurrent_dropout
         self.return_sequences = return_sequences
+        self.use_cudnn = use_cudnn
 
         self.bilstm = tf.keras.layers.Bidirectional(
             tf.keras.layers.LSTM(
@@ -1219,6 +1221,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
                 return_sequences=return_sequences,
                 dropout=dropout,
                 recurrent_dropout=recurrent_dropout,
+                use_cudnn=use_cudnn,
             ),
             merge_mode="concat",
         )
@@ -1263,6 +1266,7 @@ class MaskedBiLSTM(tf.keras.layers.Layer):
                 "dropout": self.dropout,
                 "recurrent_dropout": self.recurrent_dropout,
                 "return_sequences": self.return_sequences,
+                "use_cudnn": self.use_cudnn,
             }
         )
         return config
