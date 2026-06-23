@@ -36,7 +36,7 @@ LOG_FILE="/mnt/beegfs/bioinf/wijesekara/jaeger/slurm/slurm_logs/multiscale_rf_${
 srun bash -lc "
 echo \"[\$(date)] Task \$SLURM_PROCID on node \$SLURMD_NODENAME: GPU \$CUDA_VISIBLE_DEVICES, job \$SLURM_JOB_ID\" >&2
 apptainer run \
-    --bind /mnt/beegfs \
-    --bind '$PROJECT_ROOT/src/jaeger:/usr/local/lib/python3.12/site-packages/jaeger' \
+    --bind \"/mnt/beegfs\" \
+    --bind \"$PROJECT_ROOT/src/jaeger:/usr/local/lib/python3.12/site-packages/jaeger\" \
     --nv $CONTAINER jaeger train $JAEGER_FLAGS
 " 2>&1 | tee -a "$LOG_FILE" || die "Training failed"
