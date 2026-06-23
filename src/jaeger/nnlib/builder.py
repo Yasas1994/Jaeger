@@ -962,8 +962,9 @@ class DynamicModelBuilder:
                 previous_channels = cfg_layer.get("embed_dim")
 
         # Aggregation
-        if "pooling" in cfg:
-            pooling = cfg.get("pooling", "average").lower()
+        pooling = cfg.get("pooling")
+        if pooling is not None:
+            pooling = pooling.lower()
             pooler = self._get_pooler(pooling)
             has_nmd = len(nmd) > 0
             if has_nmd:
@@ -978,10 +979,12 @@ class DynamicModelBuilder:
                         axis=-1, name=f"{prefix}_nmd_concat"
                     )(nmd)
             if "gated" not in pooling:
-                x = pooler(name=f"global_{pooling}pool")(x)
+                x = pooler(name=f"{prefix}_global_{pooling}pool")(x)
                 return (x, nmd) if has_nmd else x
             else:
-                x, g = pooler(return_gate=True, name=f"global_{pooling}pool")(x)
+                x, g = pooler(return_gate=True, name=f"{prefix}_global_{pooling}pool")(
+                    x
+                )
                 return (x, nmd, g) if has_nmd else (x, g)
         return x
 
