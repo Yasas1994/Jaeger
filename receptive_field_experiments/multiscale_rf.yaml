@@ -96,6 +96,7 @@ model:
               kernel_regularizer: l2
               kernel_regularizer_w: 1.0e-05
               norm_type: masked_layernorm
+              alpha_init: 0.01
           pooling: max
         - hidden_layers:
           - name: residual_block
@@ -109,6 +110,7 @@ model:
               kernel_regularizer: l2
               kernel_regularizer_w: 1.0e-05
               norm_type: masked_layernorm
+              alpha_init: 0.01
           pooling: max
         - hidden_layers:
           - name: residual_block
@@ -122,6 +124,7 @@ model:
               kernel_regularizer: l2
               kernel_regularizer_w: 1.0e-05
               norm_type: masked_layernorm
+              alpha_init: 0.01
           pooling: max
         - hidden_layers:
           - name: residual_block
@@ -135,6 +138,7 @@ model:
               kernel_regularizer: l2
               kernel_regularizer_w: 1.0e-05
               norm_type: masked_layernorm
+              alpha_init: 0.01
           pooling: max
     pooling: null
   projection:

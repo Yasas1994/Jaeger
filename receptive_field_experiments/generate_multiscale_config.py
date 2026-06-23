@@ -29,6 +29,7 @@ def _residual_block(dilation):
             "kernel_regularizer": "l2",
             "kernel_regularizer_w": 0.00001,
             "norm_type": "masked_layernorm",
+            "alpha_init": 0.01,
         },
     }
 
