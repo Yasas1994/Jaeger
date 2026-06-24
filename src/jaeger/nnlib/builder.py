@@ -192,6 +192,15 @@ class DynamicModelBuilder:
         self._load_training_params()
         self._prepare_checkpoint_dirs()
 
+    def _make_regularizer(self, name: str | None, weight: Any) -> Any:
+        """Build a Keras regularizer, coercing the weight to float."""
+        if name is None or weight is None:
+            return None
+        regularizer_cls = self._regularizer.get(name)
+        if regularizer_cls is None:
+            return None
+        return regularizer_cls(float(weight))
+
     # ------------------------------------------------------------------
     # Checkpoint helpers
     # ------------------------------------------------------------------
@@ -668,9 +677,10 @@ class DynamicModelBuilder:
                             output_dim=embedding_size,
                             mask_zero=True,
                             embeddings_initializer=tf.keras.initializers.Orthogonal(),
-                            embeddings_regularizer=self._regularizer.get(
+                            embeddings_regularizer=self._make_regularizer(
                                 cfg.get("embedding_regularizer"),
-                            )(cfg.get("embedding_regularizer_w")),
+                                cfg.get("embedding_regularizer_w"),
+                            ),
                         )(inputs)
                     else:
                         x = tf.keras.layers.Dense(
@@ -678,9 +688,10 @@ class DynamicModelBuilder:
                             name=f"{cfg.get('input_type')}_embedding",
                             use_bias=False,
                             kernel_initializer=tf.keras.initializers.Orthogonal(),
-                            kernel_regularizer=self._regularizer.get(
+                            kernel_regularizer=self._make_regularizer(
                                 cfg.get("embedding_regularizer"),
-                            )(cfg.get("embedding_regularizer_w")),
+                                cfg.get("embedding_regularizer_w"),
+                            ),
                         )(masked_inputs)
                 else:
                     x = masked_inputs
@@ -825,7 +836,9 @@ class DynamicModelBuilder:
             if "kernel_regularizer" in cfg_layer:
                 reg_name = cfg_layer.pop("kernel_regularizer")
                 reg_w = cfg_layer.pop("kernel_regularizer_w", None)
-                cfg_layer["kernel_regularizer"] = self._regularizer[reg_name](reg_w)
+                cfg_layer["kernel_regularizer"] = self._make_regularizer(
+                    reg_name, reg_w
+                )
 
             if "kernel_initializer" in cfg_layer:
                 init_name = cfg_layer.pop("kernel_initializer")
