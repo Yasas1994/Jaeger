@@ -1880,6 +1880,14 @@ class MetricModel(tf.keras.Model):
                 acc.assign(tf.zeros_like(acc))
             self._accum_step_counter.assign(0.0)
 
+    def _update_gradient_metric(
+        self, total_norm: tf.Tensor, total_params: tf.Tensor
+    ) -> None:
+        """Update the gradient tracker with log-average gradient norm."""
+        avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
+        log_grad = tf.math.log(avg_grad_norm + 1e-12)
+        self.gradient_tracker.update_state(log_grad)
+
     def train_step(self, data):
         if len(data) == 3:
             x, y, _ = data
@@ -1918,14 +1926,12 @@ class MetricModel(tf.keras.Model):
                     total_params += tf.cast(
                         tf.math.reduce_prod(weight.shape), tf.float32
                     )
-            avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
-            self.gradient_tracker.update_state(avg_grad_norm)
+            self._update_gradient_metric(total_norm, total_params)
         else:
             self._ensure_accumulators()
 
-            # Scale the loss down so accumulated gradients average over the
-            # effective batch. We do this here rather than above so the original
-            # (unscaled) loss can be reported in metrics.
+            # Scale gradients down so the accumulated result averages over the
+            # effective batch. We keep the original (unscaled) loss for metrics.
             scaled_grads = [
                 grad / tf.cast(self.gradient_accumulation_steps, grad.dtype)
                 if grad is not None
@@ -1941,14 +1947,8 @@ class MetricModel(tf.keras.Model):
             self._accum_step_counter.assign_add(1.0)
 
             def _apply_accumulated_gradients():
-                self.optimizer.apply_gradients(
-                    zip(self._gradient_accumulators, trainable_vars)
-                )
-                for acc in self._gradient_accumulators:
-                    acc.assign(tf.zeros_like(acc))
-                self._accum_step_counter.assign(0.0)
-
                 # Compute average gradient norm over the accumulated gradients
+                # *before* resetting them.
                 total_norm = 0.0
                 total_params = 0.0
                 for acc, weight in zip(
@@ -1960,8 +1960,14 @@ class MetricModel(tf.keras.Model):
                         total_params += tf.cast(
                             tf.math.reduce_prod(weight.shape), tf.float32
                         )
-                avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
-                self.gradient_tracker.update_state(avg_grad_norm)
+                self._update_gradient_metric(total_norm, total_params)
+
+                self.optimizer.apply_gradients(
+                    zip(self._gradient_accumulators, trainable_vars)
+                )
+                for acc in self._gradient_accumulators:
+                    acc.assign(tf.zeros_like(acc))
+                self._accum_step_counter.assign(0.0)
                 return tf.constant(True)
 
             tf.cond(
