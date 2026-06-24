@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -448,6 +449,166 @@ def test_convert_and_load_unpadded(simple_csv_path: str, tmp_path: Path):
     features, label = next(iter(ds))
     assert features["nucleotide"].shape[1] <= 24
     assert label.shape == (2,)
+
+
+def _make_sharded_translated_npz(
+    path: Path,
+    samples_per_shard: int,
+    num_shards: int,
+    seq_len: int,
+    codon_map: str = "codon_id",
+    one_hot: bool = False,
+) -> None:
+    """Write a fake sharded manifest NPZ for translated integer data."""
+    rng = np.random.default_rng(42)
+    files: dict[str, np.ndarray] = {}
+    for shard_idx in range(num_shards):
+        if one_hot:
+            translated = np.eye(CODON_DEPTH, dtype=np.float32)[
+                rng.integers(0, CODON_DEPTH, size=(samples_per_shard, 6, seq_len))
+            ]
+        else:
+            translated = rng.integers(
+                1, CODON_DEPTH, size=(samples_per_shard, 6, seq_len), dtype=np.int32
+            )
+        labels = rng.integers(0, NUM_CLASSES, size=samples_per_shard, dtype=np.int32)
+        translated_lengths = np.full(samples_per_shard, seq_len, dtype=np.int32)
+        lengths = np.full(samples_per_shard, seq_len * 3, dtype=np.int32)
+        suffix = f"{shard_idx:05d}"
+        files[f"translated_{suffix}"] = translated
+        files[f"labels_{suffix}"] = labels
+        files[f"translated_lengths_{suffix}"] = translated_lengths
+        files[f"lengths_{suffix}"] = lengths
+
+    manifest = {
+        "version": 1,
+        "keys": ["labels", "lengths", "translated_lengths", "translated"],
+        "num_shards": num_shards,
+        "format": "translated",
+        "crop_sizes": None,
+        "strides": None,
+        "padded": False,
+        "pad_int": 0,
+        "one_hot": one_hot,
+        "num_classes": NUM_CLASSES,
+        "codon_map": codon_map,
+        "nucleotide_map": None,
+    }
+    files["_jaeger_manifest"] = np.array(json.dumps(manifest), dtype=object)
+    np.savez(path, **files)
+
+
+@pytest.fixture
+def translated_sharded_npz(tmp_path: Path) -> str:
+    path = tmp_path / "translated_sharded.npz"
+    _make_sharded_translated_npz(path, samples_per_shard=2, num_shards=2, seq_len=20)
+    return str(path)
+
+
+class TestShardedLoaders:
+    def test_no_crop_loads_full_length(self, translated_sharded_npz: str):
+        ds = loaders._load_numpy_dataset(
+            translated_sharded_npz,
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=NUM_CLASSES,
+        )
+        features, label = next(iter(ds))
+        assert features["translated"].shape == (6, 20)
+        assert features["translated"].dtype == tf.int32
+        assert label.shape == (NUM_CLASSES,)
+        # 2 shards * 2 samples = 4 total samples
+        assert sum(1 for _ in ds.as_numpy_iterator()) == 4
+
+    def test_cropped_to_fixed_length(self, translated_sharded_npz: str):
+        ds = loaders._load_numpy_dataset(
+            translated_sharded_npz,
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=NUM_CLASSES,
+            crop_sizes=[10],
+            overlap=0.0,
+        )
+        crops = list(ds.as_numpy_iterator())
+        # seq_len 20, crop 10, stride 10 -> 2 crops per sample, 4 samples -> 8 crops
+        assert len(crops) == 8
+        for feats, _label in crops:
+            assert feats["translated"].shape == (6, 10)
+
+    def test_cropped_padded_to_max_size(self, tmp_path: Path):
+        path = tmp_path / "translated_sharded_padded.npz"
+        _make_sharded_translated_npz(
+            path, samples_per_shard=1, num_shards=1, seq_len=20
+        )
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=NUM_CLASSES,
+            crop_sizes=[10, 20],
+            overlap=0.0,
+        )
+        crops = list(ds.as_numpy_iterator())
+        # 2x 10-length + 1x 20-length == 3 crops, all padded to max 20
+        assert len(crops) == 3
+        for feats, _label in crops:
+            assert feats["translated"].shape == (6, 20)
+        np.testing.assert_array_equal(crops[0][0]["translated"][:, 10:], 0)
+        np.testing.assert_array_equal(crops[1][0]["translated"][:, 10:], 0)
+
+    def test_cropped_keep_natural_length(self, tmp_path: Path):
+        path = tmp_path / "translated_sharded_natural.npz"
+        _make_sharded_translated_npz(
+            path, samples_per_shard=1, num_shards=1, seq_len=20
+        )
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,
+            num_classes=NUM_CLASSES,
+            crop_sizes=[10, 20],
+            overlap=0.0,
+            pad_to_max=False,
+        )
+        crops = list(ds.as_numpy_iterator())
+        assert len(crops) == 3
+        assert crops[0][0]["translated"].shape == (6, 10)
+        assert crops[1][0]["translated"].shape == (6, 10)
+        assert crops[2][0]["translated"].shape == (6, 20)
+
+    def test_cropped_onehot_conversion(self, tmp_path: Path):
+        path = tmp_path / "translated_sharded_oh.npz"
+        _make_sharded_translated_npz(
+            path, samples_per_shard=1, num_shards=1, seq_len=12, one_hot=True
+        )
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=False,  # already one-hot in NPZ
+            num_classes=NUM_CLASSES,
+            crop_sizes=[6],
+            overlap=0.0,
+        )
+        features, _ = next(iter(ds))
+        assert features["translated"].shape == (6, 6, CODON_DEPTH)
+        assert features["translated"].dtype == tf.float32
+
+    def test_cropped_integer_to_onehot(self, tmp_path: Path):
+        path = tmp_path / "translated_sharded_int_to_oh.npz"
+        _make_sharded_translated_npz(
+            path, samples_per_shard=1, num_shards=1, seq_len=12
+        )
+        ds = loaders._load_numpy_dataset(
+            str(path),
+            input_type="translated",
+            seq_onehot=True,
+            num_classes=NUM_CLASSES,
+            crop_sizes=[6],
+            overlap=0.0,
+        )
+        features, _ = next(iter(ds))
+        assert features["translated"].shape == (6, 6, CODON_DEPTH)
+        assert features["translated"].dtype == tf.float32
 
 
 class TestResolveStrides:

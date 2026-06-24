@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import cast
 
 import numpy as np
 import tensorflow as tf
@@ -160,6 +161,10 @@ def _load_sharded_numpy_dataset(
     nucleotide_onehot_map: dict[str, list[float]] | None,
     num_classes: int | None,
     one_hot_labels: bool,
+    crop_sizes: list[int] | None = None,
+    strides: list[int] | None = None,
+    overlap: float | None = None,
+    pad_to_max: bool = True,
 ) -> tf.data.Dataset:
     """Load a sharded NPZ produced by the streaming converter."""
     manifest = json.loads(str(data["_jaeger_manifest"].item()))
@@ -176,7 +181,26 @@ def _load_sharded_numpy_dataset(
         nucleotide_map = json.loads(str(manifest["nucleotide_map"]))
         lookup = _build_nucleotide_onehot_lookup(nucleotide_map, nucleotide_onehot_map)
 
-    first_features = {k: data[f"{k}_00000"] for k in feature_keys}
+    if crop_sizes is not None and input_type == "both":
+        raise NotImplementedError(
+            "Runtime crop generation for input_type='both' is not supported yet."
+        )
+
+    cropping = crop_sizes is not None
+    resolved_strides: list[int] | None = None
+    max_crop_size: int | None = None
+    length_keys: dict[str, str] = {}
+    if cropping:
+        resolved_strides = _resolve_strides(crop_sizes, strides, overlap)
+        max_crop_size = int(max(cast("list[int]", crop_sizes)))
+        length_keys = {
+            key: (
+                "translated_lengths"
+                if key == "translated" and "translated_lengths" in manifest["keys"]
+                else "lengths"
+            )
+            for key in feature_keys
+        }
 
     def _convert_feature(arr: np.ndarray, key: str) -> np.ndarray:
         if not seq_onehot:
@@ -193,20 +217,69 @@ def _load_sharded_numpy_dataset(
             return (oh * mask).numpy()
         return arr
 
-    def _sample_features(i: int) -> dict[str, np.ndarray]:
-        return {
-            key: _convert_feature(first_features[key][i], key) for key in feature_keys
-        }
+    def _encode_label(label: int) -> np.ndarray:
+        if one_hot_labels and num_classes is not None and num_classes > 1:
+            return np.eye(int(num_classes), dtype=np.float32)[label]
+        if num_classes == 1:
+            return np.array([float(label)], dtype=np.float32)
+        return np.float32(label)
 
     def _feature_spec(arr: np.ndarray) -> tf.TensorSpec:
         # Feature arrays are (frames, length) or (frames, length, depth).
         # The sequence-length axis is always axis 1.
         shape = list(arr.shape)
         if len(shape) >= 2:
-            shape[1] = None
+            if cropping and pad_to_max:
+                shape[1] = cast(int, max_crop_size)
+            else:
+                shape[1] = None
         return tf.TensorSpec(shape=shape, dtype=tf.as_dtype(arr.dtype))
 
-    sample = _sample_features(0)
+    if cropping:
+        first_shard_arrays = {k: data[f"{k}_00000"] for k in feature_keys}
+        first_shard_lengths = {
+            k: data[f"{length_keys[k]}_00000"] for k in feature_keys
+        }
+        actual_len = int(first_shard_lengths[feature_keys[0]][0])
+        cs = cast("list[int]", crop_sizes)[0]
+        stride = resolved_strides[0]
+        starts = list(_crop_starts(actual_len, cs, stride, pad_to_max=pad_to_max))
+        if not starts:
+            raise ValueError("No crops could be generated from the input sequences")
+        start = starts[0]
+        length = min(cs, actual_len - start)
+
+        sample_features: dict[str, np.ndarray] = {}
+        for key in feature_keys:
+            arr = first_shard_arrays[key]
+            sample = arr[0]
+            needs_conversion = arr.ndim == 1 and arr.dtype == object
+            if seq_onehot and arr.ndim == 3:
+                needs_conversion = True
+            if needs_conversion:
+                sample = _convert_feature(sample, key)
+            crop = sample[:, start : start + length, ...]
+            if pad_to_max and length < cast(int, max_crop_size):
+                pad_len = cast(int, max_crop_size) - length
+                pad_width = (
+                    [(0, 0), (0, pad_len)]
+                    if crop.ndim == 2
+                    else [(0, 0), (0, pad_len), (0, 0)]
+                )
+                crop = np.pad(crop, pad_width, mode="constant", constant_values=0)
+            sample_features[key] = crop
+        sample = sample_features
+    else:
+        first_features = {k: data[f"{k}_00000"] for k in feature_keys}
+
+        def _sample_features(i: int) -> dict[str, np.ndarray]:
+            return {
+                key: _convert_feature(first_features[key][i], key)
+                for key in feature_keys
+            }
+
+        sample = _sample_features(0)
+
     output_signature = (
         {key: _feature_spec(arr) for key, arr in sample.items()},
         tf.TensorSpec(
@@ -219,30 +292,86 @@ def _load_sharded_numpy_dataset(
         ),
     )
 
+    def _yield_crop(
+        features_dict: dict[str, np.ndarray], label: np.ndarray
+    ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+        return features_dict, label
+
     def generator():
-        for shard_idx in range(num_shards):
-            shard_arrays = {key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys}
-            shard_labels = data[f"labels_{shard_idx:05d}"]
-            # Pre-convert dense (non-object) shards in one shot to avoid
-            # per-sample TensorFlow overhead.
-            for key, arr in shard_arrays.items():
-                if not (arr.ndim == 1 and arr.dtype == object):
-                    shard_arrays[key] = _convert_feature(arr, key)
-            for i in range(len(shard_labels)):
-                features = {}
+        if not cropping:
+            for shard_idx in range(num_shards):
+                shard_arrays = {
+                    key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys
+                }
+                shard_labels = data[f"labels_{shard_idx:05d}"]
+                # Pre-convert dense (non-object) shards in one shot to avoid
+                # per-sample TensorFlow overhead.
                 for key, arr in shard_arrays.items():
-                    feat = arr[i]
-                    if arr.ndim == 1 and arr.dtype == object:
-                        feat = _convert_feature(feat, key)
-                    features[key] = feat
-                label = int(shard_labels[i])
-                if one_hot_labels and num_classes is not None and num_classes > 1:
-                    label_arr = np.eye(num_classes, dtype=np.float32)[label]
-                elif num_classes == 1:
-                    label_arr = np.array([float(label)], dtype=np.float32)
+                    if not (arr.ndim == 1 and arr.dtype == object):
+                        shard_arrays[key] = _convert_feature(arr, key)
+                for i in range(len(shard_labels)):
+                    features = {}
+                    for key, arr in shard_arrays.items():
+                        feat = arr[i]
+                        if arr.ndim == 1 and arr.dtype == object:
+                            feat = _convert_feature(feat, key)
+                        features[key] = feat
+                    yield features, _encode_label(int(shard_labels[i]))
+            return
+
+        for shard_idx in range(num_shards):
+            shard_arrays = {
+                key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys
+            }
+            shard_lengths = {
+                key: data[f"{length_keys[key]}_{shard_idx:05d}"]
+                for key in feature_keys
+            }
+            shard_labels = data[f"labels_{shard_idx:05d}"]
+            # Decide whether each shard can be pre-converted. Integer-encoded
+            # arrays cannot be one-hot converted at shard level (the op expects
+            # a 2-D frame tensor), so keep them raw and convert per crop.
+            converted: dict[str, np.ndarray] = {}
+            needs_per_crop_conversion: dict[str, bool] = {}
+            for key, arr in shard_arrays.items():
+                if arr.ndim == 1 and arr.dtype == object:
+                    converted[key] = arr
+                    needs_per_crop_conversion[key] = True
+                elif seq_onehot and arr.ndim == 3:
+                    converted[key] = arr
+                    needs_per_crop_conversion[key] = True
                 else:
-                    label_arr = np.float32(label)
-                yield features, label_arr
+                    converted[key] = _convert_feature(arr, key)
+                    needs_per_crop_conversion[key] = False
+            for i in range(len(shard_labels)):
+                label_arr = _encode_label(int(shard_labels[i]))
+                actual_len = int(shard_lengths[feature_keys[0]][i])
+                for cs, stride in zip(
+                    cast("list[int]", crop_sizes), cast("list[int]", resolved_strides)
+                ):
+                    for start in _crop_starts(
+                        actual_len, cs, stride, pad_to_max=pad_to_max
+                    ):
+                        length = min(cs, actual_len - start)
+                        features = {}
+                        for key in feature_keys:
+                            arr = converted[key]
+                            sample = arr[i]
+                            crop = sample[:, start : start + length, ...]
+                            if needs_per_crop_conversion[key]:
+                                crop = _convert_feature(crop, key)
+                            if pad_to_max and length < cast(int, max_crop_size):
+                                pad_len = cast(int, max_crop_size) - length
+                                pad_width = (
+                                    [(0, 0), (0, pad_len)]
+                                    if crop.ndim == 2
+                                    else [(0, 0), (0, pad_len), (0, 0)]
+                                )
+                                crop = np.pad(
+                                    crop, pad_width, mode="constant", constant_values=0
+                                )
+                            features[key] = crop
+                        yield features, label_arr
 
     with tf.device("/CPU:0"):
         ds = tf.data.Dataset.from_generator(
@@ -280,6 +409,17 @@ def _densify_object_array(arr: np.ndarray, pad_value: int = 0) -> np.ndarray | N
     if arr.ndim != 1 or arr.dtype != object:
         return arr
 
+    # Avoid creating enormous dense arrays (e.g. reliability data with many
+    # sequences). Falling back to the generator path is slower but memory-safe.
+    max_total_elements = int(os.environ.get("JAEGER_MAX_DENSIFY_ELEMENTS", 100_000_000))
+    shapes = [a.shape for a in arr]
+    if not shapes:
+        return arr
+    max_shape = tuple(max(s) for s in zip(*shapes))
+    total_elements = len(arr) * int(np.prod(max_shape, dtype=np.int64))
+    if total_elements > max_total_elements:
+        return None
+
     try:
         # Fast path: all inner arrays have the same shape.
         return np.stack(arr)
@@ -287,18 +427,6 @@ def _densify_object_array(arr: np.ndarray, pad_value: int = 0) -> np.ndarray | N
         pass
 
     # Variable-length path: pad each inner array to the max shape.
-    shapes = [a.shape for a in arr]
-    if not shapes:
-        return arr
-    max_shape = tuple(max(s) for s in zip(*shapes))
-
-    # Avoid creating enormous dense arrays (e.g. reliability data with many
-    # variable-length full sequences). Falling back to the generator path is
-    # slower but memory-safe.
-    max_total_elements = int(os.environ.get("JAEGER_MAX_DENSIFY_ELEMENTS", 100_000_000))
-    total_elements = len(arr) * int(np.prod(max_shape, dtype=np.int64))
-    if total_elements > max_total_elements:
-        return None
 
     try:
         padded = []
@@ -738,6 +866,10 @@ def _load_numpy_dataset(
             nucleotide_onehot_map=nucleotide_onehot_map,
             num_classes=num_classes,
             one_hot_labels=one_hot_labels,
+            crop_sizes=crop_sizes,
+            strides=strides,
+            overlap=overlap,
+            pad_to_max=pad_to_max,
         )
 
     if crop_sizes is not None:
