@@ -94,6 +94,14 @@ def find_existing_graph_id(path: Path) -> Optional[str]:
     return None
 
 
+class GradientAccumulationCallback(tf.keras.callbacks.Callback):
+    """Flush any remaining accumulated gradients at the end of each epoch."""
+
+    def on_epoch_end(self, epoch: int, logs: dict | None = None) -> None:
+        if hasattr(self.model, "flush_accumulated_gradients"):
+            self.model.flush_accumulated_gradients()
+
+
 class DynamicModelBuilder:
     """Builds Keras models from a configuration dictionary.
 
@@ -1188,14 +1196,22 @@ class DynamicModelBuilder:
                     precision,
                 )
         if train_branch == "pretrain":
+            ga_steps = max(
+                1, int(self.train_cfg.get("gradient_accumulation_steps", 1))
+            )
             model.get("rep_model").trainable = True
+            model.get("jaeger_projection").gradient_accumulation_steps = ga_steps
+            self._gradient_accumulation_steps = ga_steps
             model.get("jaeger_projection").compile(
                 optimizer=self.optimizer,
                 loss_fn=model.get("arcface_loss"),
                 run_eagerly=False,
                 jit_compile=jit_compile,
             )
-            logger.info(f"model compiled for {train_branch} (xla={jit_compile})")
+            logger.info(
+                f"model compiled for {train_branch} (xla={jit_compile}, "
+                f"gradient_accumulation_steps={ga_steps})"
+            )
         elif train_branch == "classifier":
             model.get("rep_model").trainable = not freeze_rep
             model.get("jaeger_classifier").compile(
@@ -1366,6 +1382,11 @@ class DynamicModelBuilder:
                 callbacks.append(cb_class(**params))
             except AttributeError:
                 raise ValueError(f"Unsupported callback: {name}")
+        if (
+            branch == "projection"
+            and getattr(self, "_gradient_accumulation_steps", 1) > 1
+        ):
+            callbacks.append(GradientAccumulationCallback())
         return callbacks
 
     # ------------------------------------------------------------------

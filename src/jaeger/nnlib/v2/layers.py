@@ -1823,6 +1823,7 @@ class MetricModel(tf.keras.Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.step = 0
+        self.gradient_accumulation_steps = 1
         self.loss_tracker = tf.keras.metrics.Mean(name="loss")
         self.regularization_loss_tracker = tf.keras.metrics.Mean(name="reg-loss")
         self.gradient_tracker = tf.keras.metrics.Mean(name="gradient")
@@ -1831,6 +1832,53 @@ class MetricModel(tf.keras.Model):
         super(MetricModel, self).compile(**kwargs)
         self.loss_fn = loss_fn
         self.optimizer = optimizer
+        # If the caller already set gradient_accumulation_steps (e.g. the
+        # builder), create the accumulators now so they are not created inside
+        # the tf.function traced train_step.
+        if self.gradient_accumulation_steps > 1:
+            self._ensure_accumulators()
+
+    def _ensure_accumulators(self):
+        """Lazy creation of gradient accumulators and step counter."""
+        if not hasattr(self, "_gradient_accumulators"):
+            # Place accumulators on the same device as the trainable variables
+            # so XLA does not try to read a CPU variable from a GPU graph.
+            if self.trainable_variables:
+                device = self.trainable_variables[0].value.device
+            elif tf.config.list_physical_devices("GPU"):
+                device = "/GPU:0"
+            else:
+                device = "/CPU:0"
+            with tf.device(device):
+                self._gradient_accumulators = [
+                    tf.Variable(
+                        tf.zeros_like(v),
+                        trainable=False,
+                        name=f"grad_acc_{i}",
+                    )
+                    for i, v in enumerate(self.trainable_variables)
+                ]
+                self._accum_step_counter = tf.Variable(
+                    0.0,
+                    trainable=False,
+                    name="accum_step_counter",
+                    dtype=tf.float32,
+                )
+
+    def flush_accumulated_gradients(self):
+        """Apply any gradients left in the accumulators (e.g. at epoch end)."""
+        if (
+            self.gradient_accumulation_steps <= 1
+            or not hasattr(self, "_gradient_accumulators")
+        ):
+            return
+        if self._accum_step_counter.numpy() > 0:
+            self.optimizer.apply_gradients(
+                zip(self._gradient_accumulators, self.trainable_variables)
+            )
+            for acc in self._gradient_accumulators:
+                acc.assign(tf.zeros_like(acc))
+            self._accum_step_counter.assign(0.0)
 
     def train_step(self, data):
         if len(data) == 3:
@@ -1842,10 +1890,9 @@ class MetricModel(tf.keras.Model):
 
         with tf.GradientTape() as tape:
             y_pred = self(x, training=True)
-            # Adjust loss call based on your loss_fn signature:
-            loss = self.loss_fn([y, y_pred])
-            # Add regularization loss
-            loss += sum(self.losses)
+            report_loss = self.loss_fn([y, y_pred])
+            report_loss += sum(self.losses)
+            loss = report_loss
             # If using mixed precision
             if hasattr(self.optimizer, "get_scaled_loss"):
                 loss = self.optimizer.get_scaled_loss(loss)
@@ -1857,8 +1904,74 @@ class MetricModel(tf.keras.Model):
         if hasattr(self.optimizer, "get_unscaled_gradients"):
             grads = self.optimizer.get_unscaled_gradients(grads)
 
-        # Apply gradients
-        self.optimizer.apply_gradients(zip(grads, trainable_vars))
+        if self.gradient_accumulation_steps <= 1:
+            # Original behaviour: apply gradients every step.
+            self.optimizer.apply_gradients(zip(grads, trainable_vars))
+
+            # Compute average gradient norm
+            total_norm = 0.0
+            total_params = 0.0
+            for grad, weight in zip(grads, self.trainable_weights):
+                if grad is not None:
+                    norm = tf.norm(grad)
+                    total_norm += norm
+                    total_params += tf.cast(
+                        tf.math.reduce_prod(weight.shape), tf.float32
+                    )
+            avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
+            self.gradient_tracker.update_state(avg_grad_norm)
+        else:
+            self._ensure_accumulators()
+
+            # Scale the loss down so accumulated gradients average over the
+            # effective batch. We do this here rather than above so the original
+            # (unscaled) loss can be reported in metrics.
+            scaled_grads = [
+                grad / tf.cast(self.gradient_accumulation_steps, grad.dtype)
+                if grad is not None
+                else grad
+                for grad in grads
+            ]
+
+            # Accumulate gradients
+            for acc, grad in zip(self._gradient_accumulators, scaled_grads):
+                if grad is not None:
+                    acc.assign_add(grad)
+
+            self._accum_step_counter.assign_add(1.0)
+
+            def _apply_accumulated_gradients():
+                self.optimizer.apply_gradients(
+                    zip(self._gradient_accumulators, trainable_vars)
+                )
+                for acc in self._gradient_accumulators:
+                    acc.assign(tf.zeros_like(acc))
+                self._accum_step_counter.assign(0.0)
+
+                # Compute average gradient norm over the accumulated gradients
+                total_norm = 0.0
+                total_params = 0.0
+                for acc, weight in zip(
+                    self._gradient_accumulators, self.trainable_weights
+                ):
+                    if acc is not None:
+                        norm = tf.norm(acc)
+                        total_norm += norm
+                        total_params += tf.cast(
+                            tf.math.reduce_prod(weight.shape), tf.float32
+                        )
+                avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
+                self.gradient_tracker.update_state(avg_grad_norm)
+                return tf.constant(True)
+
+            tf.cond(
+                tf.equal(
+                    self._accum_step_counter,
+                    tf.cast(self.gradient_accumulation_steps, tf.float32),
+                ),
+                _apply_accumulated_gradients,
+                lambda: tf.constant(False),
+            )
 
         # Update step and metrics
         self.step += 1
@@ -1867,20 +1980,8 @@ class MetricModel(tf.keras.Model):
             self.loss_tracker.reset_state()
             self.gradient_tracker.reset_state()
 
-        self.loss_tracker.update_state(loss)
+        self.loss_tracker.update_state(report_loss)
         self.regularization_loss_tracker.update_state(sum(self.losses))
-
-        # Compute average gradient norm
-        total_norm = 0.0
-        total_params = 0.0
-        for grad, weight in zip(grads, self.trainable_weights):
-            if grad is not None:
-                norm = tf.norm(grad)
-                total_norm += norm
-                total_params += tf.cast(tf.math.reduce_prod(weight.shape), tf.float32)
-
-        avg_grad_norm = total_norm / tf.maximum(total_params, 1.0)
-        self.gradient_tracker.update_state(avg_grad_norm)
 
         return {
             "loss": self.loss_tracker.result(),
