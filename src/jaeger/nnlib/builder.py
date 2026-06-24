@@ -1158,7 +1158,9 @@ class DynamicModelBuilder:
                     tf.keras.metrics.BinaryAccuracy(name="acc"),
                 ]
 
-    def compile_model(self, model: dict, train_branch: str = "classifier") -> None:
+    def compile_model(
+        self, model: dict, train_branch: str = "classifier", freeze_rep: bool = False
+    ) -> None:
         """Compile a specific branch of the model graph."""
         opt_name = self.train_cfg.get("optimizer", "adam").lower()
         opt_params = self.train_cfg.get("optimizer_params", {})
@@ -1195,7 +1197,7 @@ class DynamicModelBuilder:
             )
             logger.info(f"model compiled for {train_branch} (xla={jit_compile})")
         elif train_branch == "classifier":
-            model.get("rep_model").trainable = True
+            model.get("rep_model").trainable = not freeze_rep
             model.get("jaeger_classifier").compile(
                 optimizer=self.optimizer,
                 loss=self.loss_classifier,

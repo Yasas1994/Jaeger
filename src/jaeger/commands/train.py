@@ -609,11 +609,6 @@ def train_fragment_core(**kwargs):
                     "Use --ignore_convergence to retrain."
                 )
             elif not kwargs.get("only_reliability_head", False):
-                if kwargs.get("only_classification_head", False) or kwargs.get(
-                    "only_heads", False
-                ):
-                    models.get("rep_model").trainable = False
-
                 train_data = _build_branch_datasets(
                     builder=builder,
                     data_spec=_train_data,
@@ -672,6 +667,19 @@ def train_fragment_core(**kwargs):
                         ),
                         **self_supervised_train_args,
                     )
+
+                # Freeze the representation learner for head-only fine-tuning, then
+                # recompile the classifier so the trainability change takes effect.
+                head_only = kwargs.get("only_classification_head", False) or kwargs.get(
+                    "only_heads", False
+                )
+                if head_only:
+                    logger.info(
+                        "Freezing representation learner for head-only classifier training"
+                    )
+                builder.compile_model(
+                    models, train_branch="classifier", freeze_rep=head_only
+                )
 
                 # train classification model
                 classifier_history = models.get("jaeger_classifier").fit(
