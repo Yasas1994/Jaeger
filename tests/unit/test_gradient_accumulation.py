@@ -124,3 +124,37 @@ def test_callback_flushes_on_epoch_end():
 
     cb.on_epoch_end(0)
     assert not np.allclose(kernel_var.numpy(), initial, atol=1e-6)
+
+
+@pytest.mark.skipif(
+    not tf.config.list_physical_devices("GPU"),
+    reason="XLA jit_compile is only tested on GPU",
+)
+def test_callback_flushes_on_epoch_end_with_xla():
+    """Regression test for Brain job 7504069.
+
+    The flush callback must be able to apply gradients after an epoch when the
+    model is compiled with XLA/jit_compile, where the optimizer can fail in
+    eager context with ``'NoneType' object has no attribute 'merge_call'``.
+    """
+    from jaeger.nnlib.builder import GradientAccumulationCallback
+
+    model = _build_model(gradient_accumulation_steps=4)
+    model.compile(
+        optimizer=tf.keras.optimizers.SGD(learning_rate=1.0),
+        loss_fn=_mse_loss,
+        jit_compile=True,
+    )
+    cb = GradientAccumulationCallback()
+    cb.set_model(model)
+
+    x = tf.constant([[1.0]], dtype=tf.float32)
+    y = tf.constant([[0.0]], dtype=tf.float32)
+    kernel_var = model.layers[1].kernel
+    initial = kernel_var.numpy().copy()
+
+    model.train_step((x, y))
+    np.testing.assert_allclose(kernel_var.numpy(), initial, atol=1e-6)
+
+    cb.on_epoch_end(0)
+    assert not np.allclose(kernel_var.numpy(), initial, atol=1e-6)

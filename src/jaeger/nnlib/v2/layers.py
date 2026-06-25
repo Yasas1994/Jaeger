@@ -1873,12 +1873,24 @@ class MetricModel(tf.keras.Model):
         ):
             return
         if self._accum_step_counter.numpy() > 0:
-            self.optimizer.apply_gradients(
-                zip(self._gradient_accumulators, self.trainable_variables)
-            )
-            for acc in self._gradient_accumulators:
-                acc.assign(tf.zeros_like(acc))
-            self._accum_step_counter.assign(0.0)
+            self._flush_accumulated_gradients()
+
+    @tf.function
+    def _flush_accumulated_gradients(self):
+        """Graph-wrapped gradient application for epoch-end flush.
+
+        The optimizer must be called inside a ``tf.function`` so it uses the
+        same distribution/runtime context as the compiled ``train_step``.
+        Calling it eagerly from a callback can fail with
+        ``'NoneType' object has no attribute 'merge_call'`` when XLA is
+        enabled.
+        """
+        self.optimizer.apply_gradients(
+            zip(self._gradient_accumulators, self.trainable_variables)
+        )
+        for acc in self._gradient_accumulators:
+            acc.assign(tf.zeros_like(acc))
+        self._accum_step_counter.assign(0.0)
 
     def _update_gradient_metric(
         self, total_norm: tf.Tensor, total_params: tf.Tensor
