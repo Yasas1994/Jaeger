@@ -1,0 +1,6 @@
+experiments/
+figures/
+logs/
+*.log
+*.weights.h5
+*.h5
