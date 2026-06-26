@@ -1196,9 +1196,7 @@ class DynamicModelBuilder:
                     precision,
                 )
         if train_branch == "pretrain":
-            ga_steps = max(
-                1, int(self.train_cfg.get("gradient_accumulation_steps", 1))
-            )
+            ga_steps = max(1, int(self.train_cfg.get("gradient_accumulation_steps", 1)))
             model.get("rep_model").trainable = True
             model.get("jaeger_projection").gradient_accumulation_steps = ga_steps
             self._gradient_accumulation_steps = ga_steps

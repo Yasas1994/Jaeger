@@ -1867,9 +1867,8 @@ class MetricModel(tf.keras.Model):
 
     def flush_accumulated_gradients(self):
         """Apply any gradients left in the accumulators (e.g. at epoch end)."""
-        if (
-            self.gradient_accumulation_steps <= 1
-            or not hasattr(self, "_gradient_accumulators")
+        if self.gradient_accumulation_steps <= 1 or not hasattr(
+            self, "_gradient_accumulators"
         ):
             return
         if self._accum_step_counter.numpy() > 0:

@@ -237,9 +237,7 @@ def _load_sharded_numpy_dataset(
 
     if cropping:
         first_shard_arrays = {k: data[f"{k}_00000"] for k in feature_keys}
-        first_shard_lengths = {
-            k: data[f"{length_keys[k]}_00000"] for k in feature_keys
-        }
+        first_shard_lengths = {k: data[f"{length_keys[k]}_00000"] for k in feature_keys}
         actual_len = int(first_shard_lengths[feature_keys[0]][0])
         cs = cast("list[int]", crop_sizes)[0]
         stride = resolved_strides[0]
@@ -320,12 +318,9 @@ def _load_sharded_numpy_dataset(
             return
 
         for shard_idx in range(num_shards):
-            shard_arrays = {
-                key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys
-            }
+            shard_arrays = {key: data[f"{key}_{shard_idx:05d}"] for key in feature_keys}
             shard_lengths = {
-                key: data[f"{length_keys[key]}_{shard_idx:05d}"]
-                for key in feature_keys
+                key: data[f"{length_keys[key]}_{shard_idx:05d}"] for key in feature_keys
             }
             shard_labels = data[f"labels_{shard_idx:05d}"]
             # Decide whether each shard can be pre-converted. Integer-encoded
