@@ -1872,6 +1872,19 @@ class MetricModel(tf.keras.Model):
         ):
             return
         if self._accum_step_counter.numpy() > 0:
+            # Some TF/Keras builds leave the optimizer's distribution strategy
+            # unset, which makes apply_gradients fail with
+            # 'NoneType' object has no attribute 'merge_call'. Fall back to the
+            # default strategy before entering the graph-wrapped flush.
+            opt = self.optimizer
+            if getattr(opt, "_distribution_strategy", None) is None:
+                opt._distribution_strategy = tf.distribute.get_strategy()
+            inner = getattr(opt, "_optimizer", None)
+            if (
+                inner is not None
+                and getattr(inner, "_distribution_strategy", None) is None
+            ):
+                inner._distribution_strategy = tf.distribute.get_strategy()
             self._flush_accumulated_gradients()
 
     @tf.function
