@@ -94,14 +94,6 @@ def find_existing_graph_id(path: Path) -> Optional[str]:
     return None
 
 
-class GradientAccumulationCallback(tf.keras.callbacks.Callback):
-    """Flush any remaining accumulated gradients at the end of each epoch."""
-
-    def on_epoch_end(self, epoch: int, logs: dict | None = None) -> None:
-        if hasattr(self.model, "flush_accumulated_gradients"):
-            self.model.flush_accumulated_gradients()
-
-
 class DynamicModelBuilder:
     """Builds Keras models from a configuration dictionary.
 
@@ -1380,11 +1372,8 @@ class DynamicModelBuilder:
                 callbacks.append(cb_class(**params))
             except AttributeError:
                 raise ValueError(f"Unsupported callback: {name}")
-        if (
-            branch == "projection"
-            and getattr(self, "_gradient_accumulation_steps", 1) > 1
-        ):
-            callbacks.append(GradientAccumulationCallback())
+        # Gradient accumulation is handled internally by Keras 3 optimizers;
+        # no epoch-end callback is required.
         return callbacks
 
     # ------------------------------------------------------------------

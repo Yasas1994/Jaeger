@@ -11,9 +11,9 @@ from jaeger.nnlib.v2.layers import MetricModel
 
 def _build_model(gradient_accumulation_steps: int = 1) -> MetricModel:
     inputs = tf.keras.Input(shape=(1,))
-    outputs = tf.keras.layers.Dense(
-        1, use_bias=False, kernel_initializer="ones"
-    )(inputs)
+    outputs = tf.keras.layers.Dense(1, use_bias=False, kernel_initializer="ones")(
+        inputs
+    )
     model = MetricModel(inputs, outputs)
     model.gradient_accumulation_steps = gradient_accumulation_steps
     return model
@@ -42,14 +42,14 @@ def test_weights_update_every_accumulation_steps(accum_steps: int):
         model.train_step((x, y))
     np.testing.assert_allclose(kernel_var.numpy(), initial, atol=1e-6)
 
-    # The next step applies the accumulated gradients.
+    # The next step triggers the optimizer update.
     model.train_step((x, y))
     new_value = kernel_var.numpy()
     assert not np.allclose(new_value, initial, atol=1e-6)
 
 
 def test_accumulated_gradients_are_averaged_over_effective_batch():
-    """With accum=4, four steps should produce the same update as one full batch."""
+    """With accum=4, four steps should equal the average micro-batch gradient."""
     accum_steps = 4
     model = _build_model(gradient_accumulation_steps=accum_steps)
     model.compile(
@@ -64,28 +64,10 @@ def test_accumulated_gradients_are_averaged_over_effective_batch():
     for _ in range(accum_steps):
         model.train_step((x, y))
 
-    # pred = 1*1 = 1, MSE = 1, dW/dstep = 0.5, accumulated over 4 steps = 2.0
-    # SGD lr=1 => W = 1 - 2.0 = -1.0
+    # pred = 1*1 = 1, MSE = 1, dW/dstep = 2.0. Averaged over 4 identical
+    # micro-batches the effective gradient is still 2.0, so SGD lr=1 gives
+    # W = 1 - 2.0 = -1.0 (the same update as one full batch of size 4).
     np.testing.assert_allclose(kernel_var.numpy(), np.array([[-1.0]]), atol=1e-5)
-
-
-def test_flush_applies_remaining_gradients():
-    model = _build_model(gradient_accumulation_steps=4)
-    model.compile(
-        optimizer=tf.keras.optimizers.SGD(learning_rate=1.0),
-        loss_fn=_mse_loss,
-    )
-
-    x = tf.constant([[1.0]], dtype=tf.float32)
-    y = tf.constant([[0.0]], dtype=tf.float32)
-    kernel_var = model.layers[1].kernel
-    initial = kernel_var.numpy().copy()
-
-    model.train_step((x, y))
-    np.testing.assert_allclose(kernel_var.numpy(), initial, atol=1e-6)
-
-    model.flush_accumulated_gradients()
-    assert not np.allclose(kernel_var.numpy(), initial, atol=1e-6)
 
 
 def test_loss_metric_uses_original_scale():
@@ -99,62 +81,35 @@ def test_loss_metric_uses_original_scale():
     y = tf.constant([[0.0]], dtype=tf.float32)
     out = model.train_step((x, y))
 
-    # pred = 2, MSE = 4. The reported loss must be the original MSE, not MSE/4.
+    # pred = 2, MSE = 4. The reported loss must be the original MSE.
     np.testing.assert_allclose(out["loss"].numpy(), 4.0, atol=1e-4)
-
-
-def test_callback_flushes_on_epoch_end():
-    from jaeger.nnlib.builder import GradientAccumulationCallback
-
-    model = _build_model(gradient_accumulation_steps=4)
-    model.compile(
-        optimizer=tf.keras.optimizers.SGD(learning_rate=1.0),
-        loss_fn=_mse_loss,
-    )
-    cb = GradientAccumulationCallback()
-    cb.set_model(model)
-
-    x = tf.constant([[1.0]], dtype=tf.float32)
-    y = tf.constant([[0.0]], dtype=tf.float32)
-    kernel_var = model.layers[1].kernel
-    initial = kernel_var.numpy().copy()
-
-    model.train_step((x, y))
-    np.testing.assert_allclose(kernel_var.numpy(), initial, atol=1e-6)
-
-    cb.on_epoch_end(0)
-    assert not np.allclose(kernel_var.numpy(), initial, atol=1e-6)
 
 
 @pytest.mark.skipif(
     not tf.config.list_physical_devices("GPU"),
     reason="XLA jit_compile is only tested on GPU",
 )
-def test_callback_flushes_on_epoch_end_with_xla():
-    """Regression test for Brain job 7504069.
+def test_gradient_accumulation_works_with_xla():
+    """Regression test for Brain MirroredStrategy/XLA crashes.
 
-    The flush callback must be able to apply gradients after an epoch when the
-    model is compiled with XLA/jit_compile, where the optimizer can fail in
-    eager context with ``'NoneType' object has no attribute 'merge_call'``.
+    Gradient accumulation must work when the train_step is compiled with
+    ``jit_compile``; previously this required a custom epoch-end flush that
+    failed outside a replica context.
     """
-    from jaeger.nnlib.builder import GradientAccumulationCallback
-
-    model = _build_model(gradient_accumulation_steps=4)
+    accum_steps = 4
+    model = _build_model(gradient_accumulation_steps=accum_steps)
     model.compile(
         optimizer=tf.keras.optimizers.SGD(learning_rate=1.0),
         loss_fn=_mse_loss,
         jit_compile=True,
     )
-    cb = GradientAccumulationCallback()
-    cb.set_model(model)
 
     x = tf.constant([[1.0]], dtype=tf.float32)
     y = tf.constant([[0.0]], dtype=tf.float32)
     kernel_var = model.layers[1].kernel
     initial = kernel_var.numpy().copy()
 
-    model.train_step((x, y))
-    np.testing.assert_allclose(kernel_var.numpy(), initial, atol=1e-6)
+    for _ in range(accum_steps):
+        model.train_step((x, y))
 
-    cb.on_epoch_end(0)
     assert not np.allclose(kernel_var.numpy(), initial, atol=1e-6)

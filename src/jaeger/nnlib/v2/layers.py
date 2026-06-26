@@ -1829,80 +1829,28 @@ class MetricModel(tf.keras.Model):
         self.gradient_tracker = tf.keras.metrics.Mean(name="gradient")
 
     def compile(self, optimizer, loss_fn, **kwargs):
-        super(MetricModel, self).compile(**kwargs)
-        self.loss_fn = loss_fn
-        self.optimizer = optimizer
-        # If the caller already set gradient_accumulation_steps (e.g. the
-        # builder), create the accumulators now so they are not created inside
-        # the tf.function traced train_step.
+        # Keras 3 optimizers support gradient accumulation natively. Hand the
+        # setting off to the optimizer so accumulation happens inside the
+        # replicated train_step; this avoids applying gradients from a callback
+        # (e.g. at epoch end) where no replica context exists under
+        # tf.distribute.Strategy such as MirroredStrategy.
         if self.gradient_accumulation_steps > 1:
-            self._ensure_accumulators()
+            self._configure_optimizer_for_gradient_accumulation(optimizer)
+        super(MetricModel, self).compile(optimizer=optimizer, **kwargs)
+        self.loss_fn = loss_fn
 
-    def _ensure_accumulators(self):
-        """Lazy creation of gradient accumulators and step counter."""
-        if not hasattr(self, "_gradient_accumulators"):
-            # Place accumulators on the same device as the trainable variables
-            # so XLA does not try to read a CPU variable from a GPU graph.
-            if self.trainable_variables:
-                device = self.trainable_variables[0].value.device
-            elif tf.config.list_physical_devices("GPU"):
-                device = "/GPU:0"
-            else:
-                device = "/CPU:0"
-            with tf.device(device):
-                self._gradient_accumulators = [
-                    tf.Variable(
-                        tf.zeros_like(v),
-                        trainable=False,
-                        name=f"grad_acc_{i}",
-                    )
-                    for i, v in enumerate(self.trainable_variables)
-                ]
-                self._accum_step_counter = tf.Variable(
-                    0.0,
-                    trainable=False,
-                    name="accum_step_counter",
-                    dtype=tf.float32,
-                )
+    def _configure_optimizer_for_gradient_accumulation(self, optimizer):
+        """Propagate ``gradient_accumulation_steps`` to the core optimizer.
 
-    def flush_accumulated_gradients(self):
-        """Apply any gradients left in the accumulators (e.g. at epoch end)."""
-        if self.gradient_accumulation_steps <= 1 or not hasattr(
-            self, "_gradient_accumulators"
-        ):
-            return
-        if self._accum_step_counter.numpy() > 0:
-            # Some TF/Keras builds leave the optimizer's distribution strategy
-            # unset, which makes apply_gradients fail with
-            # 'NoneType' object has no attribute 'merge_call'. Fall back to the
-            # default strategy before entering the graph-wrapped flush.
-            opt = self.optimizer
-            if getattr(opt, "_distribution_strategy", None) is None:
-                opt._distribution_strategy = tf.distribute.get_strategy()
-            inner = getattr(opt, "_optimizer", None)
-            if (
-                inner is not None
-                and getattr(inner, "_distribution_strategy", None) is None
-            ):
-                inner._distribution_strategy = tf.distribute.get_strategy()
-            self._flush_accumulated_gradients()
-
-    @tf.function
-    def _flush_accumulated_gradients(self):
-        """Graph-wrapped gradient application for epoch-end flush.
-
-        The optimizer must be called inside a ``tf.function`` so it uses the
-        same distribution/runtime context as the compiled ``train_step``.
-        Calling it eagerly from a callback can fail with
-        ``'NoneType' object has no attribute 'merge_call'`` when XLA is
-        enabled.
+        ``LossScaleOptimizer`` wraps the real optimizer; the accumulation
+        setting must live on the inner optimizer because the wrapper delegates
+        gradient application to it.
         """
-        self.optimizer.apply_gradients(
-            zip(self._gradient_accumulators, self.trainable_variables)
-        )
-        for acc in self._gradient_accumulators:
-            acc.assign(tf.zeros_like(acc))
-        self._accum_step_counter.assign(0.0)
+        target = optimizer
+        if isinstance(target, tf.keras.optimizers.LossScaleOptimizer):
+            target = target.inner_optimizer
+        if hasattr(target, "gradient_accumulation_steps"):
+            target.gradient_accumulation_steps = self.gradient_accumulation_steps
 
     def _update_gradient_metric(
         self, total_norm: tf.Tensor, total_params: tf.Tensor
@@ -1936,72 +1884,21 @@ class MetricModel(tf.keras.Model):
         if hasattr(self.optimizer, "get_unscaled_gradients"):
             grads = self.optimizer.get_unscaled_gradients(grads)
 
-        if self.gradient_accumulation_steps <= 1:
-            # Original behaviour: apply gradients every step.
-            self.optimizer.apply_gradients(zip(grads, trainable_vars))
+        # Let the optimizer apply (and optionally accumulate) the gradients.
+        # Keras 3 optimizers support ``gradient_accumulation_steps`` natively;
+        # this keeps all gradient-related work inside the replicated train_step
+        # and avoids the need for a callback-time flush.
+        self.optimizer.apply_gradients(zip(grads, trainable_vars))
 
-            # Compute average gradient norm
-            total_norm = 0.0
-            total_params = 0.0
-            for grad, weight in zip(grads, self.trainable_weights):
-                if grad is not None:
-                    norm = tf.norm(grad)
-                    total_norm += norm
-                    total_params += tf.cast(
-                        tf.math.reduce_prod(weight.shape), tf.float32
-                    )
-            self._update_gradient_metric(total_norm, total_params)
-        else:
-            self._ensure_accumulators()
-
-            # Scale gradients down so the accumulated result averages over the
-            # effective batch. We keep the original (unscaled) loss for metrics.
-            scaled_grads = [
-                grad / tf.cast(self.gradient_accumulation_steps, grad.dtype)
-                if grad is not None
-                else grad
-                for grad in grads
-            ]
-
-            # Accumulate gradients
-            for acc, grad in zip(self._gradient_accumulators, scaled_grads):
-                if grad is not None:
-                    acc.assign_add(grad)
-
-            self._accum_step_counter.assign_add(1.0)
-
-            def _apply_accumulated_gradients():
-                # Compute average gradient norm over the accumulated gradients
-                # *before* resetting them.
-                total_norm = 0.0
-                total_params = 0.0
-                for acc, weight in zip(
-                    self._gradient_accumulators, self.trainable_weights
-                ):
-                    if acc is not None:
-                        norm = tf.norm(acc)
-                        total_norm += norm
-                        total_params += tf.cast(
-                            tf.math.reduce_prod(weight.shape), tf.float32
-                        )
-                self._update_gradient_metric(total_norm, total_params)
-
-                self.optimizer.apply_gradients(
-                    zip(self._gradient_accumulators, trainable_vars)
-                )
-                for acc in self._gradient_accumulators:
-                    acc.assign(tf.zeros_like(acc))
-                self._accum_step_counter.assign(0.0)
-                return tf.constant(True)
-
-            tf.cond(
-                tf.equal(
-                    self._accum_step_counter,
-                    tf.cast(self.gradient_accumulation_steps, tf.float32),
-                ),
-                _apply_accumulated_gradients,
-                lambda: tf.constant(False),
-            )
+        # Compute average gradient norm for monitoring.
+        total_norm = 0.0
+        total_params = 0.0
+        for grad, weight in zip(grads, self.trainable_weights):
+            if grad is not None:
+                norm = tf.norm(grad)
+                total_norm += norm
+                total_params += tf.cast(tf.math.reduce_prod(weight.shape), tf.float32)
+        self._update_gradient_metric(total_norm, total_params)
 
         # Update step and metrics
         self.step += 1
