@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import random
 import tempfile
+from collections.abc import Iterable
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import psutil
 import tensorflow as tf
 
 from jaeger.dataops.convert import convert_dataset
@@ -34,6 +36,12 @@ from jaeger.seqops.synthetic import (
 from jaeger.utils.logging import get_logger
 
 logger = get_logger(log_path=None, log_file=None, level=3)
+
+
+def _resolve_memory_budget_mb(fraction: float = 0.5) -> int:
+    """Return *fraction* of currently available RAM in megabytes."""
+    available_bytes = psutil.virtual_memory().available
+    return max(256, int(available_bytes * fraction / (1024 * 1024)))
 
 
 def _read_csv_records(path: str) -> list[tuple[int, str]]:
@@ -126,6 +134,61 @@ def _run_classifier_inference(
     """Return softmax probabilities for every sample in *dataset*."""
     logits = classifier.predict(dataset, verbose=1)
     return tf.nn.softmax(logits).numpy()
+
+
+def _run_classifier_inference_streamed(
+    classifier: tf.keras.Model,
+    dataset: tf.data.Dataset,
+    records: list[tuple[int, str]],
+    threshold: float,
+    id_records: list[tuple[int, str]],
+    ood_records: list[tuple[int, str]],
+    preds_csv_path: str | None = None,
+) -> None:
+    """Stream classifier inference over *dataset*, selecting ID/OOD per batch.
+
+    Probabilities are appended to *preds_csv_path* (if provided) and
+    high-confidence records are appended to *id_records* / *ood_records*.
+    This avoids materialising the full (N, num_classes) softmax matrix.
+    """
+    if preds_csv_path is not None:
+        Path(preds_csv_path).parent.mkdir(parents=True, exist_ok=True)
+
+    record_idx = 0
+    n_records = len(records)
+
+    for x, y in dataset:
+        logits = classifier(x, training=False)
+        probs = tf.nn.softmax(logits).numpy()
+        batch_n = min(probs.shape[0], n_records - record_idx)
+        if batch_n <= 0:
+            break
+
+        probs_batch = probs[:batch_n]
+        if preds_csv_path is not None:
+            np.savetxt(preds_csv_path, probs_batch, delimiter=",", mode="ab")
+
+        # Integer labels from one-hot encoding.
+        y_true = (
+            y.numpy()[:batch_n]
+            if y.shape.rank == 1
+            else np.argmax(y.numpy(), axis=1)[:batch_n]
+        )
+        conf = np.max(probs_batch, axis=1)
+        pred_class = np.argmax(probs_batch, axis=1)
+
+        for i in range(batch_n):
+            if conf[i] < threshold:
+                continue
+            _, seq = records[record_idx + i]
+            if pred_class[i] == y_true[i]:
+                id_records.append((1, seq))
+            else:
+                ood_records.append((0, seq))
+
+        record_idx += batch_n
+        if record_idx >= n_records:
+            break
 
 
 def _select_id_ood_records(
@@ -353,12 +416,15 @@ def _generate_synthetic_sequences(
     multiplier: float,
     perturbations_cfg: dict[str, Any],
     crop_size: int | None = None,
-) -> list[str]:
-    """Generate corrupted sequences from *records* according to *perturbations_cfg*."""
-    synthetic: list[str] = []
+) -> Iterable[str]:
+    """Yield corrupted sequences from *records* according to *perturbations_cfg*.
+
+    Returning a generator instead of a single list keeps peak memory bounded
+    when the caller processes synthetic sequences in chunks.
+    """
     specs = _normalize_perturbation_cfg(perturbations_cfg)
     if not specs:
-        return synthetic
+        return
 
     counts = _compute_perturbation_counts(records, multiplier, specs, perturbations_cfg)
 
@@ -373,6 +439,8 @@ def _generate_synthetic_sequences(
             initargs=(records, base_seed),
         ) as pool:
             for spec, count in zip(specs, counts):
+                if count <= 0:
+                    continue
                 spec_name = spec["name"]
                 if spec_name == "mix":
                     fn_name = ""
@@ -383,13 +451,13 @@ def _generate_synthetic_sequences(
                     kwargs = spec["kwargs"]
                     n_segments = None
 
-                chunk_size = max(1, count // n_workers)
+                worker_chunk_size = max(1, count // n_workers)
                 chunks = []
                 remaining = count
                 for i in range(n_workers):
                     if remaining <= 0:
                         break
-                    c = min(chunk_size, remaining)
+                    c = min(worker_chunk_size, remaining)
                     chunks.append(c)
                     remaining -= c
 
@@ -407,37 +475,39 @@ def _generate_synthetic_sequences(
                 ]
                 results = pool.starmap(_generate_synthetic_chunk, args)
                 for r in results:
-                    synthetic.extend(r)
+                    for seq in r:
+                        yield seq
     else:
         for spec, count in zip(specs, counts):
+            if count <= 0:
+                continue
             if spec["name"] == "mix":
                 n_segments = spec["n_segments"]
                 for _ in range(count):
-                    synthetic.append(_make_mix_chimera(records, n_segments, crop_size))
+                    yield _make_mix_chimera(records, n_segments, crop_size)
             else:
+                fn = spec["fn"]
+                kwargs = spec["kwargs"]
+                n_records = len(records)
                 for i in range(count):
-                    _, seq = records[i % len(records)]
-                    synthetic.append(spec["fn"](seq, **spec["kwargs"]))
-    return synthetic
+                    _, seq = records[i % n_records]
+                    yield fn(seq, **kwargs)
 
 
-def _filter_synthetic_ood(
+def _filter_synthetic_ood_chunk(
     classifier: tf.keras.Model,
-    synthetic_seqs: list[str],
+    seqs: list[str],
+    tmp_csv: str,
     string_processor_config: dict[str, Any],
     classifier_out_dim: int,
     threshold: float,
     inference_batch_size: int,
     crop_size: int | None = None,
 ) -> list[tuple[int, str]]:
-    """Keep corrupted sequences that the classifier predicts with high confidence."""
-    if not synthetic_seqs:
-        return []
-
-    tmp_csv = Path(tempfile.gettempdir()) / "jaeger_synthetic_ood.csv"
-    _write_csv([(0, s) for s in synthetic_seqs], str(tmp_csv))
+    """Run inference on one chunk of synthetic sequences and keep high-conf OOD."""
+    _write_csv([(0, s) for s in seqs], tmp_csv)
     ds = _build_inference_dataset(
-        str(tmp_csv),
+        tmp_csv,
         string_processor_config,
         classifier_out_dim,
         inference_batch_size,
@@ -445,7 +515,60 @@ def _filter_synthetic_ood(
     )
     probs = _run_classifier_inference(classifier, ds)
     conf = np.max(probs, axis=1)
-    return [(0, seq) for seq, c in zip(synthetic_seqs, conf) if c >= threshold]
+    return [(0, seq) for seq, c in zip(seqs, conf) if c >= threshold]
+
+
+def _filter_synthetic_ood(
+    classifier: tf.keras.Model,
+    synthetic_seqs: Iterable[str],
+    string_processor_config: dict[str, Any],
+    classifier_out_dim: int,
+    threshold: float,
+    inference_batch_size: int,
+    crop_size: int | None = None,
+    chunk_size: int = 10_000,
+) -> list[tuple[int, str]]:
+    """Keep corrupted sequences that the classifier predicts with high confidence.
+
+    Processes *synthetic_seqs* in bounded chunks so the full set of synthetic
+    sequences is never materialised as a single list or inference dataset.
+    """
+    out: list[tuple[int, str]] = []
+    buffer: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_csv = str(Path(tmpdir) / "synthetic_ood_chunk.csv")
+        for seq in synthetic_seqs:
+            buffer.append(seq)
+            if len(buffer) >= chunk_size:
+                out.extend(
+                    _filter_synthetic_ood_chunk(
+                        classifier,
+                        buffer,
+                        tmp_csv,
+                        string_processor_config,
+                        classifier_out_dim,
+                        threshold,
+                        inference_batch_size,
+                        crop_size=crop_size,
+                    )
+                )
+                buffer = []
+        if buffer:
+            out.extend(
+                _filter_synthetic_ood_chunk(
+                    classifier,
+                    buffer,
+                    tmp_csv,
+                    string_processor_config,
+                    classifier_out_dim,
+                    threshold,
+                    inference_batch_size,
+                    crop_size=crop_size,
+                )
+            )
+
+    return out
 
 
 def _convert_to_npz(
@@ -542,14 +665,16 @@ def generate_reliability_data(
         inference_batch_size,
         crop_size=crop_size,
     )
-    y_true = _extract_true_labels(train_ds)
-    probs = _run_classifier_inference(classifier, train_ds)
-    train_preds = str(output_dir_path / "train_preds.csv")
-    np.savetxt(train_preds, probs, delimiter=",")
-    logger.info(f"Wrote training predictions to {train_preds}")
-
-    id_records, real_ood_records = _select_id_ood_records(
-        train_records, y_true, probs, id_threshold
+    id_records: list[tuple[int, str]] = []
+    real_ood_records: list[tuple[int, str]] = []
+    _run_classifier_inference_streamed(
+        classifier,
+        train_ds,
+        train_records,
+        id_threshold,
+        id_records,
+        real_ood_records,
+        preds_csv_path=str(output_dir_path / "train_preds.csv"),
     )
     logger.info(
         f"Selected {len(id_records)} ID and {len(real_ood_records)} "
@@ -558,6 +683,18 @@ def generate_reliability_data(
 
     # ---- synthetic OOD ----
     perturbations_cfg = generator_cfg.get("perturbations", {})
+
+    # Size synthetic generation / filtering chunks from available RAM.
+    available_mb = _resolve_memory_budget_mb(fraction=0.25)
+    seq_len = crop_size or 500
+    synthetic_chunk_size = generator_cfg.get(
+        "synthetic_chunk_size",
+        max(
+            1000,
+            min(100_000, int((available_mb * 1024 * 1024 * 0.5) / max(1, seq_len))),
+        ),
+    )
+
     synthetic_seqs = _generate_synthetic_sequences(
         train_records,
         synthetic_ood_multiplier,
@@ -572,6 +709,7 @@ def generate_reliability_data(
         synthetic_ood_threshold,
         inference_batch_size,
         crop_size=crop_size,
+        chunk_size=synthetic_chunk_size,
     )
     logger.info(f"Selected {len(synthetic_ood_records)} synthetic OOD samples")
 
@@ -590,14 +728,16 @@ def generate_reliability_data(
             inference_batch_size,
             crop_size=crop_size,
         )
-        val_y_true = _extract_true_labels(val_ds)
-        val_probs = _run_classifier_inference(classifier, val_ds)
-        val_preds = str(output_dir_path / "reliability_preds.csv")
-        np.savetxt(val_preds, val_probs, delimiter=",")
-        logger.info(f"Wrote validation predictions to {val_preds}")
-
-        val_id_records, val_ood_records = _select_id_ood_records(
-            val_source_records, val_y_true, val_probs, id_threshold
+        val_id_records: list[tuple[int, str]] = []
+        val_ood_records: list[tuple[int, str]] = []
+        _run_classifier_inference_streamed(
+            classifier,
+            val_ds,
+            val_source_records,
+            id_threshold,
+            val_id_records,
+            val_ood_records,
+            preds_csv_path=str(output_dir_path / "reliability_preds.csv"),
         )
         logger.info(
             f"Selected {len(val_id_records)} ID and {len(val_ood_records)} "
@@ -619,6 +759,7 @@ def generate_reliability_data(
             synthetic_ood_threshold,
             inference_batch_size,
             crop_size=crop_size,
+            chunk_size=synthetic_chunk_size,
         )
         logger.info(
             f"Selected {len(val_synthetic_ood_records)} synthetic OOD samples "
@@ -647,21 +788,44 @@ def generate_reliability_data(
     # ---- convert to NPZ ----
     train_npz = str(output_dir_path / "reliability_train.npz")
     val_npz = str(output_dir_path / "reliability_val.npz")
-    _convert_to_npz(
-        train_csv,
-        train_npz,
-        string_processor_config,
-        reliability_out_dim,
-        model_cfg,
-        generator_cfg,
+
+    sp_cfg = model_cfg.get("string_processor", {})
+    max_memory_mb = generator_cfg.get("max_memory_mb")
+    if max_memory_mb is None:
+        # Use half of currently available RAM for the conversion stage.
+        max_memory_mb = _resolve_memory_budget_mb(fraction=0.5)
+
+    convert_dataset(
+        input_path=train_csv,
+        output_path=train_npz,
+        format=string_processor_config.get("input_type", "translated"),
+        crop_size=crop_size,
+        stride=0,
+        num_classes=reliability_out_dim,
+        num_workers=1,
+        one_hot=string_processor_config.get("seq_onehot", True),
+        codon_map=sp_cfg.get("codon_id", "codon_id"),
+        nucleotide_map=sp_cfg.get("nucleotide_map"),
+        compress="fast",
+        dtype="auto",
+        pad=False,
+        max_memory_mb=max_memory_mb,
     )
-    _convert_to_npz(
-        val_csv,
-        val_npz,
-        string_processor_config,
-        reliability_out_dim,
-        model_cfg,
-        generator_cfg,
+    convert_dataset(
+        input_path=val_csv,
+        output_path=val_npz,
+        format=string_processor_config.get("input_type", "translated"),
+        crop_size=crop_size,
+        stride=0,
+        num_classes=reliability_out_dim,
+        num_workers=1,
+        one_hot=string_processor_config.get("seq_onehot", True),
+        codon_map=sp_cfg.get("codon_id", "codon_id"),
+        nucleotide_map=sp_cfg.get("nucleotide_map"),
+        compress="fast",
+        dtype="auto",
+        pad=False,
+        max_memory_mb=max_memory_mb,
     )
 
     return {

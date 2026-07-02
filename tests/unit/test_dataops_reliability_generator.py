@@ -11,6 +11,34 @@ import pytest
 from jaeger.dataops import reliability_generator as rg
 
 
+def _make_streamed_inference_mock(y_pred: np.ndarray):
+    """Return a mock for _run_classifier_inference_streamed."""
+
+    def _mock(
+        classifier,
+        dataset,
+        records: list[tuple[int, str]],
+        threshold: float,
+        id_records: list[tuple[int, str]],
+        ood_records: list[tuple[int, str]],
+        preds_csv_path: str | None = None,
+    ) -> None:
+        if preds_csv_path is not None:
+            np.savetxt(preds_csv_path, y_pred, delimiter=",")
+        y_true = np.array([label for label, _ in records], dtype=np.int32)
+        conf = np.max(y_pred, axis=1)
+        pred_class = np.argmax(y_pred, axis=1)
+        for i, (label, seq) in enumerate(records):
+            if conf[i] < threshold:
+                continue
+            if pred_class[i] == y_true[i]:
+                id_records.append((1, seq))
+            else:
+                ood_records.append((0, seq))
+
+    return _mock
+
+
 def test_select_id_ood_records():
     records = [(0, "AAAA"), (1, "TTTT"), (0, "CCCC"), (1, "GGGG")]
     y_true = np.array([0, 1, 0, 1], dtype=np.int32)
@@ -34,14 +62,16 @@ def test_select_id_ood_records():
 
 def test_generate_synthetic_sequences_cycles_perturbations(tmp_path: Path):
     records = [(0, "ATCG" * 10), (1, "TGCA" * 10)]
-    seqs = rg._generate_synthetic_sequences(
-        records,
-        multiplier=0.5,
-        perturbations_cfg={
-            "shuffle": True,
-            "subseq_repeat": True,
-            "tandem_repeat": True,
-        },
+    seqs = list(
+        rg._generate_synthetic_sequences(
+            records,
+            multiplier=0.5,
+            perturbations_cfg={
+                "shuffle": True,
+                "subseq_repeat": True,
+                "tandem_repeat": True,
+            },
+        )
     )
     assert len(seqs) == 1  # 0.5 * 2 = 1
     assert len(seqs[0]) == len(records[0][1])
@@ -106,10 +136,12 @@ def test_compute_perturbation_counts_with_explicit_counts():
 
 def test_generate_synthetic_sequences_uses_shuffle_mode():
     records = [(0, "ATCG" * 10)]
-    seqs = rg._generate_synthetic_sequences(
-        records,
-        multiplier=2.0,
-        perturbations_cfg={"shuffle": {"enabled": True, "mode": "dinuc"}},
+    seqs = list(
+        rg._generate_synthetic_sequences(
+            records,
+            multiplier=2.0,
+            perturbations_cfg={"shuffle": {"enabled": True, "mode": "dinuc"}},
+        )
     )
     assert len(seqs) == 2
     assert all(len(s) == len(records[0][1]) for s in seqs)
@@ -140,25 +172,24 @@ def test_generate_reliability_data_smoke(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
 
-    # Mock classifier inference. First call = real data (4 samples),
-    # second call = synthetic data (number depends on multiplier).
-    call_count = 0
+    # Mock streaming classifier inference on real data.
+    real_preds = np.array(
+        [
+            [0.9, 0.1],  # true 0, pred 0 -> ID
+            [0.1, 0.9],  # true 1, pred 1 -> ID
+            [0.1, 0.9],  # true 0, pred 1 -> OOD
+            [0.6, 0.4],  # true 1, low conf -> dropped
+        ],
+        dtype=np.float32,
+    )
+    monkeypatch.setattr(
+        rg,
+        "_run_classifier_inference_streamed",
+        _make_streamed_inference_mock(real_preds),
+    )
 
+    # Mock classifier inference on synthetic OOD chunks.
     def _mock_run_inference(classifier, dataset):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Real data: first two correct & high-conf -> ID; third wrong & high-conf -> OOD.
-            return np.array(
-                [
-                    [0.9, 0.1],  # true 0, pred 0 -> ID
-                    [0.1, 0.9],  # true 1, pred 1 -> ID
-                    [0.1, 0.9],  # true 0, pred 1 -> OOD
-                    [0.6, 0.4],  # true 1, low conf -> dropped
-                ],
-                dtype=np.float32,
-            )
-        # Synthetic data: keep all as high-confidence OOD.
         n = sum(int(batch[0].shape[0]) for batch in dataset)
         return np.tile(np.array([0.9, 0.1], dtype=np.float32), (n, 1))
 
@@ -223,32 +254,53 @@ def test_generate_reliability_data_accepts_raw_csv_paths(monkeypatch, tmp_path: 
 
     monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
 
-    call_count = 0
+    train_real_preds = np.array(
+        [
+            [0.9, 0.1],
+            [0.1, 0.9],
+            [0.1, 0.9],
+            [0.6, 0.4],
+        ],
+        dtype=np.float32,
+    )
+    val_real_preds = np.array(
+        [
+            [0.9, 0.1],
+            [0.1, 0.9],
+        ],
+        dtype=np.float32,
+    )
 
-    def _mock_run_inference(classifier, dataset):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Train real data: first two correct & high-conf -> ID; third wrong & high-conf -> OOD.
-            return np.array(
-                [
-                    [0.9, 0.1],
-                    [0.1, 0.9],
-                    [0.1, 0.9],
-                    [0.6, 0.4],
-                ],
-                dtype=np.float32,
-            )
-        # Val real data: both correct & high-conf -> ID.
-        return np.array(
-            [
-                [0.9, 0.1],
-                [0.1, 0.9],
-            ],
-            dtype=np.float32,
-        )
+    _streamed_call_count = 0
 
-    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+    def _mock_run_inference_streamed(
+        classifier,
+        dataset,
+        records,
+        threshold,
+        id_records,
+        ood_records,
+        preds_csv_path=None,
+    ):
+        nonlocal _streamed_call_count
+        _streamed_call_count += 1
+        y_pred = train_real_preds if _streamed_call_count == 1 else val_real_preds
+        if preds_csv_path is not None:
+            np.savetxt(preds_csv_path, y_pred, delimiter=",")
+        y_true = np.array([label for label, _ in records], dtype=np.int32)
+        conf = np.max(y_pred, axis=1)
+        pred_class = np.argmax(y_pred, axis=1)
+        for i, (label, seq) in enumerate(records):
+            if conf[i] < threshold:
+                continue
+            if pred_class[i] == y_true[i]:
+                id_records.append((1, seq))
+            else:
+                ood_records.append((0, seq))
+
+    monkeypatch.setattr(
+        rg, "_run_classifier_inference_streamed", _mock_run_inference_streamed
+    )
 
     class FakeClassifier:
         pass
@@ -312,22 +364,20 @@ def test_generate_reliability_data_raw_csv_paths_missing_val_falls_back(
 
     monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
 
-    call_count = 0
-
-    def _mock_run_inference(classifier, dataset):
-        nonlocal call_count
-        call_count += 1
-        return np.array(
-            [
-                [0.9, 0.1],
-                [0.1, 0.9],
-                [0.1, 0.9],
-                [0.6, 0.4],
-            ],
-            dtype=np.float32,
-        )
-
-    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+    real_preds = np.array(
+        [
+            [0.9, 0.1],
+            [0.1, 0.9],
+            [0.1, 0.9],
+            [0.6, 0.4],
+        ],
+        dtype=np.float32,
+    )
+    monkeypatch.setattr(
+        rg,
+        "_run_classifier_inference_streamed",
+        _make_streamed_inference_mock(real_preds),
+    )
 
     class FakeClassifier:
         pass
@@ -527,16 +577,17 @@ def test_generate_reliability_data_adds_synthetic_ood_to_validation(
 
     monkeypatch.setattr(rg, "_build_inference_dataset", _mock_build_dataset)
 
-    def _mock_run_inference(classifier, dataset):
-        n = sum(int(batch[0].shape[0]) for batch in dataset)
-        return np.tile(np.array([0.9, 0.1], dtype=np.float32), (n, 1))
-
-    monkeypatch.setattr(rg, "_run_classifier_inference", _mock_run_inference)
+    real_preds = np.tile(np.array([0.9, 0.1], dtype=np.float32), (2, 1))
+    monkeypatch.setattr(
+        rg,
+        "_run_classifier_inference_streamed",
+        _make_streamed_inference_mock(real_preds),
+    )
 
     def _mock_generate_synthetic(
         records, multiplier, perturbations_cfg, crop_size=None
     ):
-        return ["SYNTHETIC_SEQ"] * int(len(records) * multiplier)
+        return iter(["SYNTHETIC_SEQ"] * int(len(records) * multiplier))
 
     monkeypatch.setattr(rg, "_generate_synthetic_sequences", _mock_generate_synthetic)
 
@@ -602,16 +653,18 @@ def test_normalize_perturbation_cfg_mix_structured():
 def test_generate_synthetic_sequences_mix_requires_distinct_classes():
     records = [(0, "A" * 100)] * 5
     with pytest.raises(ValueError, match="mix perturbation requires at least 2"):
-        rg._generate_synthetic_sequences(
-            records,
-            multiplier=1.0,
-            perturbations_cfg={
-                "shuffle": False,
-                "subseq_repeat": False,
-                "tandem_repeat": False,
-                "mix": {"enabled": True, "n_segments": 2},
-            },
-            crop_size=50,
+        list(
+            rg._generate_synthetic_sequences(
+                records,
+                multiplier=1.0,
+                perturbations_cfg={
+                    "shuffle": False,
+                    "subseq_repeat": False,
+                    "tandem_repeat": False,
+                    "mix": {"enabled": True, "n_segments": 2},
+                },
+                crop_size=50,
+            )
         )
 
 
@@ -626,16 +679,18 @@ def test_generate_synthetic_sequences_mix_produces_chimera(monkeypatch):
         return _original_sample(population, k)
 
     monkeypatch.setattr("jaeger.seqops.synthetic.random.sample", _patched_sample)
-    seqs = rg._generate_synthetic_sequences(
-        records,
-        multiplier=1.0,
-        perturbations_cfg={
-            "shuffle": False,
-            "subseq_repeat": False,
-            "tandem_repeat": False,
-            "mix": {"enabled": True, "n_segments": 2},
-        },
-        crop_size=50,
+    seqs = list(
+        rg._generate_synthetic_sequences(
+            records,
+            multiplier=1.0,
+            perturbations_cfg={
+                "shuffle": False,
+                "subseq_repeat": False,
+                "tandem_repeat": False,
+                "mix": {"enabled": True, "n_segments": 2},
+            },
+            crop_size=50,
+        )
     )
     assert len(seqs) == 2  # 1.0 * 2 records
     for seq in seqs:
