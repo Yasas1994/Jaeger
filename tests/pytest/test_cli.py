@@ -57,6 +57,14 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "jaeger" in result.output.lower()
 
+    def test_predict_help_shows_save_vector_flags(self):
+        """predict --help should advertise --save-embedding and --save-nmd."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["predict", "--help"])
+        assert result.exit_code == 0
+        assert "--save-embedding" in result.output
+        assert "--save-nmd" in result.output
+
 
 class TestHealthCommand:
     """Test the health command via CLI."""
