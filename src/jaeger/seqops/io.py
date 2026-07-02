@@ -54,7 +54,7 @@ def fragment_generator(
     def _gen():
         fa = pyfastx.Fasta(file_path, build_index=False)
         with Progress(transient=True, disable=no_progress) as progress:
-            task = progress.add_task("[cyan]Reading fasta...", total=num)
+            task = progress.add_task("[cyan]hunting...", total=num)
             for j, record in enumerate(fa):
                 progress.update(task, advance=1)
                 seqlen = len(record[1])
