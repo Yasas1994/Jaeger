@@ -1,11 +1,12 @@
-import numpy as np
-import psutil
 import sys
 import time
 import traceback
 from importlib.metadata import version
 from importlib.resources import files
 from pathlib import Path
+
+import numpy as np
+import psutil
 import tensorflow as tf
 
 from jaeger.nnlib.inference import InferModel, TFLiteInferModel, ONNXEngine
@@ -21,7 +22,7 @@ GB_BYTES = 1024**3
 
 
 def _save_auxiliary_outputs(
-    y_pred: dict,
+    y_pred: dict[str, np.ndarray],
     output_dir: Path,
     file_base: str,
     save_embedding: bool,
@@ -33,12 +34,23 @@ def _save_auxiliary_outputs(
     The main ``jaeger predict`` outputs (TSV tables, window scores, FASTA
     sequences, etc.) are handled elsewhere. This helper only persists the
     ``embedding`` and ``nmd`` tensors when the user explicitly requests them.
+
+    Args:
+        y_pred: Dictionary of model outputs, must contain ``meta_0`` headers
+            unless both vector outputs are absent.
+        output_dir: Directory where the .npz files will be written.
+        file_base: Base filename prefix (e.g., sample name).
+        save_embedding: If True, write ``<file_base>_embedding.npz``.
+        save_nmd: If True, write ``<file_base>_nmd.npz``.
+        logger: Optional logger for diagnostic messages.
     """
+    headers = y_pred.get("meta_0", np.array([], dtype=object))
+
     if save_embedding and "embedding" in y_pred:
         np.savez(
             output_dir / f"{file_base}_embedding.npz",
             embedding=y_pred["embedding"],
-            headers=y_pred["meta_0"],
+            headers=headers,
         )
         if logger is not None:
             logger.info(f"{file_base}_embedding.npz created")
@@ -46,10 +58,11 @@ def _save_auxiliary_outputs(
         logger.info("Skipping embedding output; pass --save-embedding to save it.")
 
     if save_nmd and "nmd" in y_pred:
+        # Preserving legacy NPZ key name "embedding" for NMD vectors.
         np.savez(
             output_dir / f"{file_base}_nmd.npz",
             embedding=y_pred["nmd"],
-            headers=y_pred["meta_0"],
+            headers=headers,
         )
         if logger is not None:
             logger.info(f"{file_base}_nmd.npz created")
