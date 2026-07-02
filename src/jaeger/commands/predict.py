@@ -476,8 +476,6 @@ def run_core(**kwargs):
 
         # --- Write window-wise scores + metadata to NPZ ---
         if kwargs.get("window_scores"):
-            import numpy as np
-
             output_scores = f"{file_base}_window_scores.npz"
             output_scores_path = OUTPUT_DIR / output_scores
             logger.info(
