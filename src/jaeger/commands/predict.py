@@ -1,9 +1,10 @@
-import traceback
-import sys
+import numpy as np
 import psutil
+import sys
 import time
-from importlib.resources import files
+import traceback
 from importlib.metadata import version
+from importlib.resources import files
 from pathlib import Path
 import tensorflow as tf
 
@@ -17,6 +18,43 @@ from jaeger.utils.logging import description, get_logger
 
 # from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
 GB_BYTES = 1024**3
+
+
+def _save_auxiliary_outputs(
+    y_pred: dict,
+    output_dir: Path,
+    file_base: str,
+    save_embedding: bool,
+    save_nmd: bool,
+    logger=None,
+) -> None:
+    """Write optional embedding and NMD vector files.
+
+    The main ``jaeger predict`` outputs (TSV tables, window scores, FASTA
+    sequences, etc.) are handled elsewhere. This helper only persists the
+    ``embedding`` and ``nmd`` tensors when the user explicitly requests them.
+    """
+    if save_embedding and "embedding" in y_pred:
+        np.savez(
+            output_dir / f"{file_base}_embedding.npz",
+            embedding=y_pred["embedding"],
+            headers=y_pred["meta_0"],
+        )
+        if logger is not None:
+            logger.info(f"{file_base}_embedding.npz created")
+    elif "embedding" in y_pred and logger is not None:
+        logger.info("Skipping embedding output; pass --save-embedding to save it.")
+
+    if save_nmd and "nmd" in y_pred:
+        np.savez(
+            output_dir / f"{file_base}_nmd.npz",
+            embedding=y_pred["nmd"],
+            headers=y_pred["meta_0"],
+        )
+        if logger is not None:
+            logger.info(f"{file_base}_nmd.npz created")
+    elif "nmd" in y_pred and logger is not None:
+        logger.info("Skipping nmd output; pass --save-nmd to save it.")
 
 
 def run_core(**kwargs):
@@ -460,18 +498,12 @@ def run_core(**kwargs):
         logger.info(
             f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
         )
-        import numpy as np
-
-        if "embedding" in y_pred:
-            np.savez(
-                OUTPUT_DIR / f"{file_base}_embedding.npz",
-                embedding=y_pred["embedding"],
-                headers=y_pred["meta_0"],
-            )
-        if "nmd" in y_pred:
-            np.savez(
-                OUTPUT_DIR / f"{file_base}_nmd.npz",
-                embedding=y_pred["nmd"],
-                headers=y_pred["meta_0"],
-            )
+        _save_auxiliary_outputs(
+            y_pred,
+            OUTPUT_DIR,
+            file_base,
+            save_embedding=kwargs.get("save_embedding", False),
+            save_nmd=kwargs.get("save_nmd", False),
+            logger=logger,
+        )
         # INPUT_FILE_MASKED.unlink()
