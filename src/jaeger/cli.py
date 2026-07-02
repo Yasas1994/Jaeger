@@ -271,6 +271,16 @@ def health(**kwargs):
     is_flag=True,
     help="Use INT8 quantized ONNX model (use with --onnx). Requires 'jaeger utils convert-graph --mode onnx --int8'.",
 )
+@click.option(
+    "--save-embedding",
+    is_flag=True,
+    help="Save per-window embedding vectors to <sample>_embedding.npz",
+)
+@click.option(
+    "--save-nmd",
+    is_flag=True,
+    help="Save per-window NMD (novelty) vectors to <sample>_nmd.npz",
+)
 def predict(**kwargs):
     """
     Runs Jaeger on a dataset
