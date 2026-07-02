@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 from jaeger.commands.predict import _save_auxiliary_outputs
 
@@ -42,9 +43,10 @@ def test_save_embedding_flag_writes_file(tmp_path: Path) -> None:
     assert (tmp_path / "sample_embedding.npz").exists()
     assert not (tmp_path / "sample_nmd.npz").exists()
 
-    loaded = np.load(tmp_path / "sample_embedding.npz", allow_pickle=True)
-    assert np.array_equal(loaded["embedding"], y_pred["embedding"])
-    assert np.array_equal(loaded["headers"], y_pred["meta_0"])
+    # headers are object-dtype strings, so allow_pickle is required
+    with np.load(tmp_path / "sample_embedding.npz", allow_pickle=True) as loaded:
+        assert np.array_equal(loaded["embedding"], y_pred["embedding"])
+        assert np.array_equal(loaded["headers"], y_pred["meta_0"])
 
 
 def test_save_nmd_flag_writes_file(tmp_path: Path) -> None:
@@ -59,9 +61,10 @@ def test_save_nmd_flag_writes_file(tmp_path: Path) -> None:
     assert not (tmp_path / "sample_embedding.npz").exists()
     assert (tmp_path / "sample_nmd.npz").exists()
 
-    loaded = np.load(tmp_path / "sample_nmd.npz", allow_pickle=True)
-    assert np.array_equal(loaded["embedding"], y_pred["nmd"])
-    assert np.array_equal(loaded["headers"], y_pred["meta_0"])
+    # headers are object-dtype strings, so allow_pickle is required
+    with np.load(tmp_path / "sample_nmd.npz", allow_pickle=True) as loaded:
+        assert np.array_equal(loaded["embedding"], y_pred["nmd"])
+        assert np.array_equal(loaded["headers"], y_pred["meta_0"])
 
 
 def test_save_both_flags_writes_both_files(tmp_path: Path) -> None:
@@ -75,6 +78,14 @@ def test_save_both_flags_writes_both_files(tmp_path: Path) -> None:
     )
     assert (tmp_path / "sample_embedding.npz").exists()
     assert (tmp_path / "sample_nmd.npz").exists()
+
+    # headers are object-dtype strings, so allow_pickle is required
+    with np.load(tmp_path / "sample_embedding.npz", allow_pickle=True) as loaded:
+        assert np.array_equal(loaded["embedding"], y_pred["embedding"])
+        assert np.array_equal(loaded["headers"], y_pred["meta_0"])
+    with np.load(tmp_path / "sample_nmd.npz", allow_pickle=True) as loaded:
+        assert np.array_equal(loaded["embedding"], y_pred["nmd"])
+        assert np.array_equal(loaded["headers"], y_pred["meta_0"])
 
 
 def test_missing_outputs_are_ignored(tmp_path: Path) -> None:
