@@ -74,8 +74,16 @@ docs/superpowers
 # agent skills
 .agents/
 
+# Experiment directories (local sweep configs, not part of the package)
+mutiscale_receptive_field_experiments/
+receptive_field_experiments/
+
 #slurm scripts
 slurm/
 
 #singularity containers
 singularity/*.sif
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
