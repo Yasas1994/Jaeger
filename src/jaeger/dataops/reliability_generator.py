@@ -544,6 +544,10 @@ def generate_reliability_data(
     )
     y_true = _extract_true_labels(train_ds)
     probs = _run_classifier_inference(classifier, train_ds)
+    train_preds = str(output_dir_path / "train_preds.csv")
+    np.savetxt(train_preds, probs, delimiter=",")
+    logger.info(f"Wrote training predictions to {train_preds}")
+
     id_records, real_ood_records = _select_id_ood_records(
         train_records, y_true, probs, id_threshold
     )
@@ -588,6 +592,10 @@ def generate_reliability_data(
         )
         val_y_true = _extract_true_labels(val_ds)
         val_probs = _run_classifier_inference(classifier, val_ds)
+        val_preds = str(output_dir_path / "reliability_preds.csv")
+        np.savetxt(val_preds, val_probs, delimiter=",")
+        logger.info(f"Wrote validation predictions to {val_preds}")
+
         val_id_records, val_ood_records = _select_id_ood_records(
             val_source_records, val_y_true, val_probs, id_threshold
         )
