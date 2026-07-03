@@ -166,7 +166,8 @@ def _run_classifier_inference_streamed(
 
         probs_batch = probs[:batch_n]
         if preds_csv_path is not None:
-            np.savetxt(preds_csv_path, probs_batch, delimiter=",", mode="ab")
+            with open(preds_csv_path, "ab") as fh:
+                np.savetxt(fh, probs_batch, delimiter=",")
 
         # Integer labels from one-hot encoding.
         y_true = (
