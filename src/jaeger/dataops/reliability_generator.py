@@ -646,6 +646,9 @@ def generate_reliability_data(
     if not train_csv_path:
         raise ValueError("A training raw CSV path must be provided")
 
+    # Prediction CSVs are named after the raw input CSVs.
+    train_preds_name = Path(train_csv_path).stem + "_preds.csv"
+
     crop_size = _resolve_reliability_crop_size(generator_cfg, string_processor_config)
     logger.info(
         f"Using reliability crop size {crop_size} (nucleotides) for classifier inference"
@@ -674,8 +677,9 @@ def generate_reliability_data(
         id_threshold,
         id_records,
         real_ood_records,
-        preds_csv_path=str(output_dir_path / "train_preds.csv"),
+        preds_csv_path=str(output_dir_path / train_preds_name),
     )
+    logger.info(f"Wrote training predictions to {output_dir_path / train_preds_name}")
     logger.info(
         f"Selected {len(id_records)} ID and {len(real_ood_records)} "
         "high-confidence wrong OOD samples from real data"
@@ -715,6 +719,8 @@ def generate_reliability_data(
 
     # ---- build train / validation records ----
     if val_csv_path:
+        val_preds_name = Path(val_csv_path).stem + "_preds.csv"
+
         logger.info(f"Reading raw validation sequences from {val_csv_path}")
         val_source_records = _read_csv_records(val_csv_path)
         if not val_source_records:
@@ -737,7 +743,10 @@ def generate_reliability_data(
             id_threshold,
             val_id_records,
             val_ood_records,
-            preds_csv_path=str(output_dir_path / "reliability_preds.csv"),
+            preds_csv_path=str(output_dir_path / val_preds_name),
+        )
+        logger.info(
+            f"Wrote validation predictions to {output_dir_path / val_preds_name}"
         )
         logger.info(
             f"Selected {len(val_id_records)} ID and {len(val_ood_records)} "
