@@ -235,19 +235,22 @@ def _normalize_perturbation_cfg(
         shuffle_dict = (
             shuffle_value if isinstance(shuffle_value, dict) else {"mode": "random"}
         )
-        mode = shuffle_dict.get("mode", "random")
-        if mode == "random":
-            fn = apply_shuffle
-            kwargs: dict[str, Any] = {}
-        elif mode == "dinuc":
-            fn = apply_dinuc_shuffle
-            kwargs = {}
-        elif mode == "kmer":
-            fn = apply_kmer_shuffle
-            kwargs = {"k": shuffle_dict.get("k", 2)}
-        else:
-            raise ValueError(f"Unsupported shuffle mode: {mode}")
-        specs.append({"name": "shuffle", "fn": fn, "kwargs": kwargs})
+        modes = shuffle_dict.get("mode", "random")
+        if isinstance(modes, str):
+            modes = [modes]
+        for mode in modes:
+            if mode == "random":
+                fn = apply_shuffle
+                kwargs: dict[str, Any] = {}
+            elif mode == "dinuc":
+                fn = apply_dinuc_shuffle
+                kwargs = {}
+            elif mode == "kmer":
+                fn = apply_kmer_shuffle
+                kwargs = {"k": shuffle_dict.get("k", 2)}
+            else:
+                raise ValueError(f"Unsupported shuffle mode: {mode}")
+            specs.append({"name": "shuffle", "fn": fn, "kwargs": kwargs})
 
     # ---- subsequence repeat ----
     subseq_value = perturbations_cfg.get("subseq_repeat", True)

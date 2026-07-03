@@ -105,6 +105,20 @@ def test_normalize_perturbation_cfg_structured():
     assert specs[2]["kwargs"]["motif_length_range"] == (4, 8)
 
 
+def test_normalize_perturbation_cfg_multiple_shuffle_modes():
+    cfg = {
+        "shuffle": {"enabled": True, "mode": ["dinuc", "random"]},
+        "subseq_repeat": False,
+        "tandem_repeat": False,
+    }
+    specs = rg._normalize_perturbation_cfg(cfg)
+    shuffle_specs = [s for s in specs if s["name"] == "shuffle"]
+    assert len(shuffle_specs) == 2
+    fns = {s["fn"] for s in shuffle_specs}
+    assert rg.apply_dinuc_shuffle in fns
+    assert rg.apply_shuffle in fns
+
+
 def test_normalize_perturbation_cfg_legacy_booleans():
     cfg = {"shuffle": True, "subseq_repeat": False, "tandem_repeat": True}
     specs = rg._normalize_perturbation_cfg(cfg)
@@ -132,6 +146,21 @@ def test_compute_perturbation_counts_with_explicit_counts():
     # explicit counts are honored exactly.
     assert counts[0] == 10
     assert counts[1] == 20
+
+
+def test_compute_perturbation_counts_splits_across_multiple_shuffle_modes():
+    records = [(0, "A" * 100)] * 12
+    # Two shuffle specs plus two other perturbations -> four implicit specs.
+    specs = [
+        {"name": "shuffle"},
+        {"name": "shuffle"},
+        {"name": "subseq_repeat"},
+        {"name": "tandem_repeat"},
+    ]
+    cfg = {}
+    counts = rg._compute_perturbation_counts(records, 1.0, specs, cfg)
+    assert sum(counts) == 12
+    assert all(c > 0 for c in counts)
 
 
 def test_generate_synthetic_sequences_uses_shuffle_mode():
