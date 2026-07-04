@@ -219,8 +219,17 @@ def _run_classifier_inference_streamed(
                     )
                     return
             elif num_classes is not None and raw.shape[1] == num_classes:
-                # Legacy format: probabilities only.
-                logger.info("Legacy prediction CSV detected; using row order.")
+                # Legacy format: probabilities only. Upgrade in-place so that the
+                # file becomes self-describing for future runs.
+                logger.info("Legacy prediction CSV detected; upgrading format.")
+                expected_labels = np.array(
+                    [label for label, _ in records], dtype=np.int32
+                )
+                seq_ids = np.arange(n_records, dtype=np.int32).reshape(-1, 1)
+                labels_out = expected_labels.reshape(-1, 1)
+                upgraded = np.concatenate([seq_ids, labels_out, raw], axis=1)
+                fmt = ["%d", "%d"] + ["%.6f"] * num_classes
+                np.savetxt(preds_csv_path, upgraded, delimiter=",", fmt=fmt)
                 _select_id_ood_from_probs(
                     raw, records, threshold, id_records, ood_records
                 )
@@ -258,8 +267,10 @@ def _run_classifier_inference_streamed(
             ).reshape(-1, 1)
             labels_out = y_true.astype(np.int32).reshape(-1, 1)
             out = np.concatenate([seq_ids, labels_out, probs_batch], axis=1)
+            n_cls = probs_batch.shape[1]
+            fmt = ["%d", "%d"] + ["%.6f"] * n_cls
             with open(preds_csv_path, "ab") as fh:
-                np.savetxt(fh, out, delimiter=",")
+                np.savetxt(fh, out, delimiter=",", fmt=fmt)
 
         conf = np.max(probs_batch, axis=1)
         pred_class = np.argmax(probs_batch, axis=1)
