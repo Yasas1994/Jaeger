@@ -281,6 +281,40 @@ def health(**kwargs):
     is_flag=True,
     help="Save per-window NMD (novelty) vectors to <sample>_nmd.npz",
 )
+@click.option(
+    "--refine",
+    is_flag=True,
+    help="Apply post-hoc refinement using the model's shipped calibration file.",
+)
+@click.option(
+    "--refine-mode",
+    type=click.Choice(["gated", "weighted", "unweighted"]),
+    default="gated",
+    help="Contig aggregation mode when --refine is active.",
+)
+@click.option(
+    "--refine-min-windows",
+    type=int,
+    default=3,
+    help="Minimum informative windows required for a refined contig call.",
+)
+@click.option(
+    "--refine-merge-split",
+    type=click.Choice(["half", "full"]),
+    default="half",
+    help="How merged-label windows split weight between constituent classes.",
+)
+@click.option(
+    "--refine-allow-merged-contig-call",
+    is_flag=True,
+    help="Allow contig-level hedged calls (bacteria_or_plasmid / virus_any).",
+)
+@click.option(
+    "--refine-contig-hedge-margin",
+    type=float,
+    default=1.0,
+    help="Margin threshold for contig-level hedge (when --refine-allow-merged-contig-call).",
+)
 def predict(**kwargs):
     """
     Runs Jaeger on a dataset

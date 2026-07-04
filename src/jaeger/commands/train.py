@@ -21,6 +21,8 @@ from typing import Any
 os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 
 import click
+import numpy as np
+import polars as pl
 import tensorflow as tf
 from pathlib import Path
 
@@ -100,6 +102,59 @@ def _apply_ignore_convergence(
         if branch_ckpt is not None:
             branch_ckpt["is_converged"] = False
             logger.info(f"Ignoring convergence marker for {branch}")
+
+
+def _fit_and_save_refinement(
+    model: tf.keras.Model,
+    val_data: tf.data.Dataset,
+    save_path: Path,
+    model_name: str,
+    quantile: float = 0.05,
+) -> None:
+    """Fit refinement thresholds on validation data and save a YAML calibration file."""
+    from jaeger.postprocess.refinement import (
+        CLASSES,
+        SCORE_COLS,
+        add_score_features,
+        fit_thresholds,
+        save_refinement,
+    )
+
+    try:
+        y_pred = model.predict(val_data, verbose=0)
+        logits = y_pred["prediction"]
+        if logits.ndim > 2:
+            logits = logits.reshape(-1, logits.shape[-1])
+
+        labels = []
+        for _, y in val_data:
+            labels.append(y.numpy())
+        labels = np.concatenate(labels, axis=0)
+        if labels.ndim > 1:
+            labels = labels.argmax(axis=1)
+
+        predictions = logits.argmax(axis=1)
+        df = pl.DataFrame(
+            {score_col: logits[:, i] for i, score_col in enumerate(SCORE_COLS)}
+        ).with_columns(
+            [
+                pl.Series("prediction", [CLASSES[i] for i in predictions]),
+                pl.Series("true", [CLASSES[i] for i in labels]),
+            ]
+        )
+        df = add_score_features(df)
+        taus = fit_thresholds(df, quantile=quantile)
+        refine_path = save_path / f"{model_name}_refine.yaml"
+        save_refinement(
+            taus,
+            refine_path,
+            jaeger_model=model_name,
+            quantile=quantile,
+            notes="auto-fitted after training",
+        )
+        logger.info(f"Saved refinement thresholds to {refine_path}")
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"Refinement threshold fitting failed: {exc}")
 
 
 def _resolve_numpy_crop_params(
@@ -982,6 +1037,20 @@ def train_fragment_core(**kwargs):
                 suffix="fragment",
                 metadata=kwargs.get("meta", None),
             )
+
+            if test_val_data is not None:
+                save_path, model_name = builder._prepare_save_path(
+                    num_params=model_num_params,
+                    suffix="fragment",
+                    metadata=kwargs.get("meta", None),
+                    clear=False,
+                )
+                _fit_and_save_refinement(
+                    models.get("jaeger_model"),
+                    test_val_data,
+                    save_path,
+                    model_name,
+                )
 
 
 if __name__ == "__main__":

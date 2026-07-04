@@ -4,12 +4,22 @@ import traceback
 from importlib.metadata import version
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import psutil
 import tensorflow as tf
 
+import polars as pl
+
 from jaeger.nnlib.inference import InferModel, TFLiteInferModel, ONNXEngine
+from jaeger.postprocess.refinement import (
+    SCORE_COLS,
+    add_score_features,
+    aggregate_contig,
+    load_refinement,
+    refine,
+)
 from jaeger.seqops.io import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
@@ -68,6 +78,50 @@ def _save_auxiliary_outputs(
             logger.info(f"{file_base}_nmd.npz created")
     elif "nmd" in y_pred and logger is not None:
         logger.info("Skipping nmd output; pass --save-nmd to save it.")
+
+
+def _build_refined_contig_df(
+    data_full: dict,
+    taus: dict[str, dict[str, float]],
+    mode: str,
+    min_windows: int,
+    merge_split: str,
+    allow_merged_contig_call: bool,
+    contig_hedge_margin: float,
+) -> pl.DataFrame | None:
+    """Build a refined per-contig DataFrame from raw window logits."""
+    predictions = data_full.get("predictions")
+    headers = data_full.get("headers")
+    if predictions is None or headers is None:
+        return None
+
+    rows: list[dict] = []
+    for contig_id, logits in zip(headers, predictions):
+        if logits.ndim != 2:
+            continue
+        for window_idx, window_logits in enumerate(logits):
+            row: dict[str, Any] = {
+                "contig_id": contig_id,
+                "window_idx": window_idx,
+            }
+            for score_col, value in zip(SCORE_COLS, window_logits):
+                row[score_col] = value
+            rows.append(row)
+
+    if not rows:
+        return None
+
+    window_df = pl.DataFrame(rows)
+    window_df = add_score_features(window_df)
+    window_df = refine(window_df, taus)
+    return aggregate_contig(
+        window_df,
+        mode=mode,
+        min_windows=min_windows,
+        merge_split=merge_split,
+        allow_merged_contig_call=allow_merged_contig_call,
+        contig_hedge_margin=contig_hedge_margin,
+    )
 
 
 def run_core(**kwargs):
@@ -379,6 +433,36 @@ def run_core(**kwargs):
             fsize=kwargs.get("fsize"),
             term_repeats=term_repeats,
         )
+
+        refined_contig = None
+        if kwargs.get("refine", False):
+            graph_dir = Path(model_info["graph"])
+            refine_path = graph_dir.parent / f"{model_name}_refine.yaml"
+            if refine_path.exists():
+                try:
+                    refine_cfg = load_refinement(refine_path, expect_model=model_name)
+                    refined_contig = _build_refined_contig_df(
+                        data_full,
+                        refine_cfg["taus"],
+                        mode=kwargs.get("refine_mode", "gated"),
+                        min_windows=kwargs.get("refine_min_windows", 3),
+                        merge_split=kwargs.get("refine_merge_split", "half"),
+                        allow_merged_contig_call=kwargs.get(
+                            "refine_allow_merged_contig_call", False
+                        ),
+                        contig_hedge_margin=kwargs.get(
+                            "refine_contig_hedge_margin", 1.0
+                        ),
+                    )
+                    logger.info(f"Applied refinement calibration from {refine_path}")
+                except Exception as e:  # pragma: no cover
+                    logger.warning(f"Refinement failed: {e}; using default predictions")
+            else:
+                logger.warning(
+                    f"No refinement calibration found at {refine_path}; "
+                    "using default predictions"
+                )
+
         # print(len(data['headers']))
         num_written = write_output(
             data,
@@ -388,6 +472,9 @@ def run_core(**kwargs):
             output_phage_table_path=output_phage_table_path,
             reliability_cutoff=kwargs.get("rc", 0.5),
             phage_score=kwargs.get("pc", 1),
+            refined_contig=refined_contig.to_pandas()
+            if refined_contig is not None
+            else None,
         )
 
         logger.info(f"processed {num_written}/{num} sequences")

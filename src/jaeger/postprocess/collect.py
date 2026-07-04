@@ -413,6 +413,9 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
 
         output_file_path (Path): The output file path for the summary.
         output_phage_file_path (Path): The output file path for phage-related summary.
+        refined_contig (pd.DataFrame | None): Optional refined per-contig calls
+            from the post-hoc refinement layer. Merged into the summary on
+            ``contig_id``.
 
     Returns:
     -------
@@ -490,6 +493,24 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
         on="contig_id",
         how="left",
     )  # .reset_index(names="contig_id")
+
+    refined_contig = kwargs.get("refined_contig")
+    if refined_contig is not None:
+        df = pd.merge(
+            left=df,
+            right=refined_contig[
+                [
+                    "contig_id",
+                    "contig_call",
+                    "contig_top_logit",
+                    "contig_margin",
+                    "n_windows_used",
+                    "n_merged_windows",
+                ]
+            ],
+            on="contig_id",
+            how="left",
+        )
 
     # print(data["repeats"], data["repeats"].shape)
     # print(df)
