@@ -143,6 +143,17 @@ def health(**kwargs):
     help="The gap between two the sliding windows (stride==fsize)",
 )
 @click.option(
+    "--dynamic-stride",
+    is_flag=True,
+    help="For short contigs, distribute windows evenly so the final window reaches the contig end.",
+)
+@click.option(
+    "--dynamic-stride-threshold",
+    type=float,
+    default=2.0,
+    help="Multiplier of --fsize below which dynamic stride is applied (default: 2.0).",
+)
+@click.option(
     "-m",
     "--model",
     default="default",

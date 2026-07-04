@@ -6,6 +6,7 @@ Fragment generation, reading, writing, and validation of DNA sequences.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -34,6 +35,42 @@ TRF_MATCH, TRF_MISMATCH, TRF_DELTA, TRF_PM, TRF_PI, TRF_MINSCORE, TRF_MAXPERIOD 
 )
 
 
+def _window_indices(
+    seqlen: int,
+    fragsize: int,
+    stride: int | None,
+    dynamic_stride: bool,
+    dynamic_stride_threshold: float,
+) -> list[int]:
+    """Return window start indices for a contig.
+
+    If *dynamic_stride* is enabled and the contig is shorter than
+    *dynamic_stride_threshold* * *fragsize*, windows are distributed evenly so
+    that the final window reaches the contig end. Otherwise the legacy fixed
+    stride is used.
+    """
+    if not dynamic_stride or seqlen >= dynamic_stride_threshold * fragsize:
+        step = fragsize if stride is None else stride
+        return list(range(0, seqlen - (fragsize - 1), step))
+
+    n_windows = max(1, math.ceil(seqlen / fragsize))
+    if n_windows == 1:
+        return [0]
+
+    raw_stride = (seqlen - fragsize) / (n_windows - 1)
+    indices = [int(round(i * raw_stride)) for i in range(n_windows)]
+    indices[-1] = seqlen - fragsize
+
+    # Deduplicate while preserving order.
+    seen: set[int] = set()
+    unique: list[int] = []
+    for idx in indices:
+        if idx not in seen:
+            seen.add(idx)
+            unique.append(idx)
+    return unique
+
+
 def fragment_generator(
     file_path: str,
     fragsize: int | None = None,
@@ -41,6 +78,8 @@ def fragment_generator(
     num: int | None = None,
     no_progress: bool = True,
     dustmask: bool = True,
+    dynamic_stride: bool = False,
+    dynamic_stride_threshold: float = 2.0,
 ) -> Generator[str, None, None]:
     """Generate fragments of DNA sequences from a FASTA file.
 
@@ -68,15 +107,14 @@ def fragment_generator(
                     if fragsize is None:
                         yield f"{sequence},{header}"
                     else:
-                        for i, (b, index) in enumerate(
-                            signal_l(
-                                range(
-                                    0,
-                                    seqlen - (fragsize - 1),
-                                    fragsize if stride is None else stride,
-                                )
-                            )
-                        ):
+                        indices = _window_indices(
+                            seqlen,
+                            fragsize,
+                            stride,
+                            dynamic_stride,
+                            dynamic_stride_threshold,
+                        )
+                        for i, (b, index) in enumerate(signal_l(indices)):
                             g = sequence[index : index + fragsize].count("G")
                             c = sequence[index : index + fragsize].count("C")
                             a = sequence[index : index + fragsize].count("A")
@@ -96,6 +134,8 @@ def fragment_generator_lib(
     fragsize: int | None = None,
     stride: int | None = None,
     num: int | None = None,
+    dynamic_stride: bool = False,
+    dynamic_stride_threshold: float = 2.0,
 ) -> Generator[str, None, None]:
     """Simpler fragment generator for library use."""
     head = False
@@ -119,15 +159,14 @@ def fragment_generator_lib(
                 if fragsize is None:
                     yield f"{str(seq)},{str(headder)}"
                 else:
-                    for i, (b, index) in enumerate(
-                        signal_l(
-                            range(
-                                0,
-                                seqlen - (fragsize - 1),
-                                fragsize if stride is None else stride,
-                            )
-                        )
-                    ):
+                    indices = _window_indices(
+                        seqlen,
+                        fragsize,
+                        stride,
+                        dynamic_stride,
+                        dynamic_stride_threshold,
+                    )
+                    for i, (b, index) in enumerate(signal_l(indices)):
                         yield (
                             f"{str(seq)[index : index + fragsize]},"
                             f"{str(headder)},{str(index)},{str(b)},{str(i)},"
