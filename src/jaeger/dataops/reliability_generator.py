@@ -12,6 +12,7 @@ This module implements the post-classifier stage that:
 
 from __future__ import annotations
 
+import csv
 import random
 import tempfile
 from collections.abc import Iterable
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import polars as pl
 import psutil
 import tensorflow as tf
 
@@ -44,16 +46,30 @@ def _resolve_memory_budget_mb(fraction: float = 0.5) -> int:
     return max(256, int(available_bytes * fraction / (1024 * 1024)))
 
 
+def _read_csv_records_with_ids(
+    path: str,
+) -> tuple[list[tuple[int, str]], list[str]]:
+    """Read a raw CSV file and return (label, sequence) tuples plus seq_ids.
+
+    If the CSV has a third column (or more), the last column is treated as the
+    sequence identifier. Otherwise a numeric row index is used.
+    """
+    df = pl.read_csv(path, has_header=False, infer_schema_length=0)
+    n_cols = df.shape[1]
+    records: list[tuple[int, str]] = []
+    seq_ids: list[str] = []
+    for i, row in enumerate(df.iter_rows()):
+        label = int(row[0])
+        seq = row[1]
+        seq_id = row[-1] if n_cols >= 3 else str(i)
+        records.append((label, seq))
+        seq_ids.append(seq_id)
+    return records, seq_ids
+
+
 def _read_csv_records(path: str) -> list[tuple[int, str]]:
     """Read a label,sequence CSV file (no header)."""
-    records: list[tuple[int, str]] = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            label_str, seq = line.split(",", 1)
-            records.append((int(label_str), seq))
+    records, _ = _read_csv_records_with_ids(path)
     return records
 
 
@@ -166,6 +182,7 @@ def _run_classifier_inference_streamed(
     ood_records: list[tuple[int, str]],
     preds_csv_path: str | None = None,
     num_classes: int | None = None,
+    seq_ids: list[str] | None = None,
 ) -> None:
     """Stream classifier inference over *dataset*, selecting ID/OOD per batch.
 
@@ -173,7 +190,7 @@ def _run_classifier_inference_streamed(
     high-confidence records are appended to *id_records* / *ood_records*.
     This avoids materialising the full (N, num_classes) softmax matrix.
 
-    The prediction CSV stores, for each sample, the row index, the original
+    The prediction CSV stores, for each sample, the sequence id, the original
     integer label, and the class probabilities. This makes the file
     self-describing and allows ID/OOD selection to be reproduced from it
     without rerunning inference.
@@ -185,58 +202,72 @@ def _run_classifier_inference_streamed(
     if preds_csv_path is not None and Path(preds_csv_path).exists():
         logger.info(f"Prediction file {preds_csv_path} exists; using it directly")
         try:
-            raw = np.loadtxt(preds_csv_path, delimiter=",", dtype=np.float32)
+            df = pl.read_csv(preds_csv_path, has_header=False, infer_schema_length=0)
         except Exception as exc:  # pragma: no cover
             logger.warning(
                 f"Could not load existing predictions from {preds_csv_path}: {exc}. "
                 "Recomputing."
             )
         else:
-            if raw.shape[0] != n_records:
+            n_rows, n_cols = df.shape
+            if n_rows != n_records:
                 logger.warning(
-                    f"Existing prediction file has {raw.shape[0]} rows but "
+                    f"Existing prediction file has {n_rows} rows but "
                     f"{n_records} records were expected. Recomputing."
                 )
-            elif num_classes is not None and raw.shape[1] == num_classes + 2:
-                # New self-describing format: seq_id, original_label, probs...
-                seq_ids = raw[:, 0].astype(np.int32)
-                labels_loaded = raw[:, 1].astype(np.int32)
-                probs = raw[:, 2:]
+            elif num_classes is not None and n_cols in (num_classes, num_classes + 2):
+                # Determine which columns are metadata vs probabilities.
+                if n_cols == num_classes + 2:
+                    labels_loaded = df[:, 1].cast(pl.Int32).to_numpy()
+                    probs = df[:, 2:].cast(pl.Float32).to_numpy()
+                    loaded_seq_ids = df[:, 0].to_list()
+                else:
+                    # Legacy probability-only format.
+                    labels_loaded = None
+                    probs = df.cast(pl.Float32).to_numpy()
+                    loaded_seq_ids = None
+
                 expected_labels = np.array(
                     [label for label, _ in records], dtype=np.int32
                 )
-                if not np.array_equal(seq_ids, np.arange(n_records, dtype=np.int32)):
-                    logger.warning(
-                        "Prediction file row order does not match records. Recomputing."
-                    )
-                elif not np.array_equal(labels_loaded, expected_labels):
+
+                if labels_loaded is not None and not np.array_equal(
+                    labels_loaded, expected_labels
+                ):
                     logger.warning(
                         "Prediction file labels do not match records. Recomputing."
                     )
+                elif (
+                    seq_ids is not None
+                    and loaded_seq_ids is not None
+                    and loaded_seq_ids != seq_ids
+                ):
+                    logger.warning(
+                        "Prediction file sequence IDs do not match records. Recomputing."
+                    )
                 else:
+                    # Upgrade legacy files (or files with row-index IDs) to the
+                    # current self-describing format with real sequence IDs.
+                    if preds_csv_path is not None and (
+                        loaded_seq_ids is None
+                        or (seq_ids is not None and loaded_seq_ids != seq_ids)
+                    ):
+                        _write_predictions_csv(
+                            preds_csv_path,
+                            seq_ids
+                            if seq_ids is not None
+                            else [str(i) for i in range(n_records)],
+                            expected_labels,
+                            probs,
+                        )
+
                     _select_id_ood_from_probs(
                         probs, records, threshold, id_records, ood_records
                     )
                     return
-            elif num_classes is not None and raw.shape[1] == num_classes:
-                # Legacy format: probabilities only. Upgrade in-place so that the
-                # file becomes self-describing for future runs.
-                logger.info("Legacy prediction CSV detected; upgrading format.")
-                expected_labels = np.array(
-                    [label for label, _ in records], dtype=np.int32
-                )
-                seq_ids = np.arange(n_records, dtype=np.int32).reshape(-1, 1)
-                labels_out = expected_labels.reshape(-1, 1)
-                upgraded = np.concatenate([seq_ids, labels_out, raw], axis=1)
-                fmt = ["%d", "%d"] + ["%.6f"] * num_classes
-                np.savetxt(preds_csv_path, upgraded, delimiter=",", fmt=fmt)
-                _select_id_ood_from_probs(
-                    raw, records, threshold, id_records, ood_records
-                )
-                return
             else:
                 logger.warning(
-                    f"Unexpected prediction CSV shape {raw.shape} for "
+                    f"Unexpected prediction CSV shape ({n_rows}, {n_cols}) for "
                     f"num_classes={num_classes}. Recomputing."
                 )
 
@@ -262,15 +293,18 @@ def _run_classifier_inference_streamed(
         )
 
         if preds_csv_path is not None:
-            seq_ids = np.arange(
-                record_idx, record_idx + batch_n, dtype=np.int32
-            ).reshape(-1, 1)
-            labels_out = y_true.astype(np.int32).reshape(-1, 1)
-            out = np.concatenate([seq_ids, labels_out, probs_batch], axis=1)
-            n_cls = probs_batch.shape[1]
-            fmt = ["%d", "%d"] + ["%.6f"] * n_cls
-            with open(preds_csv_path, "ab") as fh:
-                np.savetxt(fh, out, delimiter=",", fmt=fmt)
+            batch_seq_ids = (
+                seq_ids[record_idx : record_idx + batch_n]
+                if seq_ids is not None
+                else [str(record_idx + i) for i in range(batch_n)]
+            )
+            batch_labels = y_true.astype(np.int32)
+            with open(preds_csv_path, "a", newline="") as fh:
+                writer = csv.writer(fh)
+                for i in range(batch_n):
+                    writer.writerow(
+                        [batch_seq_ids[i], batch_labels[i], *probs_batch[i].tolist()]
+                    )
 
         conf = np.max(probs_batch, axis=1)
         pred_class = np.argmax(probs_batch, axis=1)
@@ -287,6 +321,22 @@ def _run_classifier_inference_streamed(
         record_idx += batch_n
         if record_idx >= n_records:
             break
+
+
+def _write_predictions_csv(
+    path: str,
+    seq_ids: list[str],
+    labels: np.ndarray,
+    probs: np.ndarray,
+) -> None:
+    """Write a self-describing predictions CSV using Polars."""
+    data: dict[str, Any] = {
+        "seq_id": pl.Series(seq_ids, dtype=pl.Utf8),
+        "label": pl.Series(labels, dtype=pl.Int32),
+    }
+    for i in range(probs.shape[1]):
+        data[f"prob_{i}"] = pl.Series(probs[:, i], dtype=pl.Float32)
+    pl.DataFrame(data).write_csv(path, include_header=False)
 
 
 def _select_id_ood_records(
@@ -756,7 +806,7 @@ def generate_reliability_data(
     )
 
     logger.info(f"Reading raw training sequences from {train_csv_path}")
-    train_records = _read_csv_records(train_csv_path)
+    train_records, train_seq_ids = _read_csv_records_with_ids(train_csv_path)
     if not train_records:
         raise ValueError(f"No records found in {train_csv_path}")
 
@@ -780,6 +830,7 @@ def generate_reliability_data(
         real_ood_records,
         preds_csv_path=str(output_dir_path / train_preds_name),
         num_classes=classifier_out_dim,
+        seq_ids=train_seq_ids,
     )
     logger.info(f"Wrote training predictions to {output_dir_path / train_preds_name}")
     logger.info(
@@ -824,7 +875,7 @@ def generate_reliability_data(
         val_preds_name = Path(val_csv_path).stem + "_preds.csv"
 
         logger.info(f"Reading raw validation sequences from {val_csv_path}")
-        val_source_records = _read_csv_records(val_csv_path)
+        val_source_records, val_seq_ids = _read_csv_records_with_ids(val_csv_path)
         if not val_source_records:
             raise ValueError(f"No records found in {val_csv_path}")
 
@@ -847,6 +898,7 @@ def generate_reliability_data(
             val_ood_records,
             preds_csv_path=str(output_dir_path / val_preds_name),
             num_classes=classifier_out_dim,
+            seq_ids=val_seq_ids,
         )
         logger.info(
             f"Wrote validation predictions to {output_dir_path / val_preds_name}"
