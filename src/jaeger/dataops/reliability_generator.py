@@ -136,6 +136,27 @@ def _run_classifier_inference(
     return tf.nn.softmax(logits).numpy()
 
 
+def _select_id_ood_from_probs(
+    probs: np.ndarray,
+    records: list[tuple[int, str]],
+    threshold: float,
+    id_records: list[tuple[int, str]],
+    ood_records: list[tuple[int, str]],
+) -> None:
+    """Select ID/OOD records from a full (N, num_classes) probability matrix."""
+    y_true = np.array([label for label, _ in records], dtype=np.int32)
+    conf = np.max(probs, axis=1)
+    pred_class = np.argmax(probs, axis=1)
+
+    for i, (label, seq) in enumerate(records):
+        if conf[i] < threshold:
+            continue
+        if pred_class[i] == y_true[i]:
+            id_records.append((1, seq))
+        else:
+            ood_records.append((0, seq))
+
+
 def _run_classifier_inference_streamed(
     classifier: tf.keras.Model,
     dataset: tf.data.Dataset,
@@ -151,14 +172,35 @@ def _run_classifier_inference_streamed(
     high-confidence records are appended to *id_records* / *ood_records*.
     This avoids materialising the full (N, num_classes) softmax matrix.
     """
-    skip_pred_write = preds_csv_path is not None and Path(preds_csv_path).exists()
-    if skip_pred_write:
-        logger.info(f"Prediction file {preds_csv_path} exists; skipping write")
+    n_records = len(records)
+
+    # If a prediction CSV already exists, use it directly instead of re-running
+    # the classifier.
+    if preds_csv_path is not None and Path(preds_csv_path).exists():
+        logger.info(f"Prediction file {preds_csv_path} exists; using it directly")
+        try:
+            probs = np.loadtxt(preds_csv_path, delimiter=",", dtype=np.float32)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                f"Could not load existing predictions from {preds_csv_path}: {exc}. "
+                "Recomputing."
+            )
+        else:
+            if probs.shape[0] != n_records:
+                logger.warning(
+                    f"Existing prediction file has {probs.shape[0]} rows but "
+                    f"{n_records} records were expected. Recomputing."
+                )
+            else:
+                _select_id_ood_from_probs(
+                    probs, records, threshold, id_records, ood_records
+                )
+                return
+
     if preds_csv_path is not None:
         Path(preds_csv_path).parent.mkdir(parents=True, exist_ok=True)
 
     record_idx = 0
-    n_records = len(records)
 
     for x, y in dataset:
         logits = classifier(x, training=False)
@@ -168,7 +210,7 @@ def _run_classifier_inference_streamed(
             break
 
         probs_batch = probs[:batch_n]
-        if preds_csv_path is not None and not skip_pred_write:
+        if preds_csv_path is not None:
             with open(preds_csv_path, "ab") as fh:
                 np.savetxt(fh, probs_batch, delimiter=",")
 

@@ -60,6 +60,43 @@ def test_select_id_ood_records():
     assert ood_records[0] == (0, "CCCC")
 
 
+def test_run_classifier_inference_streamed_uses_existing_csv(tmp_path: Path):
+    """If a prediction CSV already exists, the function should use it directly."""
+    records = [
+        (0, "AAAA"),
+        (0, "AAAC"),
+        (1, "TTTT"),
+        (1, "TTTG"),
+    ]
+    preds_csv = tmp_path / "preds.csv"
+    probs = np.array(
+        [
+            [0.9, 0.1],
+            [0.1, 0.9],
+            [0.1, 0.9],
+            [0.9, 0.1],
+        ],
+        dtype=np.float32,
+    )
+    np.savetxt(preds_csv, probs, delimiter=",")
+
+    # Passing None as classifier/dataset is safe because the existing CSV is used.
+    id_records: list[tuple[int, str]] = []
+    ood_records: list[tuple[int, str]] = []
+    rg._run_classifier_inference_streamed(
+        classifier=None,  # type: ignore[arg-type]
+        dataset=None,  # type: ignore[arg-type]
+        records=records,
+        threshold=0.7,
+        id_records=id_records,
+        ood_records=ood_records,
+        preds_csv_path=str(preds_csv),
+    )
+
+    assert len(id_records) == 2
+    assert len(ood_records) == 2
+
+
 def test_generate_synthetic_sequences_cycles_perturbations(tmp_path: Path):
     records = [(0, "ATCG" * 10), (1, "TGCA" * 10)]
     seqs = list(
