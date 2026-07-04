@@ -165,12 +165,18 @@ def _run_classifier_inference_streamed(
     id_records: list[tuple[int, str]],
     ood_records: list[tuple[int, str]],
     preds_csv_path: str | None = None,
+    num_classes: int | None = None,
 ) -> None:
     """Stream classifier inference over *dataset*, selecting ID/OOD per batch.
 
     Probabilities are appended to *preds_csv_path* (if provided) and
     high-confidence records are appended to *id_records* / *ood_records*.
     This avoids materialising the full (N, num_classes) softmax matrix.
+
+    The prediction CSV stores, for each sample, the row index, the original
+    integer label, and the class probabilities. This makes the file
+    self-describing and allows ID/OOD selection to be reproduced from it
+    without rerunning inference.
     """
     n_records = len(records)
 
@@ -179,23 +185,51 @@ def _run_classifier_inference_streamed(
     if preds_csv_path is not None and Path(preds_csv_path).exists():
         logger.info(f"Prediction file {preds_csv_path} exists; using it directly")
         try:
-            probs = np.loadtxt(preds_csv_path, delimiter=",", dtype=np.float32)
+            raw = np.loadtxt(preds_csv_path, delimiter=",", dtype=np.float32)
         except Exception as exc:  # pragma: no cover
             logger.warning(
                 f"Could not load existing predictions from {preds_csv_path}: {exc}. "
                 "Recomputing."
             )
         else:
-            if probs.shape[0] != n_records:
+            if raw.shape[0] != n_records:
                 logger.warning(
-                    f"Existing prediction file has {probs.shape[0]} rows but "
+                    f"Existing prediction file has {raw.shape[0]} rows but "
                     f"{n_records} records were expected. Recomputing."
                 )
-            else:
+            elif num_classes is not None and raw.shape[1] == num_classes + 2:
+                # New self-describing format: seq_id, original_label, probs...
+                seq_ids = raw[:, 0].astype(np.int32)
+                labels_loaded = raw[:, 1].astype(np.int32)
+                probs = raw[:, 2:]
+                expected_labels = np.array(
+                    [label for label, _ in records], dtype=np.int32
+                )
+                if not np.array_equal(seq_ids, np.arange(n_records, dtype=np.int32)):
+                    logger.warning(
+                        "Prediction file row order does not match records. Recomputing."
+                    )
+                elif not np.array_equal(labels_loaded, expected_labels):
+                    logger.warning(
+                        "Prediction file labels do not match records. Recomputing."
+                    )
+                else:
+                    _select_id_ood_from_probs(
+                        probs, records, threshold, id_records, ood_records
+                    )
+                    return
+            elif num_classes is not None and raw.shape[1] == num_classes:
+                # Legacy format: probabilities only.
+                logger.info("Legacy prediction CSV detected; using row order.")
                 _select_id_ood_from_probs(
-                    probs, records, threshold, id_records, ood_records
+                    raw, records, threshold, id_records, ood_records
                 )
                 return
+            else:
+                logger.warning(
+                    f"Unexpected prediction CSV shape {raw.shape} for "
+                    f"num_classes={num_classes}. Recomputing."
+                )
 
     if preds_csv_path is not None:
         Path(preds_csv_path).parent.mkdir(parents=True, exist_ok=True)
@@ -210,9 +244,6 @@ def _run_classifier_inference_streamed(
             break
 
         probs_batch = probs[:batch_n]
-        if preds_csv_path is not None:
-            with open(preds_csv_path, "ab") as fh:
-                np.savetxt(fh, probs_batch, delimiter=",")
 
         # Integer labels from one-hot encoding.
         y_true = (
@@ -220,6 +251,16 @@ def _run_classifier_inference_streamed(
             if y.shape.rank == 1
             else np.argmax(y.numpy(), axis=1)[:batch_n]
         )
+
+        if preds_csv_path is not None:
+            seq_ids = np.arange(
+                record_idx, record_idx + batch_n, dtype=np.int32
+            ).reshape(-1, 1)
+            labels_out = y_true.astype(np.int32).reshape(-1, 1)
+            out = np.concatenate([seq_ids, labels_out, probs_batch], axis=1)
+            with open(preds_csv_path, "ab") as fh:
+                np.savetxt(fh, out, delimiter=",")
+
         conf = np.max(probs_batch, axis=1)
         pred_class = np.argmax(probs_batch, axis=1)
 
@@ -727,6 +768,7 @@ def generate_reliability_data(
         id_records,
         real_ood_records,
         preds_csv_path=str(output_dir_path / train_preds_name),
+        num_classes=classifier_out_dim,
     )
     logger.info(f"Wrote training predictions to {output_dir_path / train_preds_name}")
     logger.info(
@@ -793,6 +835,7 @@ def generate_reliability_data(
             val_id_records,
             val_ood_records,
             preds_csv_path=str(output_dir_path / val_preds_name),
+            num_classes=classifier_out_dim,
         )
         logger.info(
             f"Wrote validation predictions to {output_dir_path / val_preds_name}"

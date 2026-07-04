@@ -22,6 +22,7 @@ def _make_streamed_inference_mock(y_pred: np.ndarray):
         id_records: list[tuple[int, str]],
         ood_records: list[tuple[int, str]],
         preds_csv_path: str | None = None,
+        num_classes: int | None = None,
     ) -> None:
         if preds_csv_path is not None:
             np.savetxt(preds_csv_path, y_pred, delimiter=",")
@@ -78,7 +79,11 @@ def test_run_classifier_inference_streamed_uses_existing_csv(tmp_path: Path):
         ],
         dtype=np.float32,
     )
-    np.savetxt(preds_csv, probs, delimiter=",")
+    seq_ids = np.arange(len(records), dtype=np.int32).reshape(-1, 1)
+    labels = np.array([label for label, _ in records], dtype=np.int32).reshape(-1, 1)
+    np.savetxt(
+        preds_csv, np.concatenate([seq_ids, labels, probs], axis=1), delimiter=","
+    )
 
     # Passing None as classifier/dataset is safe because the existing CSV is used.
     id_records: list[tuple[int, str]] = []
@@ -91,6 +96,7 @@ def test_run_classifier_inference_streamed_uses_existing_csv(tmp_path: Path):
         id_records=id_records,
         ood_records=ood_records,
         preds_csv_path=str(preds_csv),
+        num_classes=2,
     )
 
     assert len(id_records) == 2
@@ -347,6 +353,7 @@ def test_generate_reliability_data_accepts_raw_csv_paths(monkeypatch, tmp_path: 
         id_records,
         ood_records,
         preds_csv_path=None,
+        num_classes=None,
     ):
         nonlocal _streamed_call_count
         _streamed_call_count += 1
@@ -364,6 +371,7 @@ def test_generate_reliability_data_accepts_raw_csv_paths(monkeypatch, tmp_path: 
             else:
                 ood_records.append((0, seq))
 
+    # The def above is on a single line in the source; this attr call stays.
     monkeypatch.setattr(
         rg, "_run_classifier_inference_streamed", _mock_run_inference_streamed
     )
