@@ -151,6 +151,9 @@ def _run_classifier_inference_streamed(
     high-confidence records are appended to *id_records* / *ood_records*.
     This avoids materialising the full (N, num_classes) softmax matrix.
     """
+    skip_pred_write = preds_csv_path is not None and Path(preds_csv_path).exists()
+    if skip_pred_write:
+        logger.info(f"Prediction file {preds_csv_path} exists; skipping write")
     if preds_csv_path is not None:
         Path(preds_csv_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -165,7 +168,7 @@ def _run_classifier_inference_streamed(
             break
 
         probs_batch = probs[:batch_n]
-        if preds_csv_path is not None:
+        if preds_csv_path is not None and not skip_pred_write:
             with open(preds_csv_path, "ab") as fh:
                 np.savetxt(fh, probs_batch, delimiter=",")
 
