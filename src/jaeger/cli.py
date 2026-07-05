@@ -139,7 +139,7 @@ def health(**kwargs):
 @click.option(
     "--stride",
     type=int,
-    default=1500,
+    default=2000,
     help="The gap between two the sliding windows",
 )
 @click.option(
@@ -158,7 +158,7 @@ def health(**kwargs):
     type=int,
     default=None,
     help="Minimum contig length to classify (default: --fsize). "
-         "Contigs between --min-len and --fsize are classified as a single whole-contig window.",
+    "Contigs between --min-len and --fsize are classified as a single whole-contig window.",
 )
 @click.option(
     "-m",

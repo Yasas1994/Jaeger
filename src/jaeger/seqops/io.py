@@ -79,7 +79,9 @@ def fragment_generator(
     no_progress: bool = True,
     dustmask: bool = True,
     dynamic_stride: bool = False,
-    dynamic_stride_threshold: float = 2.0,
+    dynamic_stride_threshold: float = 10.0,
+    min_len: int | None = None,
+    max_len: int | None = None,
 ) -> Generator[str, None, None]:
     """Generate fragments of DNA sequences from a FASTA file.
 
@@ -89,6 +91,8 @@ def fragment_generator(
     Yields strings of the form:
     ``sequence,header,index,contig_end,i,seqlen,g,c,a,t,gc_skew``
     """
+    if min_len is None:
+        min_len = fragsize
 
     def _gen():
         fa = pyfastx.Fasta(file_path, build_index=False)
@@ -103,6 +107,8 @@ def fragment_generator(
                         sequence, window_size=64, score_threshold=20
                     ).mask()
                 header = record[0].strip().replace(",", "___")
+                if max_len is not None and seqlen > max_len:
+                    continue
                 if seqlen >= fragsize:
                     if fragsize is None:
                         yield f"{sequence},{header}"
@@ -125,6 +131,18 @@ def fragment_generator(
                                 f"{header},{index},{b},{i},{seqlen},{g},{c},{a},{t},"
                                 f"{gc_skew: .3f}"
                             )
+                elif seqlen >= min_len:
+                    # Whole-contig window for short sequences.
+                    g = sequence.count("G")
+                    c = sequence.count("C")
+                    a = sequence.count("A")
+                    t = sequence.count("T")
+                    gc_skew = safe_divide((g - c), (g + c))
+                    yield (
+                        f"{sequence},"
+                        f"{header},0,1,0,{seqlen},{g},{c},{a},{t},"
+                        f"{gc_skew: .3f}"
+                    )
 
     return _gen()
 
@@ -135,9 +153,13 @@ def fragment_generator_lib(
     stride: int | None = None,
     num: int | None = None,
     dynamic_stride: bool = False,
-    dynamic_stride_threshold: float = 2.0,
+    dynamic_stride_threshold: float = 10.0,
+    min_len: int | None = None,
+    max_len: int | None = None,
 ) -> Generator[str, None, None]:
     """Simpler fragment generator for library use."""
+    if min_len is None:
+        min_len = fragsize
     head = False
     if isinstance(filename, str):
         tmpfn = pyfastx.Fasta(filename, build_index=False)
@@ -155,6 +177,8 @@ def fragment_generator_lib(
                 seqlen = len(record)
                 seq = record
                 headder = f"seq_{n}"
+            if max_len is not None and seqlen > max_len:
+                continue
             if seqlen >= fragsize:
                 if fragsize is None:
                     yield f"{str(seq)},{str(headder)}"
@@ -172,6 +196,8 @@ def fragment_generator_lib(
                             f"{str(headder)},{str(index)},{str(b)},{str(i)},"
                             f"{str(seqlen)}"
                         )
+            elif seqlen >= min_len:
+                yield (f"{str(seq)},{str(headder)},0,1,0,{str(seqlen)}")
 
     return _gen()
 

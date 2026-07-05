@@ -99,3 +99,67 @@ def test_fragment_generator_dynamic_stride(tmp_path: Path):
         int(f.split(",")[2]) for f in dynamic_frags if f.split(",")[1] == "contig1"
     ]
     assert contig1_indices == [0, 1400]
+
+
+def test_fragment_generator_short_contig_whole_window(tmp_path: Path):
+    fasta = tmp_path / "mixed.fa"
+    fasta.write_text(
+        f">long len=3000\n{'A' * 3000}\n"
+        f">short len=1500\n{'C' * 1500}\n"
+        f">tiny len=900\n{'G' * 900}\n"
+    )
+
+    # Two-pass split: long pass only.
+    long_frags = list(
+        fragment_generator(
+            str(fasta),
+            fragsize=2000,
+            stride=2000,
+            num=3,
+            no_progress=True,
+            dustmask=False,
+            min_len=2000,
+            max_len=None,
+        )
+    )
+    assert len(long_frags) == 1
+    assert long_frags[0].split(",")[1] == "long"
+
+    # Short pass only.
+    short_frags = list(
+        fragment_generator(
+            str(fasta),
+            fragsize=2000,
+            stride=2000,
+            num=3,
+            no_progress=True,
+            dustmask=False,
+            min_len=1000,
+            max_len=1999,
+        )
+    )
+    assert len(short_frags) == 1
+    parts = short_frags[0].split(",")
+    assert parts[1] == "short"
+    assert parts[2] == "0"  # index
+    assert parts[3] == "1"  # contig_end flag
+    assert parts[5] == "1500"  # seqlen
+
+
+def test_fragment_generator_min_len_below_fsize(tmp_path: Path):
+    fasta = tmp_path / "short.fa"
+    fasta.write_text(f">short len=1500\n{'C' * 1500}\n")
+
+    frags = list(
+        fragment_generator(
+            str(fasta),
+            fragsize=2000,
+            stride=2000,
+            num=1,
+            no_progress=True,
+            dustmask=False,
+            min_len=1000,
+        )
+    )
+    assert len(frags) == 1
+    assert frags[0].split(",")[1] == "short"

@@ -54,7 +54,15 @@ def run_core(**kwargs):
     logger.debug(DATA_PATH)
 
     try:
-        num = validate_fasta_entries(str(input_file_path), min_len=kwargs.get("fsize"))
+        min_len = kwargs.get("min_len") or kwargs.get("fsize")
+        fsize = kwargs.get("fsize")
+        if min_len < fsize:
+            logger.warning(
+                "--min-len < --fsize is not supported in legacy prediction mode; "
+                f"using --min-len={fsize}."
+            )
+            min_len = fsize
+        num = validate_fasta_entries(str(input_file_path), min_len=min_len)
     except Exception as e:
         logger.error(e)
         logger.debug(traceback.format_exc())
@@ -172,6 +180,7 @@ def run_core(**kwargs):
                 num=num,
                 dynamic_stride=kwargs.get("dynamic_stride", False),
                 dynamic_stride_threshold=kwargs.get("dynamic_stride_threshold", 10.0),
+                min_len=min_len,
             ),
             output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
         )

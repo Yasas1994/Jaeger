@@ -124,6 +124,95 @@ def _build_refined_contig_df(
     )
 
 
+def _make_padded_batch_specs(
+    string_processor_config: dict,
+) -> tuple[tuple, tuple]:
+    """Return (padded_shapes, padding_values) for process_string_inference output."""
+    input_type = string_processor_config.get("input_type")
+    codon_depth = string_processor_config.get("codon_depth")
+    padded_features: dict[str, list[int | None]] = {}
+    padding_features: dict[str, float] = {}
+
+    if input_type in ("translated", "both"):
+        padded_features["translated"] = [6, None, codon_depth]
+        padding_features["translated"] = 0.0
+    if input_type in ("nucleotide", "both"):
+        padded_features["nucleotide"] = [2, None, 4]
+        padding_features["nucleotide"] = 0.0
+
+    # Ten trailing metadata strings from process_string_inference.
+    metadata_shape = ()
+    metadata_pad = ""
+    padded_shapes = (padded_features, *([metadata_shape] * 10))
+    padding_values = (padding_features, *([metadata_pad] * 10))
+    return padded_shapes, padding_values
+
+
+def _build_prediction_dataset(
+    input_file_path: Path,
+    num: int,
+    string_processor_config: dict,
+    fragsize: int,
+    stride: int,
+    batch: int,
+    min_len: int,
+    max_len: int | None,
+    dynamic_stride: bool,
+    dynamic_stride_threshold: float,
+    use_padded_batch: bool,
+) -> tf.data.Dataset:
+    """Build a tf.data dataset for one prediction pass."""
+    from jaeger.seqops.encode import process_string_inference
+
+    input_dataset = tf.data.Dataset.from_generator(
+        lambda: fragment_generator(
+            file_path=str(input_file_path),
+            no_progress=False,
+            fragsize=fragsize,
+            stride=stride,
+            num=num,
+            dynamic_stride=dynamic_stride,
+            dynamic_stride_threshold=dynamic_stride_threshold,
+            min_len=min_len,
+            max_len=max_len,
+        ),
+        output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
+    )
+
+    mapped = input_dataset.map(
+        process_string_inference(
+            codons=string_processor_config.get("codon"),
+            codon_num=string_processor_config.get("codon_id"),
+            codon_depth=string_processor_config.get("codon_depth"),
+            ngram_width=string_processor_config.get("ngram_width"),
+            seq_onehot=string_processor_config.get("seq_onehot"),
+            crop_size=string_processor_config.get("crop_size"),
+            input_type=string_processor_config.get("input_type"),
+            masking=string_processor_config.get("masking"),
+            mutate=string_processor_config.get("mutate"),
+            mutation_rate=string_processor_config.get("mutation_rate"),
+            shuffle=string_processor_config.get("shuffle"),
+        ),
+        num_parallel_calls=tf.data.AUTOTUNE,
+    )
+
+    if use_padded_batch:
+        padded_shapes, padding_values = _make_padded_batch_specs(
+            string_processor_config
+        )
+        return mapped.padded_batch(
+            batch,
+            padded_shapes=padded_shapes,
+            padding_values=padding_values,
+        ).prefetch(25)
+    return mapped.batch(batch, num_parallel_calls=tf.data.AUTOTUNE).prefetch(25)
+
+
+def _concat_predictions(a: dict, b: dict) -> dict:
+    """Concatenate two model prediction dicts along the batch axis."""
+    return {k: np.concatenate([a[k], b[k]], axis=0) for k in a}
+
+
 def run_core(**kwargs):
     current_process = psutil.Process()
 
@@ -200,7 +289,8 @@ def run_core(**kwargs):
     logger.debug(info)
     logger.debug(model_info)
     try:
-        num = validate_fasta_entries(str(input_file_path), min_len=kwargs.get("fsize"))
+        min_len = kwargs.get("min_len") or kwargs.get("fsize")
+        num = validate_fasta_entries(str(input_file_path), min_len=min_len)
     except Exception as e:
         logger.error(e)
         logger.debug(traceback.format_exc())
@@ -375,55 +465,82 @@ def run_core(**kwargs):
         model = InferModel(model_info, use_xla=use_xla)
 
     string_processor_config = model.string_processor_config
-    input_dataset = tf.data.Dataset.from_generator(
-        lambda: fragment_generator(
-            # str(INPUT_FILE_MASKED),
-            file_path=str(input_file_path),
-            no_progress=False,
-            fragsize=kwargs.get("fsize"),
-            stride=kwargs.get("stride"),
-            num=num,
-            dynamic_stride=kwargs.get("dynamic_stride", False),
-            dynamic_stride_threshold=kwargs.get("dynamic_stride_threshold", 10.0),
-        ),
-        output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
-    )
+    batch_size = kwargs.get("batch")
+    fsize = kwargs.get("fsize")
+    stride = kwargs.get("stride")
+    dynamic_stride = kwargs.get("dynamic_stride", False)
+    dynamic_stride_threshold = kwargs.get("dynamic_stride_threshold", 10.0)
+    user_min_len = kwargs.get("min_len")
+    min_len = user_min_len or fsize
 
-    from jaeger.seqops.encode import process_string_inference
-
-    # from icecream import ic
-    # ic(string_processor_config)
-    idataset = (
-        input_dataset.map(
-            process_string_inference(
-                codons=string_processor_config.get("codon"),
-                codon_num=string_processor_config.get("codon_id"),
-                codon_depth=string_processor_config.get("codon_depth"),
-                ngram_width=string_processor_config.get("ngram_width"),
-                seq_onehot=string_processor_config.get("seq_onehot"),
-                crop_size=string_processor_config.get("crop_size"),
-                input_type=string_processor_config.get("input_type"),
-                masking=string_processor_config.get("masking"),
-                mutate=string_processor_config.get("mutate"),
-                mutation_rate=string_processor_config.get("mutation_rate"),
-                shuffle=string_processor_config.get("shuffle"),
-            ),
-            num_parallel_calls=tf.data.AUTOTUNE,
+    if user_min_len is not None and user_min_len < fsize:
+        logger.info(
+            f"Two-pass prediction: long contigs (>= {fsize} bp) then short contigs "
+            f"({user_min_len}-{fsize - 1} bp)"
         )
-        .batch(kwargs.get("batch"), num_parallel_calls=tf.data.AUTOTUNE)
-        .prefetch(25)
-    )
-
-    with strategy.scope():
-        try:
-            logger.info("starting model inference")
-            y_pred = model.predict(idataset, no_progress=True)
-        except Exception as e:
-            logger.debug(traceback.format_exc())
-            logger.error(
-                f"an error {e} occured during inference on {'|'.join(device_names)}! check {log_file} for traceback."
-            )
-            sys.exit(1)
+        long_dataset = _build_prediction_dataset(
+            input_file_path=input_file_path,
+            num=num,
+            string_processor_config=string_processor_config,
+            fragsize=fsize,
+            stride=stride,
+            batch=batch_size,
+            min_len=fsize,
+            max_len=None,
+            dynamic_stride=dynamic_stride,
+            dynamic_stride_threshold=dynamic_stride_threshold,
+            use_padded_batch=False,
+        )
+        short_dataset = _build_prediction_dataset(
+            input_file_path=input_file_path,
+            num=num,
+            string_processor_config=string_processor_config,
+            fragsize=fsize,
+            stride=stride,
+            batch=batch_size,
+            min_len=user_min_len,
+            max_len=fsize - 1,
+            dynamic_stride=dynamic_stride,
+            dynamic_stride_threshold=dynamic_stride_threshold,
+            use_padded_batch=True,
+        )
+        with strategy.scope():
+            try:
+                logger.info("starting model inference on long contigs")
+                y_pred_long = model.predict(long_dataset, no_progress=True)
+                logger.info("starting model inference on short contigs")
+                y_pred_short = model.predict(short_dataset, no_progress=True)
+                y_pred = _concat_predictions(y_pred_long, y_pred_short)
+            except Exception as e:
+                logger.debug(traceback.format_exc())
+                logger.error(
+                    f"an error {e} occured during inference on {'|'.join(device_names)}! check {log_file} for traceback."
+                )
+                sys.exit(1)
+    else:
+        idataset = _build_prediction_dataset(
+            input_file_path=input_file_path,
+            num=num,
+            string_processor_config=string_processor_config,
+            fragsize=fsize,
+            stride=stride,
+            batch=batch_size,
+            min_len=min_len,
+            max_len=None,
+            dynamic_stride=dynamic_stride,
+            dynamic_stride_threshold=dynamic_stride_threshold,
+            use_padded_batch=False,
+        )
+        with strategy.scope():
+            try:
+                logger.info("starting model inference")
+                y_pred = model.predict(idataset, no_progress=True)
+            except Exception as e:
+                logger.debug(traceback.format_exc())
+                logger.error(
+                    f"an error {e} occured during inference on {'|'.join(device_names)}! check {log_file} for traceback."
+                )
+                sys.exit(1)
 
         from jaeger.postprocess.collect import pred_to_dict, write_output
 
