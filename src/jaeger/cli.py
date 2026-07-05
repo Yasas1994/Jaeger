@@ -150,8 +150,8 @@ def health(**kwargs):
 @click.option(
     "--dynamic-stride-threshold",
     type=float,
-    default=2.0,
-    help="Multiplier of --fsize below which dynamic stride is applied (default: 2.0).",
+    default=10.0,
+    help="Multiplier of --fsize below which dynamic stride is applied (default: 10.0).",
 )
 @click.option(
     "-m",

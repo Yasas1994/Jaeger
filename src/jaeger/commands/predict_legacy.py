@@ -171,7 +171,7 @@ def run_core(**kwargs):
                 stride=kwargs.get("stride"),
                 num=num,
                 dynamic_stride=kwargs.get("dynamic_stride", False),
-                dynamic_stride_threshold=kwargs.get("dynamic_stride_threshold", 2.0),
+                dynamic_stride_threshold=kwargs.get("dynamic_stride_threshold", 10.0),
             ),
             output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
         )
