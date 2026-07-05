@@ -139,7 +139,7 @@ def health(**kwargs):
 @click.option(
     "--stride",
     type=int,
-    default=2000,
+    default=1500,
     help="The gap between two the sliding windows",
 )
 @click.option(
