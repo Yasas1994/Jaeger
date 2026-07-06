@@ -691,7 +691,13 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
     """
 
     def __init__(
-        self, epsilon=1e-5, momentum=0.9, return_nmd=False, dtype=None, **kwargs
+        self,
+        epsilon=1e-5,
+        momentum=0.9,
+        return_nmd=False,
+        use_masking=True,
+        dtype=None,
+        **kwargs,
     ):
         # Let Keras / mixed_precision policy control dtype if provided
         if dtype is not None:
@@ -700,7 +706,8 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
 
         self.epsilon = epsilon
         self.momentum = momentum
-        self.supports_masking = True
+        self.use_masking = use_masking
+        self.supports_masking = use_masking
         self.return_nmd = return_nmd
 
     def build(self, input_shape):
@@ -759,7 +766,7 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
             range(1, max(ndims - 1, 1))
         )  # per-example: skip batch & channel
 
-        use_mask = mask is not None
+        use_mask = self.use_masking and mask is not None
         if use_mask:
             mask_f = tf.cast(mask, tf.float32)
             if mask_f.shape.rank is None or mask_f.shape.rank < ndims:
@@ -851,6 +858,7 @@ class MaskedBatchNorm(tf.keras.layers.Layer):
                 "epsilon": self.epsilon,
                 "momentum": self.momentum,
                 "return_nmd": self.return_nmd,
+                "use_masking": self.use_masking,
             }
         )
         return config
@@ -1029,6 +1037,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         kernel_initializer="glorot_uniform",
         bias_initializer="zeros",
         kernel_regularizer=None,
+        use_masking=True,
         dtype=None,  # keep for compatibility, but usually leave None under MP
         **kwargs,
     ):
@@ -1047,8 +1056,9 @@ class MaskedConv1D(tf.keras.layers.Layer):
         self.kernel_initializer = tf.keras.initializers.get(kernel_initializer)
         self.bias_initializer = tf.keras.initializers.get(bias_initializer)
         self.kernel_regularizer = kernel_regularizer
+        self.use_masking = use_masking
 
-        self.supports_masking = True
+        self.supports_masking = use_masking
 
     def build(self, input_shape):
         channel_axis = self.axis
@@ -1086,7 +1096,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         output_shape = self.compute_output_shape(input_shape)
 
         output_mask = None
-        if mask is not None:
+        if self.use_masking and mask is not None:
             # Broadcast mask, but do mask math in float32 for stability
             mask = tf.cast(mask, tf.float32)
             # apply mask on inputs (cast back to compute_dtype)
@@ -1157,6 +1167,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
                     self.bias_initializer
                 ),
                 "axis": self.axis,
+                "use_masking": self.use_masking,
                 "kernel_regularizer": tf.keras.regularizers.serialize(
                     self.kernel_regularizer
                 )
@@ -1648,6 +1659,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         self.bias_initializer = kwargs.pop("bias_initializer", "zeros")
         self.norm_type = kwargs.pop("norm_type", "masked_batchnorm").lower()
         self.alpha_init = kwargs.pop("alpha_init", 0.5)
+        self.use_masking = kwargs.pop("use_masking", True)
 
         if return_nmd and self.norm_type != "masked_batchnorm":
             raise ValueError(
@@ -1658,7 +1670,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         # now kwargs only contains things Layer.__init__ understands (name, dtype, trainable, etc.)
         super().__init__(**kwargs)
 
-        self.supports_masking = True
+        self.supports_masking = self.use_masking
         self.block_number = block_number
         self.return_nmd = return_nmd
 
@@ -1674,11 +1686,14 @@ class ResidualBlock(tf.keras.layers.Layer):
             kernel_initializer=self.kernel_initializer,
             bias_initializer=self.bias_initializer,
             kernel_regularizer=self.kernel_regularizer,
+            use_masking=self.use_masking,
         )
 
         def _make_norm(name, return_nmd=False):
             if self.norm_type == "masked_batchnorm":
-                return MaskedBatchNorm(name=name, return_nmd=return_nmd)
+                return MaskedBatchNorm(
+                    name=name, return_nmd=return_nmd, use_masking=self.use_masking
+                )
             if self.norm_type == "masked_layernorm":
                 return MaskedLayerNormalization(name=name)
             if self.norm_type == "masked_dyt":
@@ -1721,7 +1736,12 @@ class ResidualBlock(tf.keras.layers.Layer):
             return_nmd=return_nmd,
         )
 
-        self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
+        if self.use_masking:
+            self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
+        else:
+            self.add = tf.keras.layers.Add(
+                name=f"resblock_add_blk{self.block_number}"
+            )
         self.activation_layer = tf.keras.layers.Activation(
             activation, name=f"resblock_activation_blk{self.block_number}"
         )
@@ -2442,37 +2462,73 @@ class LocalAttention(tf.keras.layers.Layer):
         return config
 
 
+class ResidualBlockStack(tf.keras.layers.Layer):
+    """A deterministic, reusable stack of ResidualBlock layers.
+
+    The previous implementation built a Keras Functional submodel on the fly.
+    Because Keras assigns incrementing internal IDs to Functional submodels,
+    the nested weight names changed from build to build and legacy checkpoints
+    could not be loaded reliably. This custom layer keeps stable sublayer names
+    and supports the same ``block_size``/``return_nmd`` interface.
+    """
+
+    def __init__(self, block_size: int, in_shape: tuple | None = None, **kwargs):
+        name = kwargs.pop("name", "resblock")
+        return_nmd = kwargs.pop("return_nmd", False)
+        use_masking = kwargs.pop("use_masking", True)
+
+        # Only pass Layer-recognized kwargs to super().__init__
+        layer_kwargs = {}
+        for key in ("trainable", "dtype"):
+            if key in kwargs:
+                layer_kwargs[key] = kwargs.pop(key)
+        super().__init__(name=name, **layer_kwargs)
+
+        self.block_size = block_size
+        self.return_nmd = return_nmd
+        self.use_masking = use_masking
+        self.supports_masking = use_masking
+        self.blocks = []
+
+        for i in range(block_size):
+            if i != 0 and "use_1x1conv" in kwargs:
+                kwargs.pop("use_1x1conv")
+
+            block_name = f"{name}_{i}"
+            block_number = f"{name.split('_')[-1]}{i}"
+            block_kwargs = dict(
+                kwargs,
+                return_nmd=return_nmd if (i == block_size - 1) else False,
+                use_masking=use_masking,
+            )
+
+            self.blocks.append(
+                ResidualBlock(block_number=block_number, name=block_name, **block_kwargs)
+            )
+
+    def call(self, inputs, training=None):
+        x = inputs
+        nmd = None
+        for i, block in enumerate(self.blocks):
+            out = block(x, training=training)
+            if self.return_nmd and i == len(self.blocks) - 1:
+                x, nmd = out
+            else:
+                x = out
+        return (x, nmd) if self.return_nmd else x
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "block_size": self.block_size,
+            "return_nmd": self.return_nmd,
+        })
+        return config
+
+
 def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
     """
-    Build a sequential stack of ResidualBlock layers as a Keras functional submodel.
+    Build a sequential stack of ResidualBlock layers as a custom Layer.
     If return_nmd=True, the final block outputs both (x, nmd).
     """
-    name = kwargs.get("name", "resblock")
-    return_nmd = kwargs.get("return_nmd", False)
-    inputs = tf.keras.Input(shape=in_shape)
-
-    x = inputs
-    nmd = None
-
-    for i in range(block_size):
-        # Skip certain kwargs for intermediate blocks
-        omit_keys = {"name"}
-        if i != 0 and "use_1x1conv" in kwargs:
-            omit_keys.add("use_1x1conv")
-
-        block_kwargs = {k: v for k, v in kwargs.items() if k not in omit_keys}
-
-        block_name = f"{name}_{i}"
-        block_number = f"{name.split('_')[-1]}{i}"
-
-        block = ResidualBlock(
-            block_number=block_number, name=block_name, **block_kwargs
-        )
-
-        if return_nmd:
-            x, nmd = block(x)
-        else:
-            x = block(x)
-
-    outputs = [x, nmd] if return_nmd else x
-    return tf.keras.Model(inputs=inputs, outputs=outputs, name=name)
+    return ResidualBlockStack(block_size=block_size, in_shape=in_shape, **kwargs)

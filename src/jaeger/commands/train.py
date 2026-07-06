@@ -488,6 +488,13 @@ def _build_branch_datasets(
 @click.option("--only_heads", is_flag=True, default=False)
 @click.option("--only_save", is_flag=True, default=False)
 @click.option("--save_model", is_flag=True, default=False)
+@click.option(
+    "--masking/--no-masking",
+    "masking",
+    default=None,
+    help="Enable/disable sequence masking in convolutional/normalization layers. "
+    "Defaults to the config value (model.use_masking) or True.",
+)
 @click.option("--self_supervised_pretraining", is_flag=True, default=False)
 @click.option(
     "--xla",
@@ -513,6 +520,7 @@ def train_fragment(
     only_heads,
     only_save,
     save_model,
+    masking,
     self_supervised_pretraining,
     xla,
     ignore_convergence,
@@ -531,6 +539,7 @@ def train_fragment(
         only_heads=only_heads,
         only_save=only_save,
         save_model=save_model,
+        masking=masking,
         self_supervised_pretraining=self_supervised_pretraining,
         xla=xla,
         ignore_convergence=ignore_convergence,
@@ -588,6 +597,15 @@ def train_fragment_core(**kwargs):
     with strategy.scope():
         logger.info("initializing model")
         config = load_model_config(Path(kwargs.get("config")))
+
+        # Allow CLI to override the masking setting in the config.
+        masking = kwargs.get("masking")
+        if masking is not None:
+            config.setdefault("model", {})["use_masking"] = masking
+            logger.info(
+                f"Masking set to {masking} from CLI"
+            )
+
         hidden_layers = (
             config.get("model", {})
             .get("representation_learner", {})
