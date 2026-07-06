@@ -133,8 +133,11 @@ def _make_padded_batch_specs(
     padded_features: dict[str, list[int | None]] = {}
     padding_features: dict[str, float] = {}
 
+    seq_onehot = string_processor_config.get("seq_onehot", True)
     if input_type in ("translated", "both"):
-        padded_features["translated"] = [6, None, codon_depth]
+        padded_features["translated"] = (
+            [6, None, codon_depth] if seq_onehot else [6, None]
+        )
         padding_features["translated"] = 0.0
     if input_type in ("nucleotide", "both"):
         padded_features["nucleotide"] = [2, None, 4]
