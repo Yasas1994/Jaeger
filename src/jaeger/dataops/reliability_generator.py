@@ -12,7 +12,6 @@ This module implements the post-classifier stage that:
 
 from __future__ import annotations
 
-import csv
 import random
 import tempfile
 from collections.abc import Iterable
