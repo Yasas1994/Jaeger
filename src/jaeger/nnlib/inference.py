@@ -334,9 +334,9 @@ class InferModel:
             return y_logits
 
         if self.use_xla:
-            return tf.function(jit_compile=True)(step)
+            return tf.function(jit_compile=True, reduce_retracing=True)(step)
         else:
-            return tf.function(jit_compile=False)(step)
+            return tf.function(jit_compile=False, reduce_retracing=True)(step)
 
     def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
         """
