@@ -602,9 +602,7 @@ def train_fragment_core(**kwargs):
         masking = kwargs.get("masking")
         if masking is not None:
             config.setdefault("model", {})["use_masking"] = masking
-            logger.info(
-                f"Masking set to {masking} from CLI"
-            )
+            logger.info(f"Masking set to {masking} from CLI")
 
         hidden_layers = (
             config.get("model", {})

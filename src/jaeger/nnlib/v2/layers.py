@@ -1739,9 +1739,7 @@ class ResidualBlock(tf.keras.layers.Layer):
         if self.use_masking:
             self.add = MaskedAdd(name=f"resblock_add_blk{self.block_number}")
         else:
-            self.add = tf.keras.layers.Add(
-                name=f"resblock_add_blk{self.block_number}"
-            )
+            self.add = tf.keras.layers.Add(name=f"resblock_add_blk{self.block_number}")
         self.activation_layer = tf.keras.layers.Activation(
             activation, name=f"resblock_activation_blk{self.block_number}"
         )
@@ -2503,7 +2501,9 @@ class ResidualBlockStack(tf.keras.layers.Layer):
             )
 
             self.blocks.append(
-                ResidualBlock(block_number=block_number, name=block_name, **block_kwargs)
+                ResidualBlock(
+                    block_number=block_number, name=block_name, **block_kwargs
+                )
             )
 
     def call(self, inputs, training=None):
@@ -2519,10 +2519,12 @@ class ResidualBlockStack(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({
-            "block_size": self.block_size,
-            "return_nmd": self.return_nmd,
-        })
+        config.update(
+            {
+                "block_size": self.block_size,
+                "return_nmd": self.return_nmd,
+            }
+        )
         return config
 
 

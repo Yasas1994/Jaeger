@@ -288,7 +288,9 @@ def _run_classifier_inference_streamed(
                 # Determine which columns are metadata vs probabilities/logits.
                 if n_cols == 2 * num_classes + 2:
                     labels_loaded = df[:, 1].cast(pl.Int32).to_numpy()
-                    logits_loaded = df[:, 2 : 2 + num_classes].cast(pl.Float32).to_numpy()
+                    logits_loaded = (
+                        df[:, 2 : 2 + num_classes].cast(pl.Float32).to_numpy()
+                    )
                     probs = df[:, 2 + num_classes :].cast(pl.Float32).to_numpy()
                     loaded_seq_ids = df[:, 0].to_list()
                 elif n_cols == num_classes + 2:
@@ -359,9 +361,7 @@ def _run_classifier_inference_streamed(
     )
 
     if preds_csv_path is not None:
-        expected_labels = np.array(
-            [label for label, _ in records], dtype=np.int32
-        )
+        expected_labels = np.array([label for label, _ in records], dtype=np.int32)
         loaded_seq_ids = (
             seq_ids if seq_ids is not None else [str(i) for i in range(n_records)]
         )
