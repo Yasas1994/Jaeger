@@ -144,6 +144,7 @@ class DynamicModelBuilder:
         self.reliability_out_dim: int = int(
             self.model_cfg.get("reliability_out_dim", 0)
         )
+        self.use_masking: bool = bool(self.model_cfg.get("use_masking", True))
 
         self.loss_classifier_name = self.train_cfg.get(
             "loss_classifier", "categorical_crossentropy"
@@ -829,6 +830,12 @@ class DynamicModelBuilder:
             layer_class = self._layers.get(layer_name)
             if layer_class is None and layer_name != "parallel_branches":
                 raise ValueError(f"Unknown layer type: {layer_name}")
+
+            # Legacy SavedModels were trained without mask propagation through
+            # the convolutional blocks. Allow users to reproduce that behavior
+            # when loading/fine-tuning from those checkpoints.
+            if layer_name in {"masked_conv1d", "masked_batchnorm", "residual_block"}:
+                cfg_layer.setdefault("use_masking", self.use_masking)
 
             if layer_name in {"relu", "gelu", "sigmoid", "softmax", "tanh"}:
                 cfg_layer["activation"] = layer_name

@@ -36,6 +36,7 @@ from jaeger.seqops.synthetic import (
     apply_tandem_repeat_window,
 )
 from jaeger.utils.logging import get_logger
+from jaeger.utils.misc import track_ms
 
 logger = get_logger(log_path=None, log_file=None, level=3)
 
@@ -147,9 +148,65 @@ def _run_classifier_inference(
     classifier: tf.keras.Model,
     dataset: tf.data.Dataset,
 ) -> np.ndarray:
-    """Return softmax probabilities for every sample in *dataset*."""
-    logits = classifier.predict(dataset, verbose=1)
-    return tf.nn.softmax(logits).numpy()
+    """Return softmax probabilities for every sample in *dataset*.
+
+    Uses a ``tf.function``-wrapped model call and accumulates results batch by
+    batch. This is substantially faster than ``classifier.predict`` for the
+    small classifier head used during reliability data generation.
+    """
+    _, probs = _run_classifier_inference_logits(classifier, dataset)
+    return probs
+
+
+def _run_classifier_inference_logits(
+    classifier: tf.keras.Model,
+    dataset: tf.data.Dataset,
+    n_records: int | None = None,
+    description: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (logits, softmax probabilities) for samples in *dataset*.
+
+    The classifier call is wrapped in ``tf.function`` so the graph is traced
+    once and reused for every batch. Each batch is moved to CPU memory
+    immediately to keep GPU memory bounded. At most *n_records* samples are
+    processed when *n_records* is provided.
+
+    If *description* is given, a Rich progress bar is shown over the batches.
+    """
+
+    # Cache the traced function on the classifier so repeated calls (e.g. many
+    # synthetic-OOD chunks) do not pay the trace cost each time.
+    infer_fn = getattr(classifier, "_jaeger_reliability_infer_fn", None)
+    if infer_fn is None:
+
+        @tf.function
+        def _infer_fn(x):
+            return classifier(x, training=False)
+
+        classifier._jaeger_reliability_infer_fn = _infer_fn
+        infer_fn = _infer_fn
+
+    logits_list: list[np.ndarray] = []
+    record_idx = 0
+    batch_iter = dataset
+    if description:
+        batch_iter = track_ms(batch_iter, description=description, disable=False)
+    for x, _ in batch_iter:
+        batch_logits = infer_fn(x)
+        if n_records is not None:
+            batch_n = min(batch_logits.shape[0], n_records - record_idx)
+            if batch_n <= 0:
+                break
+            logits_list.append(batch_logits[:batch_n].numpy())
+            record_idx += batch_n
+            if record_idx >= n_records:
+                break
+        else:
+            logits_list.append(batch_logits.numpy())
+
+    logits = np.concatenate(logits_list, axis=0)
+    probs = tf.nn.softmax(logits).numpy()
+    return logits, probs
 
 
 def _select_id_ood_from_probs(
@@ -184,16 +241,20 @@ def _run_classifier_inference_streamed(
     num_classes: int | None = None,
     seq_ids: list[str] | None = None,
 ) -> None:
-    """Stream classifier inference over *dataset*, selecting ID/OOD per batch.
+    """Run classifier inference on *dataset* and split records into ID/OOD.
 
-    Probabilities are appended to *preds_csv_path* (if provided) and
+    The classifier call is wrapped in ``tf.function`` and the full (logits,
+    probabilities) matrices are materialised in CPU memory. This is much faster
+    than the previous per-batch Python loop while still keeping the memory
+    footprint small for typical reliability datasets (a few tens of MB).
+
+    Probabilities and logits are written to *preds_csv_path* (if provided) and
     high-confidence records are appended to *id_records* / *ood_records*.
-    This avoids materialising the full (N, num_classes) softmax matrix.
 
     The prediction CSV stores, for each sample, the sequence id, the original
-    integer label, and the class probabilities. This makes the file
-    self-describing and allows ID/OOD selection to be reproduced from it
-    without rerunning inference.
+    integer label, the class logits, and the class probabilities. This makes
+    the file self-describing and allows ID/OOD selection to be reproduced from
+    it without rerunning inference.
     """
     n_records = len(records)
 
@@ -202,7 +263,12 @@ def _run_classifier_inference_streamed(
     if preds_csv_path is not None and Path(preds_csv_path).exists():
         logger.info(f"Prediction file {preds_csv_path} exists; using it directly")
         try:
-            df = pl.read_csv(preds_csv_path, has_header=False, infer_schema_length=0)
+            with open(preds_csv_path, "r", newline="") as fh:
+                first_line = fh.readline()
+            has_header = first_line.startswith("seq_id")
+            df = pl.read_csv(
+                preds_csv_path, has_header=has_header, infer_schema_length=0
+            )
         except Exception as exc:  # pragma: no cover
             logger.warning(
                 f"Could not load existing predictions from {preds_csv_path}: {exc}. "
@@ -215,16 +281,27 @@ def _run_classifier_inference_streamed(
                     f"Existing prediction file has {n_rows} rows but "
                     f"{n_records} records were expected. Recomputing."
                 )
-            elif num_classes is not None and n_cols in (num_classes, num_classes + 2):
-                # Determine which columns are metadata vs probabilities.
-                if n_cols == num_classes + 2:
+            elif num_classes is not None and n_cols in (
+                num_classes,
+                num_classes + 2,
+                2 * num_classes + 2,
+            ):
+                # Determine which columns are metadata vs probabilities/logits.
+                if n_cols == 2 * num_classes + 2:
+                    labels_loaded = df[:, 1].cast(pl.Int32).to_numpy()
+                    logits_loaded = df[:, 2 : 2 + num_classes].cast(pl.Float32).to_numpy()
+                    probs = df[:, 2 + num_classes :].cast(pl.Float32).to_numpy()
+                    loaded_seq_ids = df[:, 0].to_list()
+                elif n_cols == num_classes + 2:
                     labels_loaded = df[:, 1].cast(pl.Int32).to_numpy()
                     probs = df[:, 2:].cast(pl.Float32).to_numpy()
+                    logits_loaded = None
                     loaded_seq_ids = df[:, 0].to_list()
                 else:
                     # Legacy probability-only format.
                     labels_loaded = None
                     probs = df.cast(pl.Float32).to_numpy()
+                    logits_loaded = None
                     loaded_seq_ids = None
 
                 expected_labels = np.array(
@@ -259,6 +336,7 @@ def _run_classifier_inference_streamed(
                             else [str(i) for i in range(n_records)],
                             expected_labels,
                             probs,
+                            logits=logits_loaded,
                         )
 
                     _select_id_ood_from_probs(
@@ -274,53 +352,37 @@ def _run_classifier_inference_streamed(
     if preds_csv_path is not None:
         Path(preds_csv_path).parent.mkdir(parents=True, exist_ok=True)
 
-    record_idx = 0
+    logits, probs = _run_classifier_inference_logits(
+        classifier,
+        dataset,
+        n_records=n_records,
+        description="Classifying sequences",
+    )
 
-    for x, y in dataset:
-        logits = classifier(x, training=False)
-        probs = tf.nn.softmax(logits).numpy()
-        batch_n = min(probs.shape[0], n_records - record_idx)
-        if batch_n <= 0:
-            break
-
-        probs_batch = probs[:batch_n]
-
-        # Integer labels from one-hot encoding.
-        y_true = (
-            y.numpy()[:batch_n]
-            if y.shape.rank == 1
-            else np.argmax(y.numpy(), axis=1)[:batch_n]
+    if preds_csv_path is not None:
+        expected_labels = np.array(
+            [label for label, _ in records], dtype=np.int32
+        )
+        loaded_seq_ids = (
+            seq_ids if seq_ids is not None else [str(i) for i in range(n_records)]
+        )
+        _write_predictions_csv(
+            preds_csv_path,
+            loaded_seq_ids,
+            expected_labels,
+            probs,
+            logits=logits,
         )
 
-        if preds_csv_path is not None:
-            batch_seq_ids = (
-                seq_ids[record_idx : record_idx + batch_n]
-                if seq_ids is not None
-                else [str(record_idx + i) for i in range(batch_n)]
-            )
-            batch_labels = y_true.astype(np.int32)
-            with open(preds_csv_path, "a", newline="") as fh:
-                writer = csv.writer(fh)
-                for i in range(batch_n):
-                    writer.writerow(
-                        [batch_seq_ids[i], batch_labels[i], *probs_batch[i].tolist()]
-                    )
+    _select_id_ood_from_probs(probs, records, threshold, id_records, ood_records)
 
-        conf = np.max(probs_batch, axis=1)
-        pred_class = np.argmax(probs_batch, axis=1)
 
-        for i in range(batch_n):
-            if conf[i] < threshold:
-                continue
-            _, seq = records[record_idx + i]
-            if pred_class[i] == y_true[i]:
-                id_records.append((1, seq))
-            else:
-                ood_records.append((0, seq))
-
-        record_idx += batch_n
-        if record_idx >= n_records:
-            break
+def _prediction_csv_header(num_classes: int) -> list[str]:
+    """Return the header row for a predictions CSV."""
+    header = ["seq_id", "label"]
+    header.extend(f"logit_{i}" for i in range(num_classes))
+    header.extend(f"prob_{i}" for i in range(num_classes))
+    return header
 
 
 def _write_predictions_csv(
@@ -328,15 +390,23 @@ def _write_predictions_csv(
     seq_ids: list[str],
     labels: np.ndarray,
     probs: np.ndarray,
+    logits: np.ndarray | None = None,
 ) -> None:
-    """Write a self-describing predictions CSV using Polars."""
+    """Write a self-describing predictions CSV using Polars.
+
+    Columns are: ``seq_id``, ``label``, ``logit_0`` ... ``logit_{C-1}``,
+    followed by ``prob_0`` ... ``prob_{C-1}``.
+    """
     data: dict[str, Any] = {
         "seq_id": pl.Series(seq_ids, dtype=pl.Utf8),
         "label": pl.Series(labels, dtype=pl.Int32),
     }
+    if logits is not None:
+        for i in range(logits.shape[1]):
+            data[f"logit_{i}"] = pl.Series(logits[:, i], dtype=pl.Float32)
     for i in range(probs.shape[1]):
         data[f"prob_{i}"] = pl.Series(probs[:, i], dtype=pl.Float32)
-    pl.DataFrame(data).write_csv(path, include_header=False)
+    pl.DataFrame(data).write_csv(path, include_header=True)
 
 
 def _select_id_ood_records(

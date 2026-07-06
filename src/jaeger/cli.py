@@ -464,6 +464,13 @@ def tune(**kwargs):
     help="save a model with weights from the last checkpoint",
 )
 @click.option(
+    "--masking/--no-masking",
+    "masking",
+    default=None,
+    help="Enable/disable sequence masking in convolutional/normalization layers. "
+    "Defaults to the config value (model.use_masking) or True.",
+)
+@click.option(
     "--only_save",
     is_flag=True,
     required=False,
