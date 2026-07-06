@@ -12,7 +12,6 @@ loaded directly by DynamicModelBuilder.
 """
 
 import os
-import sys
 import argparse
 from pathlib import Path
 
@@ -86,13 +85,13 @@ def convert_legacy_classifier_checkpoint(
         # Map by type/order rather than by fixed name because Keras assigns
         # incremental IDs that can shift across builds.
         embedding_layer = next(
-            (l for l in stem_layers if isinstance(l, tf.keras.layers.Embedding)), None
+            (layer for layer in stem_layers if isinstance(layer, tf.keras.layers.Embedding)), None
         )
         conv_layer = next(
-            (l for l in stem_layers if isinstance(l, MaskedConv1D)), None
+            (layer for layer in stem_layers if isinstance(layer, MaskedConv1D)), None
         )
         bn_layer = next(
-            (l for l in stem_layers if isinstance(l, MaskedBatchNorm)), None
+            (layer for layer in stem_layers if isinstance(layer, MaskedBatchNorm)), None
         )
 
         if embedding_layer is not None and "embedding" in layers_group:

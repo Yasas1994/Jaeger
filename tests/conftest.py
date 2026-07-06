@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import tensorflow as tf
 
 # Keep TF reasonably quiet during tests.
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
