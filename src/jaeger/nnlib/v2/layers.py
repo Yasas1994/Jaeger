@@ -2576,3 +2576,118 @@ def causal_fft_convolve(u: tf.Tensor, h: tf.Tensor) -> tf.Tensor:
     y = tf.signal.irfft(Y, fft_length=[n])
     y = y[..., :L]
     return tf.cast(y, orig_dtype)
+
+
+class HyenaFilter(tf.keras.layers.Layer):
+    """Generate implicit long convolution filters h_t = Window(t) * FFN(PE(t)).
+
+    When `seq_len` is fixed at construction, the positional encoding is
+    pre-allocated; calling with a larger `seq_len` will raise an error. Pass
+    `seq_len=None` and provide the length at call time for variable-length
+    inputs.
+    """
+
+    def __init__(
+        self,
+        seq_len: int | None,
+        dim: int,
+        order: int = 2,
+        pe_dim: int = 16,
+        hidden_dim: int = 32,
+        num_layers: int = 2,
+        activation: str = "gelu",
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.seq_len = seq_len
+        self.dim = dim
+        self.order = order
+        self.pe_dim = pe_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.activation = activation
+
+    def build(self, input_shape):
+        max_len = self.seq_len or 1
+        pe = self._make_positional_encoding(max_len, self.pe_dim)
+        self.pos_encoding = self.add_weight(
+            shape=pe.shape,
+            initializer=tf.keras.initializers.Constant(pe),
+            trainable=False,
+            dtype=tf.float32,
+            name="pos_encoding",
+        )
+
+        self.ffns = []
+        for i in range(self.order):
+            ffn = tf.keras.Sequential(name=f"ffn_{i}")
+            for j in range(self.num_layers):
+                is_last = j == self.num_layers - 1
+                units = self.dim if is_last else self.hidden_dim
+                act = self.activation if not is_last else None
+                ffn.add(tf.keras.layers.Dense(units, activation=act))
+            setattr(self, f"ffn_{i}", ffn)
+            ffn.build((max_len, self.pe_dim))
+            self.ffns.append(ffn)
+
+        self.alphas = self.add_weight(
+            shape=(self.order, self.dim),
+            initializer="ones",
+            trainable=True,
+            name="alphas",
+        )
+        self.biases = self.add_weight(
+            shape=(self.order, self.dim),
+            initializer="zeros",
+            trainable=True,
+            name="biases",
+        )
+        super().build(input_shape)
+
+    def _make_positional_encoding(self, length: int, dim: int) -> tf.Tensor:
+        pos = tf.range(length, dtype=tf.float32)[:, None]
+        div = tf.exp(
+            tf.range(0, dim, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / dim)
+        )
+        pe_sin = tf.sin(pos * div)
+        pe_cos = tf.cos(pos * div)
+        pe = tf.reshape(tf.stack([pe_sin, pe_cos], axis=-1), (length, -1))
+        return pe[:, :dim]
+
+    def call(self, seq_len: tf.Tensor | None = None):
+        L = seq_len if seq_len is not None else self.seq_len
+        if L is None:
+            raise ValueError("HyenaFilter requires seq_len at build or call time")
+        L = tf.cast(L, tf.int32)
+
+        if self.seq_len is not None:
+            pe = self.pos_encoding[:L]
+        else:
+            pe = self._make_positional_encoding(L, self.pe_dim)
+        t = tf.range(L, dtype=tf.float32)
+
+        filters = []
+        for i in range(self.order):
+            x = self.ffns[i](pe)
+            window = (
+                tf.exp(-self.alphas[i][None, :] * t[:, None]) + self.biases[i][None, :]
+            )
+            h = window * x
+            filters.append(h)
+
+        return tf.transpose(tf.stack(filters, axis=0), [0, 2, 1])
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(
+            {
+                "seq_len": self.seq_len,
+                "dim": self.dim,
+                "order": self.order,
+                "pe_dim": self.pe_dim,
+                "hidden_dim": self.hidden_dim,
+                "num_layers": self.num_layers,
+                "activation": self.activation,
+            }
+        )
+        return cfg
