@@ -729,8 +729,7 @@ def _generate_synthetic_sequences(
 
 def _filter_synthetic_ood_chunk(
     classifier: tf.keras.Model,
-    seqs: list[str],
-    tmp_csv: str,
+    csv_path: str,
     string_processor_config: dict[str, Any],
     classifier_out_dim: int,
     threshold: float,
@@ -738,9 +737,8 @@ def _filter_synthetic_ood_chunk(
     crop_size: int | None = None,
 ) -> list[tuple[int, str]]:
     """Run inference on one chunk of synthetic sequences and keep high-conf OOD."""
-    _write_csv([(0, s) for s in seqs], tmp_csv)
     ds = _build_inference_dataset(
-        tmp_csv,
+        csv_path,
         string_processor_config,
         classifier_out_dim,
         inference_batch_size,
@@ -748,7 +746,8 @@ def _filter_synthetic_ood_chunk(
     )
     probs = _run_classifier_inference(classifier, ds)
     conf = np.max(probs, axis=1)
-    return [(0, seq) for seq, c in zip(seqs, conf) if c >= threshold]
+    records = _read_csv_records(csv_path)
+    return [(0, seq) for (_, seq), c in zip(records, conf) if c >= threshold]
 
 
 def _filter_synthetic_ood(
@@ -763,45 +762,83 @@ def _filter_synthetic_ood(
 ) -> list[tuple[int, str]]:
     """Keep corrupted sequences that the classifier predicts with high confidence.
 
-    Processes *synthetic_seqs* in bounded chunks so the full set of synthetic
-    sequences is never materialised as a single list or inference dataset.
+    Processes *synthetic_seqs* in bounded chunks. Each chunk is written to a
+    temporary CSV on disk, so the parent process never holds more than
+    *chunk_size* synthetic sequences in memory at once. Kept high-confidence
+    records are also accumulated in a temporary CSV and only read into a list
+    at the end.
     """
     out: list[tuple[int, str]] = []
-    buffer: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_csv = str(Path(tmpdir) / "synthetic_ood_chunk.csv")
-        for seq in synthetic_seqs:
-            buffer.append(seq)
-            if len(buffer) >= chunk_size:
-                out.extend(
-                    _filter_synthetic_ood_chunk(
+        batch_csv = str(Path(tmpdir) / "synthetic_ood_batch.csv")
+        kept_csv = str(Path(tmpdir) / "kept_synthetic_ood.csv")
+
+        batch_fh = open(batch_csv, "w")
+        batch_count = 0
+        try:
+            for seq in synthetic_seqs:
+                batch_fh.write(f"0,{seq}\n")
+                batch_count += 1
+                if batch_count >= chunk_size:
+                    batch_fh.close()
+                    _flush_synthetic_ood_batch(
                         classifier,
-                        buffer,
-                        tmp_csv,
+                        batch_csv,
+                        kept_csv,
                         string_processor_config,
                         classifier_out_dim,
                         threshold,
                         inference_batch_size,
                         crop_size=crop_size,
                     )
-                )
-                buffer = []
-        if buffer:
-            out.extend(
-                _filter_synthetic_ood_chunk(
-                    classifier,
-                    buffer,
-                    tmp_csv,
-                    string_processor_config,
-                    classifier_out_dim,
-                    threshold,
-                    inference_batch_size,
-                    crop_size=crop_size,
-                )
+                    batch_fh = open(batch_csv, "w")
+                    batch_count = 0
+        finally:
+            if not batch_fh.closed:
+                batch_fh.close()
+
+        if batch_count > 0:
+            _flush_synthetic_ood_batch(
+                classifier,
+                batch_csv,
+                kept_csv,
+                string_processor_config,
+                classifier_out_dim,
+                threshold,
+                inference_batch_size,
+                crop_size=crop_size,
             )
 
+        if Path(kept_csv).exists():
+            out = _read_csv_records(kept_csv)
+
     return out
+
+
+def _flush_synthetic_ood_batch(
+    classifier: tf.keras.Model,
+    batch_csv: str,
+    kept_csv: str,
+    string_processor_config: dict[str, Any],
+    classifier_out_dim: int,
+    threshold: float,
+    inference_batch_size: int,
+    crop_size: int | None = None,
+) -> None:
+    """Run inference on *batch_csv* and append kept records to *kept_csv*."""
+    kept = _filter_synthetic_ood_chunk(
+        classifier,
+        batch_csv,
+        string_processor_config,
+        classifier_out_dim,
+        threshold,
+        inference_batch_size,
+        crop_size=crop_size,
+    )
+    with open(kept_csv, "a") as kept_fh:
+        for _, seq in kept:
+            kept_fh.write(f"0,{seq}\n")
 
 
 def _convert_to_npz(
