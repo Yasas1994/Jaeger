@@ -631,6 +631,16 @@ def _generate_synthetic_chunk(
     return out
 
 
+def _generate_synthetic_chunk_wrapper(
+    args: tuple[str, str, dict[str, Any], int, int | None, int | None, int],
+) -> list[str]:
+    """Unpack arguments for :func:`_generate_synthetic_chunk`.
+
+    Needed because ``Pool.imap_unordered`` passes a single argument.
+    """
+    return _generate_synthetic_chunk(*args)
+
+
 def _generate_synthetic_sequences(
     records: list[tuple[int, str]],
     multiplier: float,
@@ -693,8 +703,11 @@ def _generate_synthetic_sequences(
                     )
                     for i, c in enumerate(chunks)
                 ]
-                results = pool.starmap(_generate_synthetic_chunk, args)
-                for r in results:
+                # Stream results as they complete instead of materialising the
+                # whole spec count in memory with starmap.
+                for r in pool.imap_unordered(
+                    _generate_synthetic_chunk_wrapper, args, chunksize=1
+                ):
                     for seq in r:
                         yield seq
     else:
