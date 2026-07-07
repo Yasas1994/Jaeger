@@ -2534,3 +2534,45 @@ def ResidualBlock_wrapper(block_size: int, in_shape: tuple, **kwargs):
     If return_nmd=True, the final block outputs both (x, nmd).
     """
     return ResidualBlockStack(block_size=block_size, in_shape=in_shape, **kwargs)
+
+
+def causal_fft_convolve(u: tf.Tensor, h: tf.Tensor) -> tf.Tensor:
+    """Depthwise causal convolution via FFT.
+
+    Args:
+        u: (batch, dim, L)
+        h: (dim, L) — causal filter, one per channel. Must already be causal.
+
+    Returns:
+        y: (batch, dim, L) with the same dtype as ``u``.
+    """
+    orig_dtype = u.dtype
+    u = tf.cast(u, tf.float32)
+    h = tf.cast(h, tf.float32)
+
+    tf.debugging.assert_rank(u, 3, message="causal_fft_convolve: u must be rank 3")
+    tf.debugging.assert_rank(h, 2, message="causal_fft_convolve: h must be rank 2")
+    u_dim = tf.shape(u)[1]
+    h_dim = tf.shape(h)[0]
+    tf.debugging.assert_equal(
+        u_dim, h_dim, message="causal_fft_convolve: u and h must have matching dim"
+    )
+    u_L = tf.shape(u)[2]
+    h_L = tf.shape(h)[1]
+    tf.debugging.assert_equal(
+        u_L, h_L, message="causal_fft_convolve: u and h must have matching length"
+    )
+
+    L = tf.shape(u)[-1]
+    n = 2 * L - 1
+
+    h_pad = tf.pad(h, [[0, 0], [0, n - L]])
+    u_pad = tf.pad(u, [[0, 0], [0, 0], [0, n - L]])
+
+    H = tf.signal.rfft(h_pad, fft_length=[n])
+    U = tf.signal.rfft(u_pad, fft_length=[n])
+    Y = U * tf.expand_dims(H, 0)
+
+    y = tf.signal.irfft(Y, fft_length=[n])
+    y = y[..., :L]
+    return tf.cast(y, orig_dtype)
