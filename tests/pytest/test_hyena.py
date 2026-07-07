@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import numpy as np
 import pytest
 import tensorflow as tf
 
+from jaeger.nnlib.builder import DynamicModelBuilder
 from jaeger.nnlib.v2.layers import (
     HyenaBlock,
     HyenaFilter,
     HyenaOperator,
     causal_fft_convolve,
 )
+from jaeger.utils.misc import load_model_config
 
 
 def test_hyena_filter_shape():
@@ -138,3 +143,13 @@ def test_hyena_block_respects_mask():
     mask = tf.concat([tf.ones((1, 1, 8)), tf.zeros((1, 1, 8))], axis=-1)
     out = layer(x, mask=mask)
     np.testing.assert_allclose(out[0, 0, 8:].numpy(), np.zeros((8, 8)), atol=1e-5)
+
+
+def test_builder_creates_hyena_model():
+    cfg_path = Path("train_config/hyena_test.yaml")
+    cfg = load_model_config(cfg_path)
+    shutil.rmtree(cfg["training"]["data_dir"], ignore_errors=True)
+    builder = DynamicModelBuilder(cfg)
+    models = builder.build_fragment_classifier()
+    assert "rep_model" in models
+    assert "jaeger_classifier" in models

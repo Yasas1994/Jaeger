@@ -2645,12 +2645,15 @@ class HyenaFilter(tf.keras.layers.Layer):
         )
         super().build(input_shape)
 
-    def _make_positional_encoding(self, length: int, dim: int) -> np.ndarray:
-        pos = np.arange(length, dtype=np.float32)[:, None]
-        div = np.exp(np.arange(0, dim, 2, dtype=np.float32) * -(np.log(10000.0) / dim))
-        pe_sin = np.sin(pos * div)
-        pe_cos = np.cos(pos * div)
-        pe = np.reshape(np.stack([pe_sin, pe_cos], axis=-1), (length, -1))
+    def _make_positional_encoding(self, length: int | tf.Tensor, dim: int) -> tf.Tensor:
+        length = tf.cast(length, tf.int32)
+        pos = tf.cast(tf.range(length), tf.float32)[:, None]
+        div = tf.exp(
+            tf.cast(tf.range(0, dim, 2), tf.float32) * -(tf.math.log(10000.0) / dim)
+        )
+        pe_sin = tf.sin(pos * div)
+        pe_cos = tf.cos(pos * div)
+        pe = tf.reshape(tf.stack([pe_sin, pe_cos], axis=-1), [length, -1])
         return pe[:, :dim]
 
     def call(self, seq_len: tf.Tensor | None = None):

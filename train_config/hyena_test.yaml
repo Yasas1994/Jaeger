@@ -1,0 +1,107 @@
+model:
+  name: jaeger_hyena_test
+  experiment: 900
+  seed: 42
+  classifier_out_dim: 6
+  reliability_out_dim: 0
+  activation: gelu
+  class_label_map:
+  - class: bacteria
+    label: 0
+  - class: phage
+    label: 1
+  - class: eukarya
+    label: 2
+  - class: archaea
+    label: 3
+  - class: plasmid
+    label: 4
+  - class: virus
+    label: 5
+  embedding:
+    use_embedding_layer: true
+    input_type: translated
+    strands: 2
+    frames: 6
+    length: null
+    input_shape: [6, null]
+    embedding_size: 32
+  string_processor:
+    data_format: csv
+    seq_onehot: false
+    codon: CODON
+    codon_id: CODON_ID
+    crop_size: 666
+    buffer_size: 50
+    mutate: false
+    masking: false
+    classifier_labels: [0, 1, 2, 3, 4, 5]
+  representation_learner:
+    hidden_layers:
+    - name: hyena_block
+      config:
+        dim: 32
+        order: 2
+        filter_hidden: 32
+        filter_layers: 2
+        dropout: 0.1
+    pooling: max
+  projection:
+    margin: 0.5
+    scale: 30
+    input_shape: 32
+    hidden_layers:
+    - name: dense
+      config:
+        units: 16
+        activation: gelu
+    - name: dense
+      config:
+        units: 16
+        activation: null
+        dtype: float32
+  classifier:
+    input_shape: 32
+    hidden_layers:
+    - name: dense
+      config:
+        units: 6
+        activation: null
+        dtype: float32
+
+training:
+  data_dir: /tmp/jaeger_hyena_test
+  experiment_root: experiments/experiment_900_42
+  classifier_dir: /tmp/jaeger_hyena_test/checkpoints/classifier
+  projection_dir: /tmp/jaeger_hyena_test/checkpoints/projection
+  classifier_epochs: 0
+  projection_epochs: 0
+  classifier_train_steps: 1
+  classifier_validation_steps: 1
+  batch_size: 8
+  classifier_batch_size: 8
+  projection_batch_size: 8
+  gradient_accumulation_steps: 1
+  optimizer: adam
+  optimizer_params:
+    learning_rate: 0.001
+  loss_classifier: categorical_crossentropy
+  loss_params_classifier:
+    from_logits: true
+  callbacks:
+    clean_old: true
+    classifier: []
+    projection: []
+  model_saving:
+    path: /tmp/jaeger_hyena_test/model
+    save_weights: false
+    save_exec_graph: false
+  fragment_classifier_data:
+    train:
+    - class: [b]
+      label: [0]
+      path: [tests/data/test_train.csv]
+    validation:
+    - class: [b]
+      label: [0]
+      path: [tests/data/test_val.csv]
