@@ -103,3 +103,65 @@ def test_missing_outputs_are_ignored(tmp_path: Path) -> None:
     )
     assert not (tmp_path / "sample_embedding.npz").exists()
     assert not (tmp_path / "sample_nmd.npz").exists()
+
+
+def test_write_prediction_outputs_writes_both_contigs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression test: the post-processing helper must handle multi-contig y_pred."""
+    import pandas as pd
+    from unittest.mock import MagicMock
+
+    from jaeger.commands.predict import _write_prediction_outputs
+
+    written: dict = {}
+
+    def fake_write_output(data, **kw):
+        written["data"] = data
+        written["kwargs"] = kw
+        return len(data["headers"])
+
+    monkeypatch.setattr("jaeger.postprocess.collect.write_output", fake_write_output)
+
+    fake_model = MagicMock()
+    fake_model.class_map = {
+        "class": ["bacteria", "phage", "eukarya", "archaea", "plasmid", "virus"],
+        "index": [0, 1, 2, 3, 4, 5],
+        "num_classes": 6,
+    }
+
+    y_pred = {
+        "prediction": np.zeros((2, 6), dtype=np.float32),
+        "meta_0": np.array(["long_contig", "short_contig"], dtype=object),
+        "meta_2": np.array([1, 1], dtype=np.int32),
+        "meta_4": np.array([2500, 1800], dtype=np.int32),
+        "meta_5": np.array([0.25, 0.25], dtype=np.float32),
+        "meta_6": np.array([0.25, 0.25], dtype=np.float32),
+        "meta_7": np.array([0.25, 0.25], dtype=np.float32),
+        "meta_8": np.array([0.25, 0.25], dtype=np.float32),
+        "meta_9": np.array([0.0, 0.0], dtype=np.float32),
+    }
+
+    _write_prediction_outputs(
+        y_pred,
+        model=fake_model,
+        model_name="test_model",
+        model_info={"graph": tmp_path / "graph"},
+        input_file_path=tmp_path / "input.fasta",
+        output_table_path=tmp_path / "out.tsv",
+        output_phage_table_path=tmp_path / "out_phages.tsv",
+        file_base="input",
+        OUTPUT_DIR=tmp_path,
+        term_repeats=pd.DataFrame(
+            {"contig_id": [], "terminal_repeats": [], "repeat_length": []}
+        ),
+        num=2,
+        logger=MagicMock(),
+        fsize=2000,
+        rc=0.5,
+        pc=1,
+    )
+
+    assert "data" in written
+    assert set(written["data"]["headers"]) == {"long_contig", "short_contig"}
+    assert written["kwargs"]["output_table_path"] == tmp_path / "out.tsv"

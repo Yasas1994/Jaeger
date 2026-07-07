@@ -216,6 +216,214 @@ def _concat_predictions(a: dict, b: dict) -> dict:
     return {k: np.concatenate([a[k], b[k]], axis=0) for k in a}
 
 
+def _write_prediction_outputs(
+    y_pred: dict[str, np.ndarray],
+    *,
+    model,
+    model_name: str,
+    model_info: dict,
+    input_file_path: Path,
+    output_table_path: Path,
+    output_phage_table_path: Path,
+    file_base: str,
+    OUTPUT_DIR: Path,
+    term_repeats: Any,
+    num: int,
+    logger: Any,
+    **kwargs: Any,
+) -> None:
+    """Run post-processing (summary, refinement, prophages, aux files) once.
+
+    This used to live inside the single-pass branch of ``run_core``; moving it
+    into a helper lets both single-pass and two-pass inference share the same
+    output pipeline.
+    """
+    from jaeger.postprocess.collect import pred_to_dict, write_output
+
+    if kwargs.get("getalllabels"):
+        pass
+
+    data, data_full = pred_to_dict(
+        y_pred,
+        class_map=model.class_map,
+        fsize=kwargs.get("fsize"),
+        term_repeats=term_repeats,
+    )
+
+    refined_contig = None
+    if kwargs.get("refine", False):
+        graph_dir = Path(model_info["graph"])
+        refine_path = graph_dir.parent / f"{model_name}_refine.yaml"
+        if refine_path.exists():
+            try:
+                refine_cfg = load_refinement(refine_path, expect_model=model_name)
+                refined_contig = _build_refined_contig_df(
+                    data_full,
+                    refine_cfg["taus"],
+                    mode=kwargs.get("refine_mode", "gated"),
+                    min_windows=kwargs.get("refine_min_windows", 3),
+                    merge_split=kwargs.get("refine_merge_split", "half"),
+                    allow_merged_contig_call=kwargs.get(
+                        "refine_allow_merged_contig_call", False
+                    ),
+                    contig_hedge_margin=kwargs.get("refine_contig_hedge_margin", 1.0),
+                )
+                logger.info(f"Applied refinement calibration from {refine_path}")
+            except Exception as e:  # pragma: no cover
+                logger.warning(f"Refinement failed: {e}; using default predictions")
+        else:
+            logger.warning(
+                f"No refinement calibration found at {refine_path}; "
+                "using default predictions"
+            )
+
+    num_written = write_output(
+        data,
+        labels=model.class_map.get("class"),
+        indices=model.class_map.get("index"),
+        output_table_path=output_table_path,
+        output_phage_table_path=output_phage_table_path,
+        reliability_cutoff=kwargs.get("rc", 0.5),
+        phage_score=kwargs.get("pc", 1),
+        refined_contig=refined_contig.to_pandas()
+        if refined_contig is not None
+        else None,
+    )
+
+    logger.info(f"processed {num_written}/{num} sequences")
+
+    # --- Prophage extraction ---
+    if kwargs.get("prophage"):
+        from jaeger.postprocess.prophages import (
+            logits_to_df_v2,
+            plot_scores,
+            plot_scores_linear,
+            prophage_report,
+            segment,
+        )
+
+        try:
+            if logits_df := logits_to_df_v2(
+                class_map=model.class_map,
+                cmdline_kwargs=kwargs,
+                headers=data_full["headers"],
+                predictions=data_full["predictions"],
+                lengths=data_full["lengths"],
+                gc_skews=data_full["gc_skews"],
+                gcs=data_full["gcs"],
+            ):
+                logger.info("identifying prophages")
+                pro_dir = OUTPUT_DIR / f"{file_base}_prophages"
+                plots_dir = pro_dir / "plots"
+                for d in [pro_dir, plots_dir]:
+                    d.mkdir(parents=True, exist_ok=True)
+
+                phage_cord = segment(
+                    logits_df,
+                    outdir=plots_dir,
+                    cutoff_length=kwargs.get("lc"),
+                    sensitivity=kwargs.get("sensitivity"),
+                    identifier="phage",
+                )
+
+                from jaeger.postprocess.prophage_boundaries import (
+                    refine_prophage_boundaries,
+                )
+
+                refined_boundaries = refine_prophage_boundaries(
+                    prophage_cordinates=phage_cord,
+                    fasta_path=input_file_path,
+                    fsize=kwargs.get("fsize"),
+                )
+
+                plot_type = kwargs.get("plot_type", "circular")
+                if plot_type in ("circular", "both"):
+                    plot_scores(
+                        logits_df,
+                        config={
+                            "all_labels": {
+                                i: c
+                                for i, c in enumerate(model.class_map.get("class", []))
+                            }
+                        },
+                        model=model_name,
+                        fsize=kwargs.get("fsize"),
+                        infile_base=file_base,
+                        outdir=plots_dir,
+                        phage_cordinates=phage_cord,
+                    )
+                if plot_type in ("linear", "both"):
+                    plot_scores_linear(
+                        logits_df,
+                        config={
+                            "all_labels": {
+                                i: c
+                                for i, c in enumerate(model.class_map.get("class", []))
+                            }
+                        },
+                        model=model_name,
+                        fsize=kwargs.get("fsize"),
+                        infile_base=file_base,
+                        outdir=plots_dir,
+                        phage_cordinates=phage_cord,
+                    )
+                prophage_report(
+                    fsize=kwargs.get("fsize"),
+                    filehandle=str(input_file_path),
+                    prophage_cordinates=phage_cord,
+                    outdir=pro_dir,
+                    refined_boundaries=refined_boundaries,
+                )
+            else:
+                logger.info("no prophage regions found")
+        except Exception as e:
+            logger.error(f"an error {e} occurred during the prophage prediction step")
+            logger.debug(traceback.format_exc())
+
+    # --- Write phage sequences to FASTA ---
+    if kwargs.get("getsequences"):
+        from jaeger.postprocess.collect import write_fasta_from_results
+
+        output_fasta_file = f"{file_base}_phages_jaeger.fasta"
+        output_fasta_file_path = OUTPUT_DIR / output_fasta_file
+        write_fasta_from_results(
+            input_fasta=input_file_path,
+            output_tsv=output_phage_table_path,
+            output_fasta=output_fasta_file_path,
+        )
+        logger.info(f"{output_fasta_file} created")
+
+    # --- Write window-wise scores + metadata to NPZ ---
+    if kwargs.get("window_scores"):
+        output_scores = f"{file_base}_window_scores.npz"
+        output_scores_path = OUTPUT_DIR / output_scores
+        logger.info(f"writing window-wise scores and metadata to {output_scores_path}")
+        np.savez(
+            output_scores_path,
+            headers=data_full["headers"],
+            lengths=data_full["lengths"],
+            predictions=np.array(data_full["predictions"], dtype=object),
+            gc_skews=np.array(data_full["gc_skews"], dtype=object),
+            gcs=np.array(data_full["gcs"], dtype=object),
+        )
+        logger.info(f"{output_scores} created")
+
+    logger.info(f"CPU time(s) : {psutil.Process().cpu_times().user:.2f}")
+    logger.info(f"wall time(s) : {time.time() - psutil.Process().create_time():.2f}")
+    logger.info(
+        f"memory usage : {psutil.Process().memory_full_info().rss / GB_BYTES:.2f}GB "
+        f"({psutil.Process().memory_percent():.2f}%)"
+    )
+    _save_auxiliary_outputs(
+        y_pred,
+        OUTPUT_DIR,
+        file_base,
+        save_embedding=kwargs.get("save_embedding", False),
+        save_nmd=kwargs.get("save_nmd", False),
+        logger=logger,
+    )
+
+
 def run_core(**kwargs):
     current_process = psutil.Process()
 
@@ -545,185 +753,19 @@ def run_core(**kwargs):
                 )
                 sys.exit(1)
 
-        from jaeger.postprocess.collect import pred_to_dict, write_output
-
-        if kwargs.get("getalllabels"):
-            pass
-        data, data_full = pred_to_dict(
-            y_pred,
-            class_map=model.class_map,
-            fsize=kwargs.get("fsize"),
-            term_repeats=term_repeats,
-        )
-
-        refined_contig = None
-        if kwargs.get("refine", False):
-            graph_dir = Path(model_info["graph"])
-            refine_path = graph_dir.parent / f"{model_name}_refine.yaml"
-            if refine_path.exists():
-                try:
-                    refine_cfg = load_refinement(refine_path, expect_model=model_name)
-                    refined_contig = _build_refined_contig_df(
-                        data_full,
-                        refine_cfg["taus"],
-                        mode=kwargs.get("refine_mode", "gated"),
-                        min_windows=kwargs.get("refine_min_windows", 3),
-                        merge_split=kwargs.get("refine_merge_split", "half"),
-                        allow_merged_contig_call=kwargs.get(
-                            "refine_allow_merged_contig_call", False
-                        ),
-                        contig_hedge_margin=kwargs.get(
-                            "refine_contig_hedge_margin", 1.0
-                        ),
-                    )
-                    logger.info(f"Applied refinement calibration from {refine_path}")
-                except Exception as e:  # pragma: no cover
-                    logger.warning(f"Refinement failed: {e}; using default predictions")
-            else:
-                logger.warning(
-                    f"No refinement calibration found at {refine_path}; "
-                    "using default predictions"
-                )
-
-        # print(len(data['headers']))
-        num_written = write_output(
-            data,
-            labels=model.class_map.get("class"),
-            indices=model.class_map.get("index"),
-            output_table_path=output_table_path,
-            output_phage_table_path=output_phage_table_path,
-            reliability_cutoff=kwargs.get("rc", 0.5),
-            phage_score=kwargs.get("pc", 1),
-            refined_contig=refined_contig.to_pandas()
-            if refined_contig is not None
-            else None,
-        )
-
-        logger.info(f"processed {num_written}/{num} sequences")
-
-        # --- Prophage extraction ---
-        if kwargs.get("prophage"):
-            from jaeger.postprocess.prophages import (
-                logits_to_df_v2,
-                plot_scores,
-                plot_scores_linear,
-                prophage_report,
-                segment,
-            )
-
-            try:
-                if logits_df := logits_to_df_v2(
-                    class_map=model.class_map,
-                    cmdline_kwargs=kwargs,
-                    headers=data_full["headers"],
-                    predictions=data_full["predictions"],
-                    lengths=data_full["lengths"],
-                    gc_skews=data_full["gc_skews"],
-                    gcs=data_full["gcs"],
-                ):
-                    logger.info("identifying prophages")
-                    pro_dir = OUTPUT_DIR / f"{file_base}_prophages"
-                    plots_dir = pro_dir / "plots"
-                    for d in [pro_dir, plots_dir]:
-                        d.mkdir(parents=True, exist_ok=True)
-
-                    phage_cord = segment(
-                        logits_df,
-                        outdir=plots_dir,
-                        cutoff_length=kwargs.get("lc"),
-                        sensitivity=kwargs.get("sensitivity"),
-                        identifier="phage",
-                    )
-                    plot_type = kwargs.get("plot_type", "circular")
-                    if plot_type in ("circular", "both"):
-                        plot_scores(
-                            logits_df,
-                            config={
-                                "all_labels": {
-                                    i: c
-                                    for i, c in enumerate(
-                                        model.class_map.get("class", [])
-                                    )
-                                }
-                            },
-                            model=model_name,
-                            fsize=kwargs.get("fsize"),
-                            infile_base=file_base,
-                            outdir=plots_dir,
-                            phage_cordinates=phage_cord,
-                        )
-                    if plot_type in ("linear", "both"):
-                        plot_scores_linear(
-                            logits_df,
-                            config={
-                                "all_labels": {
-                                    i: c
-                                    for i, c in enumerate(
-                                        model.class_map.get("class", [])
-                                    )
-                                }
-                            },
-                            model=model_name,
-                            fsize=kwargs.get("fsize"),
-                            infile_base=file_base,
-                            outdir=plots_dir,
-                            phage_cordinates=phage_cord,
-                        )
-                    prophage_report(
-                        fsize=kwargs.get("fsize"),
-                        filehandle=str(input_file_path),
-                        prophage_cordinates=phage_cord,
-                        outdir=pro_dir,
-                    )
-                else:
-                    logger.info("no prophage regions found")
-            except Exception as e:
-                logger.error(
-                    f"an error {e} occurred during the prophage prediction step"
-                )
-                logger.debug(traceback.format_exc())
-
-        # --- Write phage sequences to FASTA ---
-        if kwargs.get("getsequences"):
-            from jaeger.postprocess.collect import write_fasta_from_results
-
-            output_fasta_file = f"{file_base}_phages_jaeger.fasta"
-            output_fasta_file_path = OUTPUT_DIR / output_fasta_file
-            write_fasta_from_results(
-                input_fasta=input_file_path,
-                output_tsv=output_phage_table_path,
-                output_fasta=output_fasta_file_path,
-            )
-            logger.info(f"{output_fasta_file} created")
-
-        # --- Write window-wise scores + metadata to NPZ ---
-        if kwargs.get("window_scores"):
-            output_scores = f"{file_base}_window_scores.npz"
-            output_scores_path = OUTPUT_DIR / output_scores
-            logger.info(
-                f"writing window-wise scores and metadata to {output_scores_path}"
-            )
-            np.savez(
-                output_scores_path,
-                headers=data_full["headers"],
-                lengths=data_full["lengths"],
-                predictions=np.array(data_full["predictions"], dtype=object),
-                gc_skews=np.array(data_full["gc_skews"], dtype=object),
-                gcs=np.array(data_full["gcs"], dtype=object),
-            )
-            logger.info(f"{output_scores} created")
-
-        logger.info(f"CPU time(s) : {current_process.cpu_times().user:.2f}")
-        logger.info(f"wall time(s) : {time.time() - current_process.create_time():.2f}")
-        logger.info(
-            f"memory usage : {current_process.memory_full_info().rss / GB_BYTES:.2f}GB ({current_process.memory_percent():.2f}%)"
-        )
-        _save_auxiliary_outputs(
-            y_pred,
-            OUTPUT_DIR,
-            file_base,
-            save_embedding=kwargs.get("save_embedding", False),
-            save_nmd=kwargs.get("save_nmd", False),
-            logger=logger,
-        )
-        # INPUT_FILE_MASKED.unlink()
+    _write_prediction_outputs(
+        y_pred,
+        model=model,
+        model_name=model_name,
+        model_info=model_info,
+        input_file_path=input_file_path,
+        output_table_path=output_table_path,
+        output_phage_table_path=output_phage_table_path,
+        file_base=file_base,
+        OUTPUT_DIR=OUTPUT_DIR,
+        term_repeats=term_repeats,
+        num=num,
+        logger=logger,
+        **kwargs,
+    )
+    # INPUT_FILE_MASKED.unlink()
