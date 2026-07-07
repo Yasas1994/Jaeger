@@ -1,3 +1,4 @@
+import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
@@ -2644,14 +2645,12 @@ class HyenaFilter(tf.keras.layers.Layer):
         )
         super().build(input_shape)
 
-    def _make_positional_encoding(self, length: int, dim: int) -> tf.Tensor:
-        pos = tf.range(length, dtype=tf.float32)[:, None]
-        div = tf.exp(
-            tf.range(0, dim, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / dim)
-        )
-        pe_sin = tf.sin(pos * div)
-        pe_cos = tf.cos(pos * div)
-        pe = tf.reshape(tf.stack([pe_sin, pe_cos], axis=-1), (length, -1))
+    def _make_positional_encoding(self, length: int, dim: int) -> np.ndarray:
+        pos = np.arange(length, dtype=np.float32)[:, None]
+        div = np.exp(np.arange(0, dim, 2, dtype=np.float32) * -(np.log(10000.0) / dim))
+        pe_sin = np.sin(pos * div)
+        pe_cos = np.cos(pos * div)
+        pe = np.reshape(np.stack([pe_sin, pe_cos], axis=-1), (length, -1))
         return pe[:, :dim]
 
     def call(self, seq_len: tf.Tensor | None = None):
@@ -2688,6 +2687,164 @@ class HyenaFilter(tf.keras.layers.Layer):
                 "hidden_dim": self.hidden_dim,
                 "num_layers": self.num_layers,
                 "activation": self.activation,
+            }
+        )
+        return cfg
+
+
+class HyenaOperator(tf.keras.layers.Layer):
+    """Core Hyena recurrence: z^1 = v; z^{n+1} = x^n \u2299 (h^n * z^n); y = z^{N+1}."""
+
+    def __init__(
+        self,
+        dim: int,
+        seq_len: int | None,
+        order: int = 2,
+        filter_hidden: int = 32,
+        filter_layers: int = 2,
+        filter_activation: str = "gelu",
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.dim = dim
+        self.seq_len = seq_len
+        self.order = order
+        self.filter_hidden = filter_hidden
+        self.filter_layers = filter_layers
+        self.filter_activation = filter_activation
+
+    def build(self, input_shape):
+        self.projs = [
+            tf.keras.layers.Dense(self.dim, use_bias=False, name=f"proj_{i}")
+            for i in range(self.order + 1)
+        ]
+        for i, proj in enumerate(self.projs):
+            setattr(self, f"proj_{i}", proj)
+            proj.build((None, self.dim))
+
+        self.filter_gen = HyenaFilter(
+            seq_len=self.seq_len,
+            dim=self.dim,
+            order=self.order,
+            hidden_dim=self.filter_hidden,
+            num_layers=self.filter_layers,
+            activation=self.filter_activation,
+        )
+        self.filter_gen.build((None, self.seq_len or 1, self.dim))
+        super().build(input_shape)
+
+    def call(self, x):
+        # x: (batch, L, dim)
+        proj = [p(x) for p in self.projs]
+        z = tf.transpose(proj[0], [0, 2, 1])  # (batch, dim, L)
+        seq_len = tf.shape(z)[-1]
+        filters = self.filter_gen(seq_len)
+
+        for i in range(self.order):
+            gate = tf.transpose(proj[i + 1], [0, 2, 1])
+            h = filters[i]
+            conv = causal_fft_convolve(z, h)
+            z = conv * gate
+
+        return tf.transpose(z, [0, 2, 1])
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(
+            {
+                "dim": self.dim,
+                "seq_len": self.seq_len,
+                "order": self.order,
+                "filter_hidden": self.filter_hidden,
+                "filter_layers": self.filter_layers,
+                "filter_activation": self.filter_activation,
+            }
+        )
+        return cfg
+
+
+class HyenaBlock(tf.keras.layers.Layer):
+    """Apply the Hyena block.
+
+    Masking is supported by zeroing padded positions before and after the block.
+    Note that the internal LayerNormalization is not masked, so padded positions
+    still affect the normalization statistics.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        seq_len: int | None = None,
+        order: int = 2,
+        filter_hidden: int = 32,
+        filter_layers: int = 2,
+        filter_activation: str = "gelu",
+        dropout: float = 0.0,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.dim = dim
+        self.seq_len = seq_len
+        self.order = order
+        self.filter_hidden = filter_hidden
+        self.filter_layers = filter_layers
+        self.filter_activation = filter_activation
+        self.dropout = dropout
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        self.norm = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.norm.build(input_shape)
+        self.hyena = HyenaOperator(
+            dim=self.dim,
+            seq_len=self.seq_len,
+            order=self.order,
+            filter_hidden=self.filter_hidden,
+            filter_layers=self.filter_layers,
+            filter_activation=self.filter_activation,
+        )
+        self.hyena.build((None, input_shape[2], self.dim))
+        self.dropout_layer = tf.keras.layers.Dropout(self.dropout)
+        self.dropout_layer.build((None, input_shape[2], self.dim))
+        super().build(input_shape)
+
+    def call(self, x, mask=None, training=False):
+        # x: (batch, strands, length, dim)
+        batch = tf.shape(x)[0]
+        strands = tf.shape(x)[1]
+        length = tf.shape(x)[2]
+
+        mask_float = None
+        if mask is not None:
+            # mask shape is typically (batch, strands, length); expand to match x
+            mask_float = tf.cast(mask, x.dtype)
+            while mask_float.shape.rank < x.shape.rank:
+                mask_float = tf.expand_dims(mask_float, axis=-1)
+            x = x * mask_float
+
+        residual = x
+        x = self.norm(x)
+        x = tf.reshape(x, [batch * strands, length, self.dim])
+        x = self.hyena(x)
+        x = self.dropout_layer(x, training=training)
+        x = tf.reshape(x, [batch, strands, length, self.dim])
+        out = x + residual
+
+        if mask_float is not None:
+            out = out * mask_float
+        return out
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(
+            {
+                "dim": self.dim,
+                "seq_len": self.seq_len,
+                "order": self.order,
+                "filter_hidden": self.filter_hidden,
+                "filter_layers": self.filter_layers,
+                "filter_activation": self.filter_activation,
+                "dropout": self.dropout,
             }
         )
         return cfg

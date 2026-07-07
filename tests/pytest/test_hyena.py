@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 import tensorflow as tf
 
-from jaeger.nnlib.v2.layers import HyenaFilter, causal_fft_convolve
+from jaeger.nnlib.v2.layers import (
+    HyenaBlock,
+    HyenaFilter,
+    HyenaOperator,
+    causal_fft_convolve,
+)
 
 
 def test_hyena_filter_shape():
@@ -75,3 +80,61 @@ def test_hyena_filter_serialization_roundtrip():
     out1 = layer()
     out2 = restored()
     np.testing.assert_allclose(out1.numpy(), out2.numpy(), atol=1e-5)
+
+
+def test_hyena_operator_shape():
+    layer = HyenaOperator(dim=8, seq_len=32, order=2)
+    x = tf.random.normal((2, 32, 8))  # (batch, length, dim)
+    y = layer(x)
+    assert y.shape.as_list() == [2, 32, 8]
+
+
+def test_hyena_block_4d_shape():
+    layer = HyenaBlock(dim=8, seq_len=32, order=2)
+    x = tf.random.normal((2, 6, 32, 8))  # (batch, strands, length, dim)
+    y = layer(x)
+    assert y.shape.as_list() == [2, 6, 32, 8]
+
+
+def test_hyena_operator_dynamic_length():
+    layer = HyenaOperator(dim=8, seq_len=None, order=2)
+    x = tf.random.normal((2, 24, 8))
+    y = layer(x)
+    assert y.shape.as_list() == [2, 24, 8]
+
+
+def test_hyena_block_dynamic_length():
+    layer = HyenaBlock(dim=8, seq_len=None, order=2)
+    x = tf.random.normal((2, 6, 24, 8))
+    y = layer(x)
+    assert y.shape.as_list() == [2, 6, 24, 8]
+
+
+def test_hyena_block_symbolic_model():
+    inputs = tf.keras.Input(shape=(6, 32, 8))
+    x = HyenaBlock(dim=8, seq_len=32, order=2)(inputs)
+    model = tf.keras.Model(inputs, x)
+    out = model(tf.random.normal((2, 6, 32, 8)))
+    assert out.shape.as_list() == [2, 6, 32, 8]
+
+
+def test_hyena_block_per_strand_independence():
+    layer = HyenaBlock(dim=8, seq_len=16, order=2)
+    single = tf.random.normal((1, 1, 16, 8))
+    layer(single)
+
+    stacked = tf.concat([single, single], axis=1)  # (1, 2, 16, 8)
+    stacked_out = layer(stacked)
+
+    np.testing.assert_allclose(
+        stacked_out[0, 0].numpy(), stacked_out[0, 1].numpy(), atol=1e-5
+    )
+
+
+def test_hyena_block_respects_mask():
+    layer = HyenaBlock(dim=8, seq_len=16, order=2)
+    x = tf.random.normal((1, 1, 16, 8))
+    # mask out the second half
+    mask = tf.concat([tf.ones((1, 1, 8)), tf.zeros((1, 1, 8))], axis=-1)
+    out = layer(x, mask=mask)
+    np.testing.assert_allclose(out[0, 0, 8:].numpy(), np.zeros((8, 8)), atol=1e-5)
