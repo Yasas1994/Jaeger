@@ -723,7 +723,10 @@ def train_fragment_core(**kwargs):
                     # models.get("jaeger_projection").summary()
                     self_supervised_train_args = {
                         "validation_data": projection_data.get("validation").take(
-                            builder.train_cfg.get("classifier_validation_steps")
+                            builder.train_cfg.get(
+                                "projection_validation_steps",
+                                builder.train_cfg.get("classifier_validation_steps"),
+                            )
                         ),
                         "epochs": builder.train_cfg.get("projection_epochs"),
                         "callbacks": builder.get_callbacks(branch="projection"),
@@ -734,7 +737,10 @@ def train_fragment_core(**kwargs):
                         ).get("epoch", 0)
                     models.get("jaeger_projection").fit(
                         projection_data.get("train").take(
-                            builder.train_cfg.get("classifier_train_steps")
+                            builder.train_cfg.get(
+                                "projection_train_steps",
+                                builder.train_cfg.get("classifier_train_steps"),
+                            )
                         ),
                         **self_supervised_train_args,
                     )
