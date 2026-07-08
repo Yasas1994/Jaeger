@@ -177,7 +177,7 @@ def _run_classifier_inference_logits(
     # classifier.predict returns a NumPy array for a single-output model and
     # a list/dict for multi-output models. jaeger_classifier has a single
     # logits output, so we always get an ndarray here.
-    logits = classifier.predict(dataset, verbose=0)
+    logits = classifier.predict(dataset, verbose=1)
     if isinstance(logits, (list, tuple)):
         logits = logits[0]
     if n_records is not None:
