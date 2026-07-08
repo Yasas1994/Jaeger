@@ -753,6 +753,9 @@ def run_core(**kwargs):
                 )
                 sys.exit(1)
 
+    # Remove the CLI model name from kwargs to avoid shadowing the loaded
+    # ``model`` object passed explicitly below.
+    kwargs.pop("model", None)
     _write_prediction_outputs(
         y_pred,
         model=model,
