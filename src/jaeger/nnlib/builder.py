@@ -309,8 +309,15 @@ class DynamicModelBuilder:
     # Model construction
     # ------------------------------------------------------------------
 
-    def build_fragment_classifier(self) -> dict[str, tf.keras.Model]:
+    def build_fragment_classifier(
+        self, self_supervised_pretraining: bool = False
+    ) -> dict[str, tf.keras.Model]:
         """Build the full fragment-level model graph.
+
+        Args:
+            self_supervised_pretraining: If True, skip loading classifier checkpoint
+                weights so the representation learner starts from the projection
+                checkpoint instead of being overwritten by the classifier checkpoint.
 
         Returns a dict with keys such as ``rep_model``, ``classification_head``,
         ``reliability_head``, ``jaeger_classifier``, ``jaeger_reliability``,
@@ -450,7 +457,9 @@ class DynamicModelBuilder:
             models["jaeger_classifier"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_classifier"
             )
-            if self._checkpoints.get("classifier", {}).get("path", False):
+            if not self_supervised_pretraining and self._checkpoints.get(
+                "classifier", {}
+            ).get("path", False):
                 models["jaeger_classifier"].load_weights(
                     self._checkpoints.get("classifier").get("path"),
                     skip_mismatch=True,
