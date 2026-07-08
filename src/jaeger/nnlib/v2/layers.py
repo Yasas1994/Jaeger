@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import tensorflow as tf
 from tensorflow import keras
 
@@ -1950,6 +1952,24 @@ class MetricModel(tf.keras.Model):
         self.loss_tracker.update_state(total_loss)
         # (Usually people don’t track reg-loss in test, but you can if you want)
         return {"loss": self.loss_tracker.result()}
+
+    def save_weights(self, filepath, *args, **kwargs):
+        """Save model weights plus the attached ArcFace loss weights, if any."""
+        super().save_weights(filepath, *args, **kwargs)
+        arcface = getattr(self, "_arcface_loss", None)
+        if arcface is not None:
+            arcface_path = Path(filepath).with_suffix(".arcface.weights.h5")
+            arcface.save_weights(str(arcface_path), *args, **kwargs)
+
+    def load_weights(self, filepath, *args, **kwargs):
+        """Load model weights plus the attached ArcFace loss weights, if present."""
+        super().load_weights(filepath, *args, **kwargs)
+        arcface = getattr(self, "_arcface_loss", None)
+        if arcface is not None:
+            arcface_path = Path(filepath).with_suffix(".arcface.weights.h5")
+            if arcface_path.exists():
+                arcface.load_weights(str(arcface_path), *args, **kwargs)
+        return self
 
     @property
     def metrics(self):

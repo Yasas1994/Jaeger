@@ -384,16 +384,22 @@ class DynamicModelBuilder:
             )
             labels = tf.keras.Input(shape=(self.classifier_out_dim,), name="labels")
             embeddings = tf.keras.Input(shape=(projection_dim,), name="embedding")
-            loss = ArcFaceLoss(
+            models["arcface_loss"] = ArcFaceLoss(
                 num_classes=self.classifier_out_dim,
                 embedding_dim=projection_dim,
                 margin=self.model_cfg["projection"]["margin"],
                 scale=self.model_cfg["projection"]["scale"],
                 onehot=True,
-            )(labels, embeddings)
-            models["arcface_loss"] = tf.keras.Model(
-                inputs=[labels, embeddings], outputs=loss, name="Arcface"
+                name="Arcface",
             )
+            loss = models["arcface_loss"](labels, embeddings)
+            models["arcface_loss_model"] = tf.keras.Model(
+                inputs=[labels, embeddings], outputs=loss, name="Arcface_model"
+            )
+            # Tie the ArcFace loss model to the projection model so checkpoint/restore
+            # saves and loads its trainable class-centroid weights together with
+            # the projection head and representation learner.
+            models["jaeger_projection"]._arcface_loss = models["arcface_loss_model"]
             if self._checkpoints.get("projection", {}).get("path", False):
                 models["jaeger_projection"].load_weights(
                     self._checkpoints.get("projection").get("path"),
