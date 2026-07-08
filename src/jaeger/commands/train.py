@@ -643,11 +643,9 @@ def train_fragment_core(**kwargs):
         models = builder.build_fragment_classifier(
             self_supervised_pretraining=kwargs.get("self_supervised_pretraining", False)
         )
-        for (
-            _,
-            m,
-        ) in models.items():
-            m.summary()
+        for _, m in models.items():
+            if hasattr(m, "summary"):
+                m.summary()
         model_num_params = numerize(models.get("rep_model").count_params(), decimal=1)
 
         # ================= train classifier ======================

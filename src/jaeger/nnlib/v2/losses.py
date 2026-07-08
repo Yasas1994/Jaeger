@@ -56,13 +56,24 @@ class ArcFaceLoss(tf.keras.layers.Layer):
             dtype=tf.float32,
         )
 
-    def call(self, labels, embeddings):
+    def call(self, labels, embeddings=None):
         """
         :param embeddings: (batch_size, embedding_dim)
         :param labels: either:
             - one-hot labels (batch_size, num_classes) if self.onehot=True
             - integer labels (batch_size,) or (batch_size, 1) if self.onehot=False
+
+        Also accepts a single list/tuple ``[labels, embeddings]`` so the layer
+        can be dropped in as the ``loss_fn`` of ``MetricModel``, which passes
+        inputs as a packed list.
         """
+        if (
+            embeddings is None
+            and isinstance(labels, (list, tuple))
+            and len(labels) == 2
+        ):
+            labels, embeddings = labels
+
         # ArcFace involves l2-normalization, acos and cos, which are numerically
         # unstable in float16. In particular, l2-normalizing a zero vector under
         # mixed_float16 produces NaN because the default epsilon (1e-12) is below
