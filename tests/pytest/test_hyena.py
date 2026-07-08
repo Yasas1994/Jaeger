@@ -101,6 +101,19 @@ def test_hyena_block_4d_shape():
     assert y.shape.as_list() == [2, 6, 32, 8]
 
 
+def test_hyena_block_mixed_bfloat16():
+    old_policy = tf.keras.mixed_precision.global_policy().name
+    tf.keras.mixed_precision.set_global_policy("mixed_bfloat16")
+    try:
+        layer = HyenaBlock(dim=32, seq_len=64, order=2)
+        x = tf.cast(tf.random.normal((2, 6, 64, 32)), tf.bfloat16)
+        y = layer(x)
+        assert y.shape.as_list() == [2, 6, 64, 32]
+        assert y.dtype == tf.bfloat16
+    finally:
+        tf.keras.mixed_precision.set_global_policy(old_policy)
+
+
 def test_hyena_operator_dynamic_length():
     layer = HyenaOperator(dim=8, seq_len=None, order=2)
     x = tf.random.normal((2, 24, 8))

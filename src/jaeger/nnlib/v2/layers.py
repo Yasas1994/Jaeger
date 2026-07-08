@@ -2665,14 +2665,19 @@ class HyenaFilter(tf.keras.layers.Layer):
             pe = self.pos_encoding[:L]
         else:
             pe = self._make_positional_encoding(L, self.pe_dim)
-        t = tf.range(L, dtype=tf.float32)
+
+        # Explicitly work in float32 inside this layer. Under mixed-precision policies
+        # (bf16/fp16) Keras autocasts float32 variables to the policy dtype, which
+        # clashes with the float32 positional encoding / FFT path. Casting operands
+        # here keeps filter generation stable and dtype-consistent.
+        t = tf.cast(tf.range(L), tf.float32)
+        alphas = tf.cast(self.alphas, tf.float32)
+        biases = tf.cast(self.biases, tf.float32)
 
         filters = []
         for i in range(self.order):
-            x = self.ffns[i](pe)
-            window = (
-                tf.exp(-self.alphas[i][None, :] * t[:, None]) + self.biases[i][None, :]
-            )
+            x = tf.cast(self.ffns[i](pe), tf.float32)
+            window = tf.exp(-alphas[i][None, :] * t[:, None]) + biases[i][None, :]
             h = window * x
             filters.append(h)
 
