@@ -35,7 +35,7 @@ from jaeger.seqops.synthetic import (
     apply_tandem_repeat_window,
 )
 from jaeger.utils.logging import get_logger
-from jaeger.utils.misc import track_ms
+
 
 logger = get_logger(log_path=None, log_file=None, level=3)
 
@@ -165,45 +165,23 @@ def _run_classifier_inference_logits(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (logits, softmax probabilities) for samples in *dataset*.
 
-    The classifier call is wrapped in ``tf.function`` so the graph is traced
-    once and reused for every batch. Each batch is moved to CPU memory
-    immediately to keep GPU memory bounded. At most *n_records* samples are
-    processed when *n_records* is provided.
+    Uses ``classifier.predict()`` so Keras can optimize the inference loop
+    (asynchronous dataset iteration, C++ iterator, graph caching). This is
+    substantially faster than a Python ``for`` loop for the same model.
+    At most *n_records* samples are processed when *n_records* is provided.
 
-    If *description* is given, a Rich progress bar is shown over the batches.
+    The *description* argument is kept for API compatibility but is no longer
+    used; ``classifier.predict()`` manages its own progress output via
+    ``verbose=0``.
     """
-
-    # Cache the traced function on the classifier so repeated calls (e.g. many
-    # synthetic-OOD chunks) do not pay the trace cost each time.
-    infer_fn = getattr(classifier, "_jaeger_reliability_infer_fn", None)
-    if infer_fn is None:
-
-        @tf.function
-        def _infer_fn(x):
-            return classifier(x, training=False)
-
-        classifier._jaeger_reliability_infer_fn = _infer_fn
-        infer_fn = _infer_fn
-
-    logits_list: list[np.ndarray] = []
-    record_idx = 0
-    batch_iter = dataset
-    if description:
-        batch_iter = track_ms(batch_iter, description=description, disable=False)
-    for x, _ in batch_iter:
-        batch_logits = infer_fn(x)
-        if n_records is not None:
-            batch_n = min(batch_logits.shape[0], n_records - record_idx)
-            if batch_n <= 0:
-                break
-            logits_list.append(batch_logits[:batch_n].numpy())
-            record_idx += batch_n
-            if record_idx >= n_records:
-                break
-        else:
-            logits_list.append(batch_logits.numpy())
-
-    logits = np.concatenate(logits_list, axis=0)
+    # classifier.predict returns a NumPy array for a single-output model and
+    # a list/dict for multi-output models. jaeger_classifier has a single
+    # logits output, so we always get an ndarray here.
+    logits = classifier.predict(dataset, verbose=0)
+    if isinstance(logits, (list, tuple)):
+        logits = logits[0]
+    if n_records is not None:
+        logits = logits[:n_records]
     probs = tf.nn.softmax(logits).numpy()
     return logits, probs
 
