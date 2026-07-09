@@ -524,6 +524,13 @@ def tune(**kwargs):
     help="Enable XLA JIT compilation for training",
 )
 @click.option(
+    "--workers",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Number of CPU threads for TensorFlow intra- and inter-op parallelism",
+)
+@click.option(
     "--meta",
     type=click.Path(
         exists=False,

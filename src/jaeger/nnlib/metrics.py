@@ -128,6 +128,13 @@ class MacroF1Score(tf.keras.metrics.Metric):
     def update_state(self, y_true, y_pred, sample_weight=None):
         if y_true.shape.rank > 1 and y_true.shape[-1] > 1:
             y_true = tf.argmax(y_true, axis=-1)
+        elif y_true.shape.rank > 1 and y_true.shape[-1] == 1:
+            # Binary labels are frequently stored as ``(batch, 1)``. Without
+            # squeezing, ``tf.one_hot`` would emit a rank-3 tensor whose
+            # broadcast against ``y_pred_one_hot`` produced a ``(batch, batch,
+            # num_classes)`` update and crashed the ``assign_add`` on the
+            # ``(num_classes,)`` state variable.
+            y_true = tf.squeeze(y_true, axis=-1)
         y_pred = tf.argmax(y_pred, axis=-1)
 
         y_true = tf.cast(y_true, tf.int32)

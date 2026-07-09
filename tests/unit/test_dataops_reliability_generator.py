@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from jaeger.dataops import reliability_generator as rg
+from jaeger.dataops import synthetic_perturbations as sp
 
 
 def _make_streamed_inference_mock(y_pred: np.ndarray):
@@ -106,7 +107,7 @@ def test_run_classifier_inference_streamed_uses_existing_csv(tmp_path: Path):
 def test_generate_synthetic_sequences_cycles_perturbations(tmp_path: Path):
     records = [(0, "ATCG" * 10), (1, "TGCA" * 10)]
     seqs = list(
-        rg._generate_synthetic_sequences(
+        sp.generate_synthetic_sequences(
             records,
             multiplier=0.5,
             perturbations_cfg={
@@ -139,10 +140,10 @@ def test_normalize_perturbation_cfg_structured():
             "num_repeats": 10,
         },
     }
-    specs = rg._normalize_perturbation_cfg(cfg)
+    specs = sp._normalize_perturbation_cfg(cfg)
     assert len(specs) == 3
     assert specs[0]["name"] == "shuffle"
-    assert specs[0]["fn"] is rg.apply_dinuc_shuffle
+    assert specs[0]["fn"] is sp.apply_dinuc_shuffle
     assert specs[1]["kwargs"]["window_fraction"] == 0.3
     assert specs[2]["kwargs"]["num_repeats"] == 10
     assert specs[2]["kwargs"]["motif_length_range"] == (4, 8)
@@ -154,17 +155,17 @@ def test_normalize_perturbation_cfg_multiple_shuffle_modes():
         "subseq_repeat": False,
         "tandem_repeat": False,
     }
-    specs = rg._normalize_perturbation_cfg(cfg)
+    specs = sp._normalize_perturbation_cfg(cfg)
     shuffle_specs = [s for s in specs if s["name"] == "shuffle"]
     assert len(shuffle_specs) == 2
     fns = {s["fn"] for s in shuffle_specs}
-    assert rg.apply_dinuc_shuffle in fns
-    assert rg.apply_shuffle in fns
+    assert sp.apply_dinuc_shuffle in fns
+    assert sp.apply_shuffle in fns
 
 
 def test_normalize_perturbation_cfg_legacy_booleans():
     cfg = {"shuffle": True, "subseq_repeat": False, "tandem_repeat": True}
-    specs = rg._normalize_perturbation_cfg(cfg)
+    specs = sp._normalize_perturbation_cfg(cfg)
     names = [s["name"] for s in specs]
     assert "shuffle" in names
     assert "subseq_repeat" not in names
@@ -175,7 +176,7 @@ def test_compute_perturbation_counts_with_global_multiplier():
     records = [(0, "A" * 100)] * 12
     specs = [{"name": "shuffle"}, {"name": "subseq_repeat"}, {"name": "tandem_repeat"}]
     cfg = {}
-    counts = rg._compute_perturbation_counts(records, 1.0, specs, cfg)
+    counts = sp._compute_perturbation_counts(records, 1.0, specs, cfg)
     assert sum(counts) == 12
     assert all(c == 4 for c in counts)
 
@@ -184,7 +185,7 @@ def test_compute_perturbation_counts_with_explicit_counts():
     records = [(0, "A" * 100)] * 100
     specs = [{"name": "shuffle"}, {"name": "tandem_repeat"}]
     cfg = {"shuffle": {"count": 10}, "tandem_repeat": {"multiplier": 0.2}}
-    counts = rg._compute_perturbation_counts(records, 1.0, specs, cfg)
+    counts = sp._compute_perturbation_counts(records, 1.0, specs, cfg)
     # When all specs are explicit, the global multiplier is ignored and the
     # explicit counts are honored exactly.
     assert counts[0] == 10
@@ -201,7 +202,7 @@ def test_compute_perturbation_counts_splits_across_multiple_shuffle_modes():
         {"name": "tandem_repeat"},
     ]
     cfg = {}
-    counts = rg._compute_perturbation_counts(records, 1.0, specs, cfg)
+    counts = sp._compute_perturbation_counts(records, 1.0, specs, cfg)
     assert sum(counts) == 12
     assert all(c > 0 for c in counts)
 
@@ -209,7 +210,7 @@ def test_compute_perturbation_counts_splits_across_multiple_shuffle_modes():
 def test_generate_synthetic_sequences_uses_shuffle_mode():
     records = [(0, "ATCG" * 10)]
     seqs = list(
-        rg._generate_synthetic_sequences(
+        sp.generate_synthetic_sequences(
             records,
             multiplier=2.0,
             perturbations_cfg={"shuffle": {"enabled": True, "mode": "dinuc"}},
@@ -659,11 +660,11 @@ def test_generate_reliability_data_adds_synthetic_ood_to_validation(
     )
 
     def _mock_generate_synthetic(
-        records, multiplier, perturbations_cfg, crop_size=None
+        records, multiplier, perturbations_cfg, crop_size=None, **kwargs
     ):
         return iter(["SYNTHETIC_SEQ"] * int(len(records) * multiplier))
 
-    monkeypatch.setattr(rg, "_generate_synthetic_sequences", _mock_generate_synthetic)
+    monkeypatch.setattr(rg, "generate_synthetic_sequences", _mock_generate_synthetic)
 
     def _mock_filter_synthetic_ood(*args, **kwargs):
         return [(0, seq) for seq in args[1]]
@@ -705,7 +706,7 @@ def test_normalize_perturbation_cfg_mix_boolean():
         "tandem_repeat": False,
         "mix": True,
     }
-    specs = rg._normalize_perturbation_cfg(cfg)
+    specs = sp._normalize_perturbation_cfg(cfg)
     assert len(specs) == 1
     assert specs[0]["name"] == "mix"
     assert specs[0]["n_segments"] == 2
@@ -718,7 +719,7 @@ def test_normalize_perturbation_cfg_mix_structured():
         "tandem_repeat": False,
         "mix": {"enabled": True, "n_segments": 3},
     }
-    specs = rg._normalize_perturbation_cfg(cfg)
+    specs = sp._normalize_perturbation_cfg(cfg)
     assert len(specs) == 1
     assert specs[0]["name"] == "mix"
     assert specs[0]["n_segments"] == 3
@@ -728,7 +729,7 @@ def test_generate_synthetic_sequences_mix_requires_distinct_classes():
     records = [(0, "A" * 100)] * 5
     with pytest.raises(ValueError, match="mix perturbation requires at least 2"):
         list(
-            rg._generate_synthetic_sequences(
+            sp.generate_synthetic_sequences(
                 records,
                 multiplier=1.0,
                 perturbations_cfg={
@@ -754,7 +755,7 @@ def test_generate_synthetic_sequences_mix_produces_chimera(monkeypatch):
 
     monkeypatch.setattr("jaeger.seqops.synthetic.random.sample", _patched_sample)
     seqs = list(
-        rg._generate_synthetic_sequences(
+        sp.generate_synthetic_sequences(
             records,
             multiplier=1.0,
             perturbations_cfg={
@@ -771,3 +772,18 @@ def test_generate_synthetic_sequences_mix_produces_chimera(monkeypatch):
         assert len(seq) == 50
         assert "A" in seq
         assert "C" in seq
+
+
+def test_generate_synthetic_sequences_bounded_chunks():
+    """Sub-chunking must not change the total number or length of outputs."""
+    records = [(0, "ATCG" * 10), (1, "TGCA" * 10)]
+    seqs = list(
+        sp.generate_synthetic_sequences(
+            records,
+            multiplier=2.0,
+            perturbations_cfg={"shuffle": {"enabled": True, "mode": "random"}},
+            generation_chunk_size=2,
+        )
+    )
+    assert len(seqs) == 4  # 2 records * 2.0
+    assert all(len(s) == len(records[0][1]) for s in seqs)

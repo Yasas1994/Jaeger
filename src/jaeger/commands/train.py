@@ -562,6 +562,12 @@ def _is_ragged_dataset(ds: tf.data.Dataset) -> bool:
 
 def train_fragment_core(**kwargs):
     """Train fragment classification and reliability models."""
+    workers = kwargs.get("workers")
+    if workers is not None and workers > 0:
+        tf.config.threading.set_inter_op_parallelism_threads(workers)
+        tf.config.threading.set_intra_op_parallelism_threads(workers)
+        logger.info(f"TensorFlow threading: inter_op={workers}, intra_op={workers}")
+
     gpus = tf.config.list_physical_devices("GPU")
     num_gpus = len(gpus)
     logger.info(f"Physical GPUs detected: {num_gpus}")

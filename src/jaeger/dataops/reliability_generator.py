@@ -12,10 +12,9 @@ This module implements the post-classifier stage that:
 
 from __future__ import annotations
 
-import random
+import gc
 import tempfile
 from collections.abc import Iterable
-from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Any
 
@@ -25,19 +24,19 @@ import psutil
 import tensorflow as tf
 
 from jaeger.dataops.convert import convert_dataset
+from jaeger.dataops.synthetic_perturbations import generate_synthetic_sequences
 from jaeger.seqops.encode import CODON_ID, CODONS, process_string_train
-from jaeger.seqops.synthetic import (
-    apply_dinuc_shuffle,
-    apply_kmer_shuffle,
-    apply_mix,
-    apply_shuffle,
-    apply_subseq_repeat_window,
-    apply_tandem_repeat_window,
-)
 from jaeger.utils.logging import get_logger
 
 
 logger = get_logger(log_path=None, log_file=None, level=3)
+
+
+def _log_memory(label: str) -> None:
+    """Log resident set size after forcing garbage collection."""
+    gc.collect()
+    rss_gb = psutil.Process().memory_info().rss / (1024**3)
+    logger.info(f"Memory [{label}]: RSS={rss_gb:.2f} GB")
 
 
 def _resolve_memory_budget_mb(fraction: float = 0.5) -> int:
@@ -407,327 +406,6 @@ def _select_id_ood_records(
     return id_records, ood_records
 
 
-def _normalize_perturbation_cfg(
-    perturbations_cfg: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Convert flexible user config into a normalized list of perturbation specs.
-
-    Supports legacy booleans (``shuffle: true``) and structured dicts
-    (``shuffle: {enabled: true, mode: dinuc}``).
-    """
-    specs: list[dict[str, Any]] = []
-
-    def _is_enabled(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, dict):
-            return value.get("enabled", True)
-        return bool(value)
-
-    # ---- shuffle ----
-    shuffle_value = perturbations_cfg.get("shuffle", True)
-    if _is_enabled(shuffle_value):
-        shuffle_dict = (
-            shuffle_value if isinstance(shuffle_value, dict) else {"mode": "random"}
-        )
-        modes = shuffle_dict.get("mode", "random")
-        if isinstance(modes, str):
-            modes = [modes]
-        for mode in modes:
-            if mode == "random":
-                fn = apply_shuffle
-                kwargs: dict[str, Any] = {}
-            elif mode == "dinuc":
-                fn = apply_dinuc_shuffle
-                kwargs = {}
-            elif mode == "kmer":
-                fn = apply_kmer_shuffle
-                kwargs = {"k": shuffle_dict.get("k", 2)}
-            else:
-                raise ValueError(f"Unsupported shuffle mode: {mode}")
-            specs.append({"name": "shuffle", "fn": fn, "kwargs": kwargs})
-
-    # ---- subsequence repeat ----
-    subseq_value = perturbations_cfg.get("subseq_repeat", True)
-    if _is_enabled(subseq_value):
-        subseq_dict = subseq_value if isinstance(subseq_value, dict) else {}
-        specs.append(
-            {
-                "name": "subseq_repeat",
-                "fn": apply_subseq_repeat_window,
-                "kwargs": {
-                    "window_fraction": subseq_dict.get("window_fraction", 0.25),
-                },
-            }
-        )
-
-    # ---- tandem repeat ----
-    tandem_value = perturbations_cfg.get("tandem_repeat", True)
-    if _is_enabled(tandem_value):
-        tandem_dict = tandem_value if isinstance(tandem_value, dict) else {}
-        motif_range = tandem_dict.get("motif_length_range", [3, 10])
-        specs.append(
-            {
-                "name": "tandem_repeat",
-                "fn": apply_tandem_repeat_window,
-                "kwargs": {
-                    "motif_length_range": tuple(motif_range),
-                    "window_fraction": tandem_dict.get("window_fraction", 0.25),
-                    "num_repeats": tandem_dict.get("num_repeats"),
-                },
-            }
-        )
-
-    # ---- mix / chimera ----
-    mix_value = perturbations_cfg.get("mix", False)
-    if _is_enabled(mix_value):
-        mix_dict = mix_value if isinstance(mix_value, dict) else {}
-        specs.append(
-            {
-                "name": "mix",
-                "fn": apply_mix,
-                "n_segments": mix_dict.get("n_segments", 2),
-                "kwargs": {},
-            }
-        )
-
-    return specs
-
-
-def _compute_perturbation_counts(
-    records: list[tuple[int, str]],
-    multiplier: float,
-    specs: list[dict[str, Any]],
-    perturbations_cfg: dict[str, Any],
-) -> list[int]:
-    """Return the number of synthetic samples to create for each perturbation spec.
-
-    Count resolution order for each perturbation:
-      1. ``count`` key in its config (absolute number).
-      2. ``multiplier`` key in its config (fraction of *len(records)*).
-      3. Even share of the remaining global *multiplier* budget across
-         implicit (non-explicit) specs.
-    """
-    n = len(records)
-    global_count = max(0, int(n * multiplier))
-    if not specs:
-        return []
-
-    counts: list[int] = [0] * len(specs)
-    explicit_indices: list[int] = []
-
-    for i, spec in enumerate(specs):
-        name = spec["name"]
-        cfg = perturbations_cfg.get(name, {})
-        if isinstance(cfg, dict):
-            if "count" in cfg:
-                counts[i] = max(0, int(cfg["count"]))
-                explicit_indices.append(i)
-                continue
-            if "multiplier" in cfg:
-                counts[i] = max(0, int(n * cfg["multiplier"]))
-                explicit_indices.append(i)
-                continue
-
-    implicit_indices = [i for i in range(len(specs)) if i not in explicit_indices]
-    if not implicit_indices:
-        # All specs have explicit counts; honor them exactly.
-        return counts
-
-    allocated = sum(counts[i] for i in explicit_indices)
-    remaining = max(0, global_count - allocated)
-    per_implicit = remaining // len(implicit_indices)
-    for i in implicit_indices:
-        counts[i] = per_implicit
-    leftover = remaining - sum(counts[i] for i in implicit_indices)
-    for i in range(leftover):
-        counts[implicit_indices[i % len(implicit_indices)]] += 1
-
-    return counts
-
-
-def _make_mix_chimera(
-    records: list[tuple[int, str]],
-    n_segments: int,
-    crop_size: int | None = None,
-) -> str:
-    """Build a chimera from *n_segments* sequences belonging to distinct classes."""
-    distinct_labels = list({label for label, _ in records})
-    if len(distinct_labels) < n_segments:
-        raise ValueError(
-            f"mix perturbation requires at least {n_segments} distinct classes, "
-            f"found {len(distinct_labels)}"
-        )
-
-    selected_labels = random.sample(distinct_labels, k=n_segments)
-    label_to_seqs: dict[int, list[str]] = {}
-    for label, seq in records:
-        label_to_seqs.setdefault(label, []).append(seq)
-
-    selected_seqs = [random.choice(label_to_seqs[label]) for label in selected_labels]
-    return apply_mix(selected_seqs, output_length=crop_size)
-
-
-# Global shared by worker processes forked for synthetic sequence generation.
-_WORKER_RECORDS: list[tuple[int, str]] | None = None
-
-
-def _init_synthetic_worker(records: list[tuple[int, str]], seed: int) -> None:
-    """Seed RNGs and share the source records with a worker process."""
-    global _WORKER_RECORDS
-    _WORKER_RECORDS = records
-    random.seed(seed)
-    np.random.seed(seed)
-
-
-def _generate_synthetic_chunk(
-    spec_name: str,
-    fn_name: str,
-    kwargs: dict[str, Any],
-    count: int,
-    crop_size: int | None,
-    n_segments: int | None,
-    seed: int,
-) -> list[str]:
-    """Generate a chunk of synthetic sequences in a worker process."""
-    random.seed(seed)
-    np.random.seed(seed)
-    records = _WORKER_RECORDS
-    if records is None:
-        raise RuntimeError("synthetic worker not initialized with records")
-
-    out: list[str] = []
-    n_records = len(records)
-    if spec_name == "mix":
-        for _ in range(count):
-            out.append(_make_mix_chimera(records, n_segments, crop_size))
-    else:
-        fn = globals()[fn_name]
-        for i in range(count):
-            _, seq = records[i % n_records]
-            out.append(fn(seq, **kwargs))
-    return out
-
-
-def _generate_synthetic_chunk_wrapper(
-    args: tuple[str, str, dict[str, Any], int, int | None, int | None, int],
-) -> list[str]:
-    """Unpack arguments for :func:`_generate_synthetic_chunk`.
-
-    Needed because ``Pool.imap_unordered`` passes a single argument.
-    """
-    return _generate_synthetic_chunk(*args)
-
-
-def _generate_synthetic_sequences(
-    records: list[tuple[int, str]],
-    multiplier: float,
-    perturbations_cfg: dict[str, Any],
-    crop_size: int | None = None,
-) -> Iterable[str]:
-    """Yield corrupted sequences from *records* according to *perturbations_cfg*.
-
-    Returning a generator instead of a single list keeps peak memory bounded
-    when the caller processes synthetic sequences in chunks.
-    """
-    specs = _normalize_perturbation_cfg(perturbations_cfg)
-    if not specs:
-        return
-
-    counts = _compute_perturbation_counts(records, multiplier, specs, perturbations_cfg)
-
-    n_workers = max(1, min(cpu_count(), max(counts, default=0)))
-    use_pool = n_workers > 1 and any(c >= n_workers * 2 for c in counts)
-
-    if use_pool:
-        base_seed = random.randint(0, 2**31 - 1)
-        with Pool(
-            processes=n_workers,
-            initializer=_init_synthetic_worker,
-            initargs=(records, base_seed),
-        ) as pool:
-            for spec, count in zip(specs, counts):
-                if count <= 0:
-                    continue
-                spec_name = spec["name"]
-                if spec_name == "mix":
-                    fn_name = ""
-                    kwargs: dict[str, Any] = {}
-                    n_segments = spec["n_segments"]
-                else:
-                    fn_name = spec["fn"].__name__
-                    kwargs = spec["kwargs"]
-                    n_segments = None
-
-                worker_chunk_size = max(1, count // n_workers)
-                chunks = []
-                remaining = count
-                for i in range(n_workers):
-                    if remaining <= 0:
-                        break
-                    c = min(worker_chunk_size, remaining)
-                    chunks.append(c)
-                    remaining -= c
-
-                args = [
-                    (
-                        spec_name,
-                        fn_name,
-                        kwargs,
-                        c,
-                        crop_size,
-                        n_segments,
-                        base_seed + i,
-                    )
-                    for i, c in enumerate(chunks)
-                ]
-                # Stream results as they complete instead of materialising the
-                # whole spec count in memory with starmap.
-                for r in pool.imap_unordered(
-                    _generate_synthetic_chunk_wrapper, args, chunksize=1
-                ):
-                    for seq in r:
-                        yield seq
-    else:
-        for spec, count in zip(specs, counts):
-            if count <= 0:
-                continue
-            if spec["name"] == "mix":
-                n_segments = spec["n_segments"]
-                for _ in range(count):
-                    yield _make_mix_chimera(records, n_segments, crop_size)
-            else:
-                fn = spec["fn"]
-                kwargs = spec["kwargs"]
-                n_records = len(records)
-                for i in range(count):
-                    _, seq = records[i % n_records]
-                    yield fn(seq, **kwargs)
-
-
-def _filter_synthetic_ood_chunk(
-    classifier: tf.keras.Model,
-    csv_path: str,
-    string_processor_config: dict[str, Any],
-    classifier_out_dim: int,
-    threshold: float,
-    inference_batch_size: int,
-    crop_size: int | None = None,
-) -> list[tuple[int, str]]:
-    """Run inference on one chunk of synthetic sequences and keep high-conf OOD."""
-    ds = _build_inference_dataset(
-        csv_path,
-        string_processor_config,
-        classifier_out_dim,
-        inference_batch_size,
-        crop_size=crop_size,
-    )
-    probs = _run_classifier_inference(classifier, ds)
-    conf = np.max(probs, axis=1)
-    records = _read_csv_records(csv_path)
-    return [(0, seq) for (_, seq), c in zip(records, conf) if c >= threshold]
-
-
 def _filter_synthetic_ood(
     classifier: tf.keras.Model,
     synthetic_seqs: Iterable[str],
@@ -740,83 +418,116 @@ def _filter_synthetic_ood(
 ) -> list[tuple[int, str]]:
     """Keep corrupted sequences that the classifier predicts with high confidence.
 
-    Processes *synthetic_seqs* in bounded chunks. Each chunk is written to a
-    temporary CSV on disk, so the parent process never holds more than
-    *chunk_size* synthetic sequences in memory at once. Kept high-confidence
-    records are also accumulated in a temporary CSV and only read into a list
-    at the end.
+    All synthetic sequences are materialised on disk first, then inference is
+    run once with ``classifier.predict``. This lets us count how many high-
+    confidence synthetic OOD samples survive the threshold before deciding how
+    many real (ID + high-confidence OOD) samples to keep.
     """
-    out: list[tuple[int, str]] = []
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        batch_csv = str(Path(tmpdir) / "synthetic_ood_batch.csv")
-        kept_csv = str(Path(tmpdir) / "kept_synthetic_ood.csv")
+        synthetic_csv = str(Path(tmpdir) / "synthetic_ood.csv")
 
-        batch_fh = open(batch_csv, "w")
-        batch_count = 0
-        try:
+        _log_memory("before writing synthetic sequences to disk")
+        total = 0
+        with open(synthetic_csv, "w") as fh:
             for seq in synthetic_seqs:
-                batch_fh.write(f"0,{seq}\n")
-                batch_count += 1
-                if batch_count >= chunk_size:
-                    batch_fh.close()
-                    _flush_synthetic_ood_batch(
-                        classifier,
-                        batch_csv,
-                        kept_csv,
-                        string_processor_config,
-                        classifier_out_dim,
-                        threshold,
-                        inference_batch_size,
-                        crop_size=crop_size,
-                    )
-                    batch_fh = open(batch_csv, "w")
-                    batch_count = 0
-        finally:
-            if not batch_fh.closed:
-                batch_fh.close()
+                fh.write(f"0,{seq}\n")
+                total += 1
+                if total % chunk_size == 0:
+                    _log_memory(f"after writing {total} synthetic sequences to disk")
+        _log_memory(f"after writing all {total} synthetic sequences to disk")
+        if total == 0:
+            return []
 
-        if batch_count > 0:
-            _flush_synthetic_ood_batch(
-                classifier,
-                batch_csv,
-                kept_csv,
-                string_processor_config,
-                classifier_out_dim,
-                threshold,
-                inference_batch_size,
-                crop_size=crop_size,
-            )
-
-        if Path(kept_csv).exists():
-            out = _read_csv_records(kept_csv)
+        ds = _build_inference_dataset(
+            synthetic_csv,
+            string_processor_config,
+            classifier_out_dim,
+            inference_batch_size,
+            crop_size=crop_size,
+        )
+        probs = _run_classifier_inference(classifier, ds)
+        conf = np.max(probs, axis=1)
+        records = _read_csv_records(synthetic_csv)
+        out = [(0, seq) for (_, seq), c in zip(records, conf) if c >= threshold]
+        _log_memory(
+            f"after synthetic OOD inference: {len(out)} / {len(records)} "
+            f"sequences above threshold {threshold}"
+        )
 
     return out
 
 
-def _flush_synthetic_ood_batch(
-    classifier: tf.keras.Model,
-    batch_csv: str,
-    kept_csv: str,
-    string_processor_config: dict[str, Any],
-    classifier_out_dim: int,
-    threshold: float,
-    inference_batch_size: int,
-    crop_size: int | None = None,
-) -> None:
-    """Run inference on *batch_csv* and append kept records to *kept_csv*."""
-    kept = _filter_synthetic_ood_chunk(
-        classifier,
-        batch_csv,
-        string_processor_config,
-        classifier_out_dim,
-        threshold,
-        inference_batch_size,
-        crop_size=crop_size,
-    )
-    with open(kept_csv, "a") as kept_fh:
-        for _, seq in kept:
-            kept_fh.write(f"0,{seq}\n")
+def _downsample_to_match(
+    real_records: list[tuple[int, str]],
+    synthetic_records: list[tuple[int, str]],
+    rng: np.random.Generator,
+) -> list[tuple[int, str]]:
+    """Return *real_records* downsampled to the size of *synthetic_records*.
+
+    If there are already fewer real records than synthetic records, return
+    *real_records* unchanged. The draw is stratified by label so the ID/OOD
+    ratio is preserved as closely as possible.
+    """
+    n_real = len(real_records)
+    n_synth = len(synthetic_records)
+    if n_real <= n_synth or n_synth == 0:
+        return real_records
+
+    labels = np.array([label for label, _ in real_records], dtype=np.int32)
+    distinct_labels = np.unique(labels)
+    kept_indices: list[int] = []
+    for label in distinct_labels:
+        idx = np.where(labels == label)[0]
+        label_frac = len(idx) / n_real
+        n_target = int(round(n_synth * label_frac))
+        if n_target > 0:
+            chosen = rng.choice(idx, size=n_target, replace=False)
+            kept_indices.extend(chosen.tolist())
+
+    # Fill any rounding gap while preserving label proportions.
+    while len(kept_indices) < n_synth:
+        remaining = [i for i in range(n_real) if i not in kept_indices]
+        if not remaining:
+            break
+        kept_indices.append(int(rng.choice(remaining)))
+
+    rng.shuffle(kept_indices)
+    return [real_records[i] for i in kept_indices]
+
+
+def _sample_records_for_synthetic_generation(
+    records: list[tuple[int, str]],
+    target_size: int,
+    rng: np.random.Generator,
+) -> list[tuple[int, str]]:
+    """Stratified sample of *records* used only for creating synthetic corruptions.
+
+    Preserves the label distribution so mix perturbations still see every class.
+    """
+    n = len(records)
+    if n <= target_size:
+        return records
+
+    labels = np.array([label for label, _ in records], dtype=np.int32)
+    distinct_labels = np.unique(labels)
+    kept_indices: list[int] = []
+    for label in distinct_labels:
+        idx = np.where(labels == label)[0]
+        label_frac = len(idx) / n
+        n_target = max(1, int(round(target_size * label_frac)))
+        if n_target >= len(idx):
+            kept_indices.extend(idx.tolist())
+        else:
+            chosen = rng.choice(idx, size=n_target, replace=False)
+            kept_indices.extend(chosen.tolist())
+
+    # Trim rounding overshoot while keeping at least one sample per label.
+    while len(kept_indices) > target_size:
+        rng.shuffle(kept_indices)
+        kept_indices.pop()
+
+    rng.shuffle(kept_indices)
+    return [records[i] for i in kept_indices]
 
 
 def _convert_to_npz(
@@ -945,15 +656,42 @@ def generate_reliability_data(
         "synthetic_chunk_size",
         max(
             1000,
-            min(100_000, int((available_mb * 1024 * 1024 * 0.5) / max(1, seq_len))),
+            min(10_000, int((available_mb * 1024 * 1024 * 0.5) / max(1, seq_len))),
         ),
     )
+    generation_chunk_size = generator_cfg.get("synthetic_generation_chunk_size", 10_000)
+    generation_workers = generator_cfg.get("synthetic_generation_workers")
 
-    synthetic_seqs = _generate_synthetic_sequences(
-        train_records,
-        synthetic_ood_multiplier,
+    # Optionally sample the source records for synthetic generation. With millions
+    # of training fragments the full list is huge and dominates generation time;
+    # a stratified sample preserves class balance and keeps the same expected
+    # number of synthetic sequences by scaling the multiplier.
+    source_sample_size = generator_cfg.get("synthetic_source_sample_size")
+    rng = np.random.default_rng()
+    if source_sample_size is not None and source_sample_size < len(train_records):
+        synthetic_source_records = _sample_records_for_synthetic_generation(
+            train_records, source_sample_size, rng
+        )
+        adjusted_multiplier = synthetic_ood_multiplier * (
+            len(train_records) / len(synthetic_source_records)
+        )
+        logger.info(
+            f"Sampled {len(synthetic_source_records)} source records for synthetic "
+            f"generation (multiplier adjusted {synthetic_ood_multiplier:.4f} -> "
+            f"{adjusted_multiplier:.4f})"
+        )
+    else:
+        synthetic_source_records = train_records
+        adjusted_multiplier = synthetic_ood_multiplier
+
+    _log_memory("before synthetic generation")
+    synthetic_seqs = generate_synthetic_sequences(
+        synthetic_source_records,
+        adjusted_multiplier,
         perturbations_cfg,
         crop_size=crop_size,
+        generation_chunk_size=generation_chunk_size,
+        n_workers=generation_workers,
     )
     synthetic_ood_records = _filter_synthetic_ood(
         classifier,
@@ -965,7 +703,24 @@ def generate_reliability_data(
         crop_size=crop_size,
         chunk_size=synthetic_chunk_size,
     )
+    _log_memory("after synthetic OOD filtering")
     logger.info(f"Selected {len(synthetic_ood_records)} synthetic OOD samples")
+
+    # Balance real (ID + high-confidence OOD) samples against surviving
+    # synthetic OOD samples so the reliability model does not drown in real
+    # sequences when only a fraction of synthetic corruptions are kept.
+    rng = np.random.default_rng()
+    real_train_records = id_records + real_ood_records
+    n_real_train_before = len(real_train_records)
+    real_train_records = _downsample_to_match(
+        real_train_records, synthetic_ood_records, rng
+    )
+    if len(real_train_records) < n_real_train_before:
+        logger.info(
+            f"Downsampled real training records from {n_real_train_before} to "
+            f"{len(real_train_records)} to match {len(synthetic_ood_records)} "
+            "synthetic OOD samples"
+        )
 
     # ---- build train / validation records ----
     if val_csv_path:
@@ -1005,12 +760,27 @@ def generate_reliability_data(
             "high-confidence wrong OOD samples from validation data"
         )
 
+        if source_sample_size is not None and source_sample_size < len(
+            val_source_records
+        ):
+            val_synthetic_source_records = _sample_records_for_synthetic_generation(
+                val_source_records, source_sample_size, rng
+            )
+            val_adjusted_multiplier = synthetic_ood_multiplier * (
+                len(val_source_records) / len(val_synthetic_source_records)
+            )
+        else:
+            val_synthetic_source_records = val_source_records
+            val_adjusted_multiplier = synthetic_ood_multiplier
+
         logger.info("Generating synthetic OOD samples from validation sequences")
-        val_synthetic_seqs = _generate_synthetic_sequences(
-            val_source_records,
-            synthetic_ood_multiplier,
+        val_synthetic_seqs = generate_synthetic_sequences(
+            val_synthetic_source_records,
+            val_adjusted_multiplier,
             perturbations_cfg,
             crop_size=crop_size,
+            generation_chunk_size=generation_chunk_size,
+            n_workers=generation_workers,
         )
         val_synthetic_ood_records = _filter_synthetic_ood(
             classifier,
@@ -1026,14 +796,23 @@ def generate_reliability_data(
             f"Selected {len(val_synthetic_ood_records)} synthetic OOD samples "
             "from validation data"
         )
-        val_records = val_id_records + val_ood_records + val_synthetic_ood_records
+        val_real_records = val_id_records + val_ood_records
+        n_val_real_before = len(val_real_records)
+        val_real_records = _downsample_to_match(
+            val_real_records, val_synthetic_ood_records, rng
+        )
+        if len(val_real_records) < n_val_real_before:
+            logger.info(
+                f"Downsampled real validation records from {n_val_real_before} to "
+                f"{len(val_real_records)} to match {len(val_synthetic_ood_records)} "
+                "synthetic OOD samples"
+            )
 
-        train_records_out = id_records + real_ood_records + synthetic_ood_records
-        rng = np.random.default_rng()
+        val_records = val_real_records + val_synthetic_ood_records
+        train_records_out = real_train_records + synthetic_ood_records
         rng.shuffle(train_records_out)
     else:
-        all_records = id_records + real_ood_records + synthetic_ood_records
-        rng = np.random.default_rng()
+        all_records = real_train_records + synthetic_ood_records
         rng.shuffle(all_records)
 
         val_fraction = generator_cfg.get("val_fraction", 0.1)
