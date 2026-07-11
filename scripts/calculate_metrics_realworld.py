@@ -23,7 +23,7 @@ from sklearn.metrics import (
 )
 
 
-VIRAL_FRACTIONS = {"phage", "virus"}
+VIRAL_FRACTIONS = {"phage", "virus", "viral"}
 
 
 def load_predictions(path: Path) -> pd.DataFrame:
@@ -110,20 +110,27 @@ def evaluate_sample(
     output_dir: Path,
     reliability_cutoff: float = 0.0,
 ) -> tuple[dict[str, object], np.ndarray]:
-    """Evaluate one sample and write metrics files."""
+    """Evaluate one sample and write metrics files.
+
+    Metrics are computed on the intersection of prediction and label
+    ``contig_id`` values, so label files covering more contigs than the
+    prediction file (or vice versa) are handled correctly.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     sample_name = pred_path.stem
 
     preds_df = load_predictions(pred_path)
     labels_df = load_labels(label_path)
 
-    y_true, _ = build_ground_truth(labels_df)
-    y_pred = build_viral_predictions(preds_df, reliability_cutoff=reliability_cutoff)
-
-    if len(y_true) != len(y_pred):
+    merged = pd.merge(labels_df, preds_df, on="contig_id", how="inner")
+    if merged.empty:
         raise ValueError(
-            f"Mismatch between labels ({len(y_true)}) and predictions ({len(y_pred)})"
+            f"No overlapping contig_ids between predictions ({pred_path.name}) "
+            f"and labels ({label_path.name})"
         )
+
+    y_true, _ = build_ground_truth(merged)
+    y_pred = build_viral_predictions(merged, reliability_cutoff=reliability_cutoff)
 
     binary_metrics = compute_binary_metrics(y_true, y_pred, sample_name)
     per_class = compute_per_class_metrics(labels_df, preds_df)
@@ -161,15 +168,30 @@ def evaluate_sample(
 def discover_sample_pairs(
     predictions_dir: Path, labels_dir: Path
 ) -> list[tuple[Path, Path, str]]:
-    """Pair prediction TSVs with label TSVs by sample stem."""
+    """Pair prediction TSVs with label TSVs by sample stem.
+
+    Prediction files inherit the input FASTA name (e.g.
+    ``gut_scaffolds_gt1500.tsv``) while label files are stored as
+    ``<sample>_labels.tsv`` (e.g. ``gut_labels.tsv``). Each prediction stem is
+    matched to the longest label stem that equals it or is a ``_``-separated
+    prefix of it, so both exact names and suffixed prediction names pair.
+    """
     pred_files = {p.stem: p for p in predictions_dir.glob("*.tsv")}
     label_files = {
         p.stem.replace("_labels", ""): p for p in labels_dir.glob("*_labels.tsv")
     }
 
+    def _match_label(sample_name: str) -> Path | None:
+        tokens = sample_name.split("_")
+        for end in range(len(tokens), 0, -1):
+            candidate = "_".join(tokens[:end])
+            if candidate in label_files:
+                return label_files[candidate]
+        return None
+
     pairs: list[tuple[Path, Path, str]] = []
     for sample_name, pred_path in pred_files.items():
-        label_path = label_files.get(sample_name)
+        label_path = _match_label(sample_name)
         if label_path is None:
             print(
                 f"Warning: no label file found for sample '{sample_name}'",

@@ -23,6 +23,16 @@ class TestBuildGroundTruth:
         np.testing.assert_array_equal(y_true, np.array([0, 1, 1, 0]))
         assert classes.tolist() == ["cellular", "phage", "virus"]
 
+    def test_viral_fraction_is_positive(self):
+        labels = pd.DataFrame(
+            {
+                "contig_id": ["c1", "c2"],
+                "fraction": ["viral", "cellular"],
+            }
+        )
+        y_true, _ = metrics.build_ground_truth(labels)
+        np.testing.assert_array_equal(y_true, np.array([1, 0]))
+
 
 class TestBuildPredictions:
     def test_phage_and_virus_are_viral(self):
@@ -107,6 +117,141 @@ class TestEvaluateSample:
         assert (output_dir / "gut_metrics.json").exists()
         assert (output_dir / "gut_confusion_matrix.npy").exists()
         np.testing.assert_array_equal(cm, np.array([[2, 0], [0, 2]]))
+
+
+class TestEvaluateSampleContigMatching:
+    def _write(self, path: Path, df: pd.DataFrame) -> None:
+        df.to_csv(path, sep="\t", index=False)
+
+    def test_metrics_computed_on_contig_id_intersection(self, tmp_path: Path):
+        # Predictions are shuffled, miss one labeled contig (c5), and contain
+        # one unlabeled contig (c9); only c1-c4 overlap.
+        pred_path = tmp_path / "gut.tsv"
+        label_path = tmp_path / "gut_labels.tsv"
+        output_dir = tmp_path / "metrics"
+
+        self._write(
+            pred_path,
+            pd.DataFrame(
+                {
+                    "contig_id": ["c3", "c1", "c4", "c9", "c2"],
+                    "prediction": ["virus", "bacteria", "bacteria", "phage", "phage"],
+                    "reliability_score": [0.9, 0.9, 0.9, 0.9, 0.9],
+                }
+            ),
+        )
+        self._write(
+            label_path,
+            pd.DataFrame(
+                {
+                    "contig_id": ["c1", "c2", "c3", "c4", "c5"],
+                    "fraction": ["cellular", "phage", "virus", "cellular", "phage"],
+                }
+            ),
+        )
+
+        sample_metrics, cm = metrics.evaluate_sample(pred_path, label_path, output_dir)
+
+        assert sample_metrics["num_contigs"] == 4
+        assert sample_metrics["precision"] == pytest.approx(1.0)
+        assert sample_metrics["recall"] == pytest.approx(1.0)
+        assert sample_metrics["f1"] == pytest.approx(1.0)
+        np.testing.assert_array_equal(cm, np.array([[2, 0], [0, 2]]))
+
+    def test_subset_predictions_do_not_raise_length_mismatch(self, tmp_path: Path):
+        # Labels cover all scaffolds; predictions only cover the >=1500 bp subset.
+        pred_path = tmp_path / "gut.tsv"
+        label_path = tmp_path / "gut_labels.tsv"
+        output_dir = tmp_path / "metrics"
+
+        self._write(
+            pred_path,
+            pd.DataFrame(
+                {
+                    "contig_id": ["c1", "c2", "c3", "c4"],
+                    "prediction": ["bacteria", "phage", "virus", "bacteria"],
+                    "reliability_score": [0.9, 0.9, 0.9, 0.9],
+                }
+            ),
+        )
+        self._write(
+            label_path,
+            pd.DataFrame(
+                {
+                    "contig_id": ["c1", "c2", "c3", "c4", "c5"],
+                    "fraction": ["cellular", "phage", "virus", "cellular", "phage"],
+                }
+            ),
+        )
+
+        sample_metrics, cm = metrics.evaluate_sample(pred_path, label_path, output_dir)
+
+        assert sample_metrics["num_contigs"] == 4
+        assert sample_metrics["f1"] == pytest.approx(1.0)
+        np.testing.assert_array_equal(cm, np.array([[2, 0], [0, 2]]))
+
+
+class TestDiscoverSamplePairs:
+    def _write_tsv(self, path: Path) -> None:
+        pd.DataFrame({"contig_id": ["c1"]}).to_csv(path, sep="\t", index=False)
+
+    def test_prediction_stem_with_suffix_pairs_with_sample_labels(self, tmp_path: Path):
+        # Predictions inherit FASTA names (e.g. gut_scaffolds_gt1500.tsv) while
+        # labels are stored as <sample>_labels.tsv (e.g. gut_labels.tsv).
+        preds_dir = tmp_path / "preds"
+        labels_dir = tmp_path / "labels"
+        preds_dir.mkdir()
+        labels_dir.mkdir()
+        self._write_tsv(preds_dir / "gut_scaffolds_gt1500.tsv")
+        self._write_tsv(labels_dir / "gut_labels.tsv")
+
+        pairs = metrics.discover_sample_pairs(preds_dir, labels_dir)
+
+        assert len(pairs) == 1
+        pred_path, label_path, sample_name = pairs[0]
+        assert pred_path == preds_dir / "gut_scaffolds_gt1500.tsv"
+        assert label_path == labels_dir / "gut_labels.tsv"
+        assert sample_name == "gut_scaffolds_gt1500"
+
+    def test_exact_stem_match_still_pairs(self, tmp_path: Path):
+        preds_dir = tmp_path / "preds"
+        labels_dir = tmp_path / "labels"
+        preds_dir.mkdir()
+        labels_dir.mkdir()
+        self._write_tsv(preds_dir / "gut.tsv")
+        self._write_tsv(labels_dir / "gut_labels.tsv")
+
+        pairs = metrics.discover_sample_pairs(preds_dir, labels_dir)
+
+        assert len(pairs) == 1
+        assert pairs[0][1] == labels_dir / "gut_labels.tsv"
+        assert pairs[0][2] == "gut"
+
+    def test_longest_matching_label_prefix_wins(self, tmp_path: Path):
+        preds_dir = tmp_path / "preds"
+        labels_dir = tmp_path / "labels"
+        preds_dir.mkdir()
+        labels_dir.mkdir()
+        self._write_tsv(preds_dir / "gut_deep_scaffolds_gt1500.tsv")
+        self._write_tsv(labels_dir / "gut_labels.tsv")
+        self._write_tsv(labels_dir / "gut_deep_labels.tsv")
+
+        pairs = metrics.discover_sample_pairs(preds_dir, labels_dir)
+
+        assert len(pairs) == 1
+        assert pairs[0][1] == labels_dir / "gut_deep_labels.tsv"
+
+    def test_unpaired_prediction_is_skipped(self, tmp_path: Path):
+        preds_dir = tmp_path / "preds"
+        labels_dir = tmp_path / "labels"
+        preds_dir.mkdir()
+        labels_dir.mkdir()
+        self._write_tsv(preds_dir / "soil_scaffolds_gt1500.tsv")
+        self._write_tsv(labels_dir / "gut_labels.tsv")
+
+        pairs = metrics.discover_sample_pairs(preds_dir, labels_dir)
+
+        assert pairs == []
 
 
 class TestLoadPredictions:
