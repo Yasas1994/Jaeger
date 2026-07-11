@@ -558,8 +558,15 @@ def run_core(**kwargs):
     if not model_info["graph"].exists():
         logger.error(f"could not find model graph. please check {model_paths}")
         sys.exit(1)
-    tf.config.threading.set_inter_op_parallelism_threads(THREADS)
-    tf.config.threading.set_intra_op_parallelism_threads(THREADS)
+    try:
+        tf.config.threading.set_inter_op_parallelism_threads(THREADS)
+        tf.config.threading.set_intra_op_parallelism_threads(THREADS)
+    except RuntimeError:
+        # Thread counts can only be set before the TF runtime initializes;
+        # keep the existing configuration in already-initialized processes.
+        logger.warning(
+            f"TensorFlow runtime already initialized; using default threading (requested {THREADS})"
+        )
     tf.config.set_soft_device_placement(True)
     gpus = tf.config.list_physical_devices("GPU")
     mode = None
