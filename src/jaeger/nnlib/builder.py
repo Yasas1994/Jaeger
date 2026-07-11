@@ -31,6 +31,7 @@ from jaeger.seqops.maps import (
     PC5_ID,
 )
 from jaeger.nnlib.metrics import (
+    BinaryF1Score,
     MacroF1Score,
     PrecisionForClass,
     RecallForClass,
@@ -1116,6 +1117,7 @@ class DynamicModelBuilder:
             "precision": tf.keras.metrics.Precision,
             "recall": tf.keras.metrics.Recall,
             "macro_f1": MacroF1Score,
+            "binary_f1": BinaryF1Score,
             "per_class_precision": PrecisionForClass,
             "per_class_recall": RecallForClass,
             "per_class_specificity": SpecificityForClass,
@@ -1177,9 +1179,12 @@ class DynamicModelBuilder:
             case "classifier":
                 return [tf.keras.metrics.CategoricalAccuracy(name="acc")]
             case "reliability":
+                # The reliability head emits a single raw logit, so thresholded
+                # metrics must compare against 0.0 (sigmoid(logit) > 0.5).
                 return [
                     tf.keras.metrics.AUC(name="auc", from_logits=True),
-                    tf.keras.metrics.BinaryAccuracy(name="acc"),
+                    tf.keras.metrics.BinaryAccuracy(name="acc", threshold=0.0),
+                    BinaryF1Score(),
                 ]
 
     def compile_model(

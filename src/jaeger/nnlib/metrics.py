@@ -106,6 +106,50 @@ class SpecificityForClass(tf.keras.metrics.Metric):
         self.fp.assign(0.0)
 
 
+class BinaryF1Score(tf.keras.metrics.Metric):
+    """F1 score for a single-logit binary head (e.g. the reliability model).
+
+    Thresholds the raw model output at ``threshold`` (default ``0.0``, i.e.
+    ``sigmoid(logit) > 0.5``) and accumulates TP/FP/FN for the positive class.
+    Unlike ``tf.keras.metrics.F1Score`` this accepts raw logits — the Keras
+    metric requires ``0 < threshold <= 1`` (probabilities only).
+    """
+
+    def __init__(self, threshold: float = 0.0, name="binary_f1", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.tp = self.add_weight(name="tp", initializer="zeros")
+        self.fp = self.add_weight(name="fp", initializer="zeros")
+        self.fn = self.add_weight(name="fn", initializer="zeros")
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = tf.cast(tf.reshape(y_true, [-1]), tf.int32)
+        y_pred = tf.cast(tf.reshape(y_pred, [-1]) > self.threshold, tf.int32)
+
+        tp = tf.reduce_sum(tf.cast((y_true == 1) & (y_pred == 1), self.dtype))
+        fp = tf.reduce_sum(tf.cast((y_true == 0) & (y_pred == 1), self.dtype))
+        fn = tf.reduce_sum(tf.cast((y_true == 1) & (y_pred == 0), self.dtype))
+
+        self.tp.assign_add(tp)
+        self.fp.assign_add(fp)
+        self.fn.assign_add(fn)
+
+    def result(self):
+        return (2 * self.tp) / (
+            2 * self.tp + self.fp + self.fn + tf.keras.backend.epsilon()
+        )
+
+    def reset_state(self):
+        self.tp.assign(0.0)
+        self.fp.assign(0.0)
+        self.fn.assign(0.0)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"threshold": self.threshold})
+        return config
+
+
 class MacroF1Score(tf.keras.metrics.Metric):
     """Macro-averaged F1 score for multi-class classification.
 
