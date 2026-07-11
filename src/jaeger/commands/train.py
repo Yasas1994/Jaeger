@@ -37,6 +37,13 @@ from jaeger.utils.receptive_field import (
 from jaeger.utils.logging import get_logger
 from jaeger.data.loaders import _load_numpy_dataset
 from jaeger.dataops.reliability_generator import generate_reliability_data
+from jaeger.postprocess.threshold import (
+    calibration_summary,
+    collect_scores_and_labels,
+    tune_reliability_threshold,
+    write_calibration_outputs,
+    write_threshold_outputs,
+)
 
 try:
     from icecream import ic
@@ -1055,11 +1062,11 @@ def train_fragment_core(**kwargs):
                         class_weight=builder.train_cfg.get("reliability_class_weights"),
                         **train_args,
                     )
+                    reliability_dir = builder.train_cfg.get("reliability_dir")
                     if (
                         reliability_history.epoch
                         and reliability_history.epoch[-1] < train_args["epochs"] - 1
                     ):
-                        reliability_dir = builder.train_cfg.get("reliability_dir")
                         if reliability_dir is not None:
                             _write_convergence_marker(
                                 reliability_dir,
@@ -1070,6 +1077,60 @@ def train_fragment_core(**kwargs):
                             logger.warning(
                                 "reliability_dir is not configured; skipping convergence marker"
                             )
+
+                    # ---- reliability threshold tuning ----
+                    if builder.train_cfg.get("tune_reliability_threshold", True):
+                        if reliability_dir is None:
+                            logger.warning(
+                                "reliability_dir is not configured; "
+                                "skipping reliability threshold tuning"
+                            )
+                        else:
+                            try:
+                                _rel_scores, _rel_labels = collect_scores_and_labels(
+                                    models.get("jaeger_reliability"), rel_val
+                                )
+                                if _rel_labels.size == 0:
+                                    logger.warning(
+                                        "Reliability threshold tuning skipped: "
+                                        "no validation labels"
+                                    )
+                                else:
+                                    _thr_cfg = (
+                                        builder.train_cfg.get(
+                                            "reliability_threshold", {}
+                                        )
+                                        or {}
+                                    )
+                                    _best, _rows, _summary = tune_reliability_threshold(
+                                        _rel_scores,
+                                        _rel_labels,
+                                        metric=_thr_cfg.get("metric", "f1-id"),
+                                        min_threshold=_thr_cfg.get("min", 0.0),
+                                        max_threshold=_thr_cfg.get("max", 0.95),
+                                        step=_thr_cfg.get("step", 0.05),
+                                    )
+                                    _best_path, _sweep_path = write_threshold_outputs(
+                                        reliability_dir, _best, _rows
+                                    )
+                                    _ece, _brier, _cal_rows = calibration_summary(
+                                        _rel_scores, _rel_labels
+                                    )
+                                    _cal_path = write_calibration_outputs(
+                                        reliability_dir, _cal_rows
+                                    )
+                                    logger.info(
+                                        f"Reliability threshold: {_best:.3f} "
+                                        f"(AUROC={_summary['auroc']:.3f}, "
+                                        f"AUPRC={_summary['auprc']:.3f}, "
+                                        f"ECE={_ece:.3f}, Brier={_brier:.3f}); "
+                                        f"wrote {_best_path}, {_sweep_path}, "
+                                        f"{_cal_path}"
+                                    )
+                            except Exception as _exc:  # noqa: BLE001
+                                logger.warning(
+                                    f"Reliability threshold tuning failed: {_exc}"
+                                )
             else:
                 logger.info("Skipping training — reliability model")
 
