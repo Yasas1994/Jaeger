@@ -35,21 +35,31 @@ GB_BYTES = 1024**3
 def _crop_length_warning(
     trained_codons: int | None, trained_nt: int | None, fsize: int
 ) -> str | None:
-    """Return a warning if ``fsize`` maps to a different codon count than the
-    model was trained on, else ``None``."""
-    if trained_codons is None:
-        return None
-    runtime_codons = nucleotides_to_codons(int(fsize))
-    if runtime_codons == trained_codons:
-        return None
-    nt_hint = f" ({trained_nt} nt)" if trained_nt is not None else ""
-    prefer = trained_nt if trained_nt is not None else "used at training"
-    return (
-        f"runtime --fsize {fsize} maps to {runtime_codons} codon frames, but the "
-        f"model was trained on {trained_codons} codons{nt_hint}. Fixed-length "
-        f"architectures (e.g. hyena) may degrade or collapse to a single class at "
-        f"a different length; prefer --fsize {prefer} for this model."
-    )
+    """Return a warning if ``fsize`` does not match the model's trained
+    fragment length, else ``None``.
+
+    Codon-based models compare codon-frame counts; nucleotide models (no codon
+    count) compare the nucleotide length directly.
+    """
+    if trained_codons is not None:
+        runtime_codons = nucleotides_to_codons(int(fsize))
+        if runtime_codons == trained_codons:
+            return None
+        nt_hint = f" ({trained_nt} nt)" if trained_nt is not None else ""
+        prefer = trained_nt if trained_nt is not None else "used at training"
+        return (
+            f"runtime --fsize {fsize} maps to {runtime_codons} codon frames, but the "
+            f"model was trained on {trained_codons} codons{nt_hint}. Fixed-length "
+            f"architectures (e.g. hyena) may degrade or collapse to a single class at "
+            f"a different length; prefer --fsize {prefer} for this model."
+        )
+    if trained_nt is not None and int(fsize) != int(trained_nt):
+        return (
+            f"runtime --fsize {fsize} differs from the model's trained fragment "
+            f"length ({trained_nt} nt). Fixed-length architectures (e.g. hyena) may "
+            f"degrade at a different length; prefer --fsize {trained_nt} for this model."
+        )
+    return None
 
 
 def _save_auxiliary_outputs(
@@ -710,6 +720,8 @@ def run_core(**kwargs):
             f"model trained fragment length: {_trained_codons} codons "
             f"({_trained_nt} nt)"
         )
+    elif _trained_nt is not None:
+        logger.info(f"model trained fragment length: {_trained_nt} nt")
     _crop_msg = _crop_length_warning(_trained_codons, _trained_nt, fsize)
     if _crop_msg is not None:
         logger.warning(_crop_msg)

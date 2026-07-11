@@ -88,15 +88,18 @@ def test_build_prediction_dataset_honors_smaller_fsize(tmp_path):
     assert int(translated.shape[-1]) == 498
 
 
-def _write_project_yaml(path, *, crop_units: str, crop_size: int) -> None:
+def _write_project_yaml(
+    path, *, crop_size: int, input_type: str = "translated", crop_units: str | None = None
+) -> None:
+    units_line = f"    crop_units: {crop_units}\n" if crop_units is not None else ""
     path.write_text(
         "model:\n"
         "  embedding:\n"
-        "    type: translated\n"
+        f"    type: {input_type}\n"
         "    codon: null\n"
         "    codon_id: null\n"
         "  string_processor:\n"
-        f"    crop_units: {crop_units}\n"
+        f"{units_line}"
         f"    crop_size: {crop_size}\n"
     )
 
@@ -126,3 +129,17 @@ def test_infer_loader_honors_nucleotide_crop_units(tmp_path):
     sp = InferModel.__new__(InferModel)._load_string_processor_config(cfg)
     assert sp["crop_size_codons"] == 665
     assert sp["crop_size_nt"] == 2000
+
+
+def test_infer_loader_nucleotide_model_uses_nt(tmp_path):
+    """For ``input_type: nucleotide`` there are no codon frames: ``crop_size``
+    is the nucleotide window directly and must not be codon-converted."""
+    from jaeger.nnlib.inference import InferModel
+
+    cfg = tmp_path / "project.yaml"
+    _write_project_yaml(cfg, crop_size=2000, input_type="nucleotide")
+
+    sp = InferModel.__new__(InferModel)._load_string_processor_config(cfg)
+    assert sp["crop_units"] == "nucleotide"
+    assert sp["crop_size_nt"] == 2000
+    assert sp.get("crop_size_codons") is None

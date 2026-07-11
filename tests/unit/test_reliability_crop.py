@@ -37,3 +37,13 @@ def test_default_is_500_codons():
 def test_unknown_units_raises():
     with pytest.raises(ValueError):
         _resolve({"crop_size": 100, "units": "weird"}, {})
+
+
+def test_translated_classifier_defaults_to_codon():
+    assert _resolve({"crop_size": 665}, {"input_type": "translated"}) == 2000
+
+
+def test_nucleotide_classifier_defaults_to_nt():
+    """Nucleotide classifiers consume crop_size directly in nt; without an
+    explicit unit the default must follow the model's input_type."""
+    assert _resolve({"crop_size": 2000}, {"input_type": "nucleotide"}) == 2000

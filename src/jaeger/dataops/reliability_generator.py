@@ -90,8 +90,9 @@ def _resolve_reliability_crop_size(
     Precedence: generator ``crop_sizes`` -> generator ``crop_size`` ->
     ``string_processor.crop_size`` -> ``string_processor.crop_sizes`` ->
     500 (codons). ``crop_units`` (preferred) or legacy ``units`` selects the
-    unit and defaults to ``codon``. Codon values convert to nucleotides via
-    ``3*codons + 5`` so the TF and numba frame extractors agree.
+    unit; when unset, it defaults to ``codon`` for translated classifiers and
+    ``nucleotide`` for nucleotide classifiers. Codon values convert to
+    nucleotides via ``3*codons + 5`` so the TF and numba frame extractors agree.
     """
     raw_sizes = generator_cfg.get("crop_sizes")
     if raw_sizes:
@@ -106,7 +107,15 @@ def _resolve_reliability_crop_size(
         sp_sizes = string_processor_config.get("crop_sizes")
         crop_size = max(sp_sizes) if sp_sizes else 500
 
-    units = generator_cfg.get("crop_units") or generator_cfg.get("units") or "codon"
+    units = (
+        generator_cfg.get("crop_units")
+        or generator_cfg.get("units")
+        or (
+            "nucleotide"
+            if string_processor_config.get("input_type") == "nucleotide"
+            else "codon"
+        )
+    )
     if units == "codon":
         crop_size = codons_to_nucleotides(int(crop_size))
     elif units in ("nuc", "nucleotide"):
