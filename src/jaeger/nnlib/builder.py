@@ -1265,6 +1265,24 @@ class DynamicModelBuilder:
     # Saving / callbacks
     # ------------------------------------------------------------------
 
+    def ensure_save_path_available(self) -> None:
+        """Abort if the model save directory is non-empty and --force is not set.
+
+        Mirrors the checkpoint guard: an existing model must not be
+        overwritten unless the user explicitly passed --force.
+        """
+        path_str = self._saving_config.get("path")
+        if not path_str:
+            return
+        path = Path(path_str)
+        if path.exists() and any(path.iterdir()) and not self._force:
+            logger.warning(
+                "Model already exists at %s. "
+                "Use --force to overwrite the existing model!",
+                path,
+            )
+            raise SystemExit(1)
+
     def _prepare_save_path(
         self,
         num_params: str | None = None,
@@ -1290,6 +1308,13 @@ class DynamicModelBuilder:
         graph_id = find_existing_graph_id(path)
 
         if clear and any(path.iterdir()):
+            if not self._force:
+                logger.warning(
+                    "Model already exists at %s. "
+                    "Use --force to overwrite the existing model!",
+                    path,
+                )
+                raise SystemExit(1)
             logger.warning(f"{path} is not empty. deleting existing files!")
             if graph_id is not None:
                 logger.warning("if a graph is found, it's id will be reused")

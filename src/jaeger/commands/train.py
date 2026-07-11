@@ -693,6 +693,8 @@ def train_fragment_core(**kwargs):
             logger.info("Using XLA JIT compilation for training")
 
         builder = DynamicModelBuilder(config)
+        if kwargs.get("save_model", False):
+            builder.ensure_save_path_available()
         models = builder.build_fragment_classifier(
             self_supervised_pretraining=kwargs.get("self_supervised_pretraining", False)
         )
