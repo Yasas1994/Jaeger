@@ -603,9 +603,17 @@ def train_fragment_core(**kwargs):
     """Train fragment classification and reliability models."""
     workers = kwargs.get("workers")
     if workers is not None and workers > 0:
-        tf.config.threading.set_inter_op_parallelism_threads(workers)
-        tf.config.threading.set_intra_op_parallelism_threads(workers)
-        logger.info(f"TensorFlow threading: inter_op={workers}, intra_op={workers}")
+        try:
+            tf.config.threading.set_inter_op_parallelism_threads(workers)
+            tf.config.threading.set_intra_op_parallelism_threads(workers)
+            logger.info(f"TensorFlow threading: inter_op={workers}, intra_op={workers}")
+        except RuntimeError:
+            # Thread counts can only be set before the TF runtime initializes;
+            # in an already-initialized process (e.g. embedded/test runners)
+            # keep the existing configuration.
+            logger.warning(
+                f"TensorFlow runtime already initialized; ignoring --workers={workers}"
+            )
 
     gpus = tf.config.list_physical_devices("GPU")
     num_gpus = len(gpus)
