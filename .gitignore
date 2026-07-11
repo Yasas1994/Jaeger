@@ -58,6 +58,12 @@ test_cli/**/*.log
 API_AUDIT.md
 kimi-export-*.md
 
+# Root-level markdown: only README, CHANGELOG and AGENTS belong to the repo
+/*.md
+!/README.md
+!/CHANGELOG.md
+!/AGENTS.md
+
 # pyfastx index files
 *.fxi
 
