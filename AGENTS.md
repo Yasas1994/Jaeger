@@ -243,7 +243,7 @@ Key sections in a training config:
 
 - `model.name`, `model.experiment`, `model.seed`
 - `model.embedding` — input type (`translated`, etc.), frames, strands, embedding size
-- `model.string_processor` — data format (`csv`, `numpy`), crop size, augmentation flags
+- `model.string_processor` — data format (`csv`, `numpy`), crop size, augmentation flags. `crop_size` is canonically in **codons**; `crop_units` (default `codon`, or `nucleotide`) selects the unit. The nucleotide window is `3 * crop_size + 5` (see `jaeger.seqops.crop`), which is the only length where the TensorFlow and numba frame extractors agree on the codon count.
 - `model.representation_learner` — stack of `masked_conv1d`, `residual_block`, `transformer`, etc.
 - `model.classifier` — classification head
 - `model.reliability` — optional reliability / OOD head
@@ -429,3 +429,4 @@ cd docs && make html
 - Any change to `pyproject.toml` dependencies likely needs a matching update in `recipes/jaeger-bio/meta.yaml`.
 - If you change the version, run `.github/scripts/bump-version.sh` rather than editing version strings manually; this keeps all files in sync.
 - The `default` model uses the legacy prediction path and is deprecated; new inference work should target modern SavedModels under `jaeger_38341_1.4M_fragment`.
+- Crop length is canonicalized in `src/jaeger/seqops/crop.py`: `crop_size` is in codons and the nucleotide window is `3 * codons + 5` (never `3 * codons`). Use `codons_to_nucleotides` / `resolve_crop` instead of multiplying by 3. Existing `665`-codon models correspond to a `2000`-nt window.

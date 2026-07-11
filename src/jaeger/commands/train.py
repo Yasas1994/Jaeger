@@ -27,6 +27,7 @@ import tensorflow as tf
 from pathlib import Path
 
 from jaeger.nnlib.builder import DynamicModelBuilder, check_files
+from jaeger.seqops.crop import codons_to_nucleotides
 from jaeger.seqops.encode import process_string_train
 from jaeger.utils.misc import load_model_config, numerize
 from jaeger.utils.receptive_field import (
@@ -155,6 +156,37 @@ def _fit_and_save_refinement(
         logger.info(f"Saved refinement thresholds to {refine_path}")
     except Exception as exc:  # pragma: no cover
         logger.warning(f"Refinement threshold fitting failed: {exc}")
+
+
+def _sp_tf_crop_size_nt(string_processor_config: dict[str, Any]) -> int | None:
+    """Nucleotide crop size for the TF string preprocessor.
+
+    ``string_processor.crop_size`` is canonically in codons. When
+    ``crop_units == "codon"`` it is converted to nucleotides via
+    ``3*crop_size + 5`` (so the TF and numba frame extractors agree); otherwise
+    the value is treated as nucleotides (legacy behavior). Returns ``None`` when
+    ``crop_size`` is unset.
+    """
+    crop_size = string_processor_config.get("crop_size")
+    if crop_size is None:
+        return None
+    if string_processor_config.get("crop_units") == "codon":
+        return codons_to_nucleotides(int(crop_size))
+    return int(crop_size)
+
+
+def _sp_tf_frame_len(string_processor_config: dict[str, Any]) -> int | None:
+    """Expected translated frame count for padded_shape bookkeeping.
+
+    With ``crop_units == "codon"`` the frame count equals ``crop_size``; the
+    legacy nucleotide path keeps the historical ``crop_size // 3 - 1`` estimate.
+    """
+    crop_size = string_processor_config.get("crop_size")
+    if crop_size is None:
+        return None
+    if string_processor_config.get("crop_units") == "codon":
+        return int(crop_size)
+    return int(crop_size) // 3 - 1
 
 
 def _resolve_numpy_crop_params(
@@ -403,7 +435,7 @@ def _build_branch_datasets(
                         ),
                         ngram_width=string_processor_config.get("ngram_width"),
                         seq_onehot=string_processor_config.get("seq_onehot"),
-                        crop_size=string_processor_config.get("crop_size"),
+                        crop_size=_sp_tf_crop_size_nt(string_processor_config),
                         input_type=string_processor_config.get("input_type"),
                         masking=string_processor_config.get("masking"),
                         mutate=string_processor_config.get("mutate"),
@@ -916,7 +948,7 @@ def train_fragment_core(**kwargs):
                                 is True
                                 else [
                                     6,
-                                    string_processor_config.get("crop_size") // 3 - 1,
+                                    _sp_tf_frame_len(string_processor_config),
                                     string_processor_config.get("codon_depth"),
                                 ]
                             }
@@ -942,7 +974,9 @@ def train_fragment_core(**kwargs):
                                     seq_onehot=string_processor_config.get(
                                         "seq_onehot"
                                     ),
-                                    crop_size=string_processor_config.get("crop_size"),
+                                    crop_size=_sp_tf_crop_size_nt(
+                                        string_processor_config
+                                    ),
                                     input_type=string_processor_config.get(
                                         "input_type"
                                     ),

@@ -20,6 +20,7 @@ from jaeger.postprocess.refinement import (
     load_refinement,
     refine,
 )
+from jaeger.seqops.crop import nucleotides_to_codons
 from jaeger.seqops.io import fragment_generator
 from jaeger.utils.gpu import get_device_name
 from jaeger.utils.termini import scan_for_terminal_repeats
@@ -29,6 +30,26 @@ from jaeger.utils.logging import description, get_logger
 
 # from jaeger.utils.tandem import split_fasta_with_pyfastx, run_batch, merge_masked_files
 GB_BYTES = 1024**3
+
+
+def _crop_length_warning(
+    trained_codons: int | None, trained_nt: int | None, fsize: int
+) -> str | None:
+    """Return a warning if ``fsize`` maps to a different codon count than the
+    model was trained on, else ``None``."""
+    if trained_codons is None:
+        return None
+    runtime_codons = nucleotides_to_codons(int(fsize))
+    if runtime_codons == trained_codons:
+        return None
+    nt_hint = f" ({trained_nt} nt)" if trained_nt is not None else ""
+    prefer = trained_nt if trained_nt is not None else "used at training"
+    return (
+        f"runtime --fsize {fsize} maps to {runtime_codons} codon frames, but the "
+        f"model was trained on {trained_codons} codons{nt_hint}. Fixed-length "
+        f"architectures (e.g. hyena) may degrade or collapse to a single class at "
+        f"a different length; prefer --fsize {prefer} for this model."
+    )
 
 
 def _save_auxiliary_outputs(
@@ -189,7 +210,7 @@ def _build_prediction_dataset(
             codon_depth=string_processor_config.get("codon_depth"),
             ngram_width=string_processor_config.get("ngram_width"),
             seq_onehot=string_processor_config.get("seq_onehot"),
-            crop_size=string_processor_config.get("crop_size"),
+            crop_size=fragsize,
             input_type=string_processor_config.get("input_type"),
             masking=string_processor_config.get("masking"),
             mutate=string_processor_config.get("mutate"),
@@ -681,6 +702,18 @@ def run_core(**kwargs):
     stride = kwargs.get("stride")
     dynamic_stride = kwargs.get("dynamic_stride", False)
     dynamic_stride_threshold = kwargs.get("dynamic_stride_threshold", 10.0)
+
+    _trained_codons = string_processor_config.get("crop_size_codons")
+    _trained_nt = string_processor_config.get("crop_size_nt")
+    if _trained_codons is not None:
+        logger.info(
+            f"model trained fragment length: {_trained_codons} codons "
+            f"({_trained_nt} nt)"
+        )
+    _crop_msg = _crop_length_warning(_trained_codons, _trained_nt, fsize)
+    if _crop_msg is not None:
+        logger.warning(_crop_msg)
+
     user_min_len = kwargs.get("min_len")
     min_len = user_min_len or fsize
 

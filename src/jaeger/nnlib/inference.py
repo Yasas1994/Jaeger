@@ -463,6 +463,16 @@ class InferModel:
             _config["seq_onehot"] = _config.get("seq_onehot", False)
             if _config["seq_onehot"] is False:
                 _config["codon_depth"] = 1
+
+        # Canonical crop resolution: expose both codon and nucleotide lengths.
+        # ``crop_units`` defaults to ``codon``; nucleotide length = 3*codons + 5.
+        if "crop_size" in _config:
+            from jaeger.seqops.crop import resolve_crop
+
+            _config.setdefault("crop_units", "codon")
+            _codons, _nt = resolve_crop(_config)
+            _config["crop_size_codons"] = _codons
+            _config["crop_size_nt"] = _nt
         return _config
 
 

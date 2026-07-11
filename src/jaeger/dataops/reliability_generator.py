@@ -25,6 +25,7 @@ import tensorflow as tf
 
 from jaeger.dataops.convert import convert_dataset
 from jaeger.dataops.synthetic_perturbations import generate_synthetic_sequences
+from jaeger.seqops.crop import codons_to_nucleotides
 from jaeger.seqops.encode import CODON_ID, CODONS, process_string_train
 from jaeger.utils.logging import get_logger
 
@@ -84,19 +85,34 @@ def _resolve_reliability_crop_size(
     generator_cfg: dict[str, Any],
     string_processor_config: dict[str, Any],
 ) -> int:
-    """Return the effective nucleotide crop size for reliability data."""
-    crop_size = generator_cfg.get("crop_size")
+    """Return the effective nucleotide crop size for reliability data.
+
+    Precedence: generator ``crop_sizes`` -> generator ``crop_size`` ->
+    ``string_processor.crop_size`` -> ``string_processor.crop_sizes`` ->
+    500 (codons). ``crop_units`` (preferred) or legacy ``units`` selects the
+    unit and defaults to ``codon``. Codon values convert to nucleotides via
+    ``3*codons + 5`` so the TF and numba frame extractors agree.
+    """
+    raw_sizes = generator_cfg.get("crop_sizes")
+    if raw_sizes:
+        crop_size = (
+            max(raw_sizes) if isinstance(raw_sizes, (list, tuple)) else raw_sizes
+        )
+    else:
+        crop_size = generator_cfg.get("crop_size")
     if crop_size is None:
         crop_size = string_processor_config.get("crop_size")
     if crop_size is None:
-        crop_sizes = string_processor_config.get("crop_sizes")
-        crop_size = max(crop_sizes) if crop_sizes else 500
+        sp_sizes = string_processor_config.get("crop_sizes")
+        crop_size = max(sp_sizes) if sp_sizes else 500
 
-    units = generator_cfg.get("units", "nuc")
+    units = generator_cfg.get("crop_units") or generator_cfg.get("units") or "codon"
     if units == "codon":
-        crop_size = crop_size * 3
-    elif units != "nuc":
-        raise ValueError("units must be 'nuc' or 'codon'")
+        crop_size = codons_to_nucleotides(int(crop_size))
+    elif units in ("nuc", "nucleotide"):
+        crop_size = int(crop_size)
+    else:
+        raise ValueError("crop_units must be 'codon' or 'nucleotide'")
 
     return crop_size
 

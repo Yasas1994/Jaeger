@@ -616,7 +616,8 @@ def optimize_data_core(
         Deprecated and ignored. Kept for backward compatibility.
     units : str, optional
         Units for ``crop_size`` and ``stride``: ``nuc`` (nucleotides) or
-        ``codon`` (codons; converted to nucleotides by multiplying by 3).
+        ``codon`` (codons; crop sizes convert to nucleotides via
+        ``3*codons + 5``; strides scale by 3).
     overlap : float | None, optional
         Overlap between crops as a fraction of each crop size (0.0-1.0).
         If provided, per-crop strides are computed from the (unit-converted)
@@ -626,7 +627,12 @@ def optimize_data_core(
         raise ValueError("units must be 'nuc' or 'codon'")
 
     if units == "codon":
-        crop_size = tuple(cs * 3 for cs in crop_size)
+        from jaeger.seqops.crop import codons_to_nucleotides
+
+        # Codon crops must land on the mod-2 branch so both frame extractors
+        # agree: nucleotide length = 3*codons + 5. Stride is a shift, so it
+        # scales by 3 without the +5 window offset.
+        crop_size = tuple(codons_to_nucleotides(cs) for cs in crop_size)
         stride = stride * 3
         if strides is not None:
             strides = [s * 3 for s in strides]
