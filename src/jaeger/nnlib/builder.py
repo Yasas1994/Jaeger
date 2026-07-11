@@ -97,6 +97,93 @@ def find_existing_graph_id(path: Path) -> Optional[str]:
     return None
 
 
+class TrainingStateCallback(tf.keras.callbacks.Callback):
+    """Persist optimizer LR and scheduler state for checkpoint resumes.
+
+    ``ModelCheckpoint(save_weights_only=True)`` stores no optimizer or
+    callback state, so a ``--from_last_checkpoint`` resume would otherwise
+    warm-restart at the config's initial LR with fresh ``ReduceLROnPlateau``
+    and ``EarlyStopping`` state. This callback snapshots that state to
+    ``training_state.json`` in the branch checkpoint directory at the end of
+    every epoch (running *after* the other callbacks, so the LR reduction of
+    the epoch is captured), and restores it at the start of training when
+    ``restore`` is True.
+    """
+
+    STATE_FILENAME = "training_state.json"
+
+    def __init__(
+        self,
+        checkpoint_dir: str | Path,
+        callbacks: list[Any],
+        restore: bool = False,
+    ) -> None:
+        super().__init__()
+        self.state_path = Path(checkpoint_dir) / self.STATE_FILENAME
+        self.restore = restore
+        self._reduce_lr = next(
+            (
+                c
+                for c in callbacks
+                if isinstance(c, tf.keras.callbacks.ReduceLROnPlateau)
+            ),
+            None,
+        )
+        self._early_stop = next(
+            (c for c in callbacks if isinstance(c, tf.keras.callbacks.EarlyStopping)),
+            None,
+        )
+
+    @staticmethod
+    def _current_lr(optimizer) -> float:
+        lr = optimizer.learning_rate
+        if hasattr(lr, "numpy"):
+            return float(lr.numpy())
+        return float(lr)
+
+    def on_train_begin(self, logs=None) -> None:
+        if not self.restore or not self.state_path.exists():
+            return
+        try:
+            state = json.loads(self.state_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(f"Ignoring unreadable {self.state_path}: {exc}")
+            return
+        lr = state.get("learning_rate")
+        if lr is not None:
+            self.model.optimizer.learning_rate.assign(lr)
+        if self._reduce_lr is not None:
+            rlp = state.get("reduce_lr_on_plateau", {})
+            self._reduce_lr.best = rlp.get("best", self._reduce_lr.best)
+            self._reduce_lr.wait = rlp.get("wait", 0)
+            self._reduce_lr.cooldown_counter = rlp.get("cooldown_counter", 0)
+        if self._early_stop is not None:
+            es = state.get("early_stopping", {})
+            self._early_stop.best = es.get("best", self._early_stop.best)
+            self._early_stop.wait = es.get("wait", 0)
+        logger.info(
+            f"Restored training state from {self.state_path} (learning_rate={lr})"
+        )
+
+    def on_epoch_end(self, epoch, logs=None) -> None:
+        state: dict[str, Any] = {
+            "epoch": int(epoch),
+            "learning_rate": self._current_lr(self.model.optimizer),
+        }
+        if self._reduce_lr is not None:
+            state["reduce_lr_on_plateau"] = {
+                "best": float(self._reduce_lr.best),
+                "wait": int(self._reduce_lr.wait),
+                "cooldown_counter": int(self._reduce_lr.cooldown_counter),
+            }
+        if self._early_stop is not None:
+            state["early_stopping"] = {
+                "best": float(self._early_stop.best),
+                "wait": int(self._early_stop.wait),
+            }
+        self.state_path.write_text(json.dumps(state, indent=2))
+
+
 class DynamicModelBuilder:
     """Builds Keras models from a configuration dictionary.
 
@@ -276,7 +363,11 @@ class DynamicModelBuilder:
         path: str | Path,
         pattern: str = r"epoch:(\d+)-loss:(\d+\.\d+)",
     ) -> dict[str, Any]:
-        """Scan *path* for the most recent ``.h5`` checkpoint matching *pattern*.
+        """Scan *path* for the highest-epoch ``.h5`` checkpoint matching *pattern*.
+
+        Selection is by the epoch number parsed from the filename, never by
+        file mtime: copying or rsyncing checkpoint directories scrambles
+        mtimes and would otherwise silently resume from an older epoch.
 
         Also checks for a ``converged.json`` marker. If present and valid, the
         value of ``is_converged`` is read from the marker; otherwise it defaults
@@ -292,19 +383,34 @@ class DynamicModelBuilder:
             except (json.JSONDecodeError, OSError):
                 converged = False
 
-        h5_files = sorted(
-            path.glob("*.h5"), key=lambda f: f.stat().st_mtime, reverse=True
-        )
-        for file in h5_files:
+        best: dict[str, Any] | None = None
+        for file in path.glob("*.h5"):
+            # Skip MetricModel sidecar files (e.g. "*.arcface.weights.h5");
+            # they only hold the ArcFace loss weights, not the model weights.
+            if ".arcface." in file.name:
+                continue
             match = re.search(pattern, file.name)
-            if match:
-                epoch, loss = match.groups()
-                return {
-                    "path": file,
-                    "epoch": int(epoch),
-                    "loss": float(loss),
-                    "is_converged": converged,
-                }
+            if not match:
+                continue
+            epoch, loss = match.groups()
+            candidate = {
+                "path": file,
+                "epoch": int(epoch),
+                "loss": float(loss),
+                "is_converged": converged,
+            }
+            # Highest epoch wins; mtime breaks ties between duplicate epochs.
+            if best is None or (candidate["epoch"], file.stat().st_mtime) > (
+                best["epoch"],
+                best["path"].stat().st_mtime,
+            ):
+                best = candidate
+        if best is not None:
+            logger.info(
+                f"Selected checkpoint {best['path'].name} "
+                f"(epoch {best['epoch']}, loss {best['loss']}) from {path}"
+            )
+            return best
         return {"path": None, "epoch": 0, "loss": None, "is_converged": converged}
 
     # ------------------------------------------------------------------
@@ -400,12 +506,14 @@ class DynamicModelBuilder:
             )
             # Tie the ArcFace loss model to the projection model so checkpoint/restore
             # saves and loads its trainable class-centroid weights together with
-            # the projection head and representation learner.
-            models["jaeger_projection"]._arcface_loss = models["arcface_loss_model"]
+            # the projection head and representation learner. MetricModel keeps the
+            # loss model out of Keras' weight-file walker and persists it via its
+            # own ``*.arcface.weights.h5`` sidecar (see MetricModel.set_arcface_loss).
+            models["jaeger_projection"].set_arcface_loss(models["arcface_loss_model"])
             if self._checkpoints.get("projection", {}).get("path", False):
                 models["jaeger_projection"].load_weights(
                     self._checkpoints.get("projection").get("path"),
-                    skip_mismatch=True,
+                    skip_mismatch=False,
                 )
                 logger.info(
                     f"Loaded projection model weights from "
@@ -470,7 +578,7 @@ class DynamicModelBuilder:
             ).get("path", False):
                 models["jaeger_classifier"].load_weights(
                     self._checkpoints.get("classifier").get("path"),
-                    skip_mismatch=True,
+                    skip_mismatch=False,
                 )
                 logger.info(
                     f"Loaded classification model weights from "
@@ -583,31 +691,30 @@ class DynamicModelBuilder:
                     outputs=x,
                     name="Jaeger_reliability",
                 )
-                try:
-                    if self._checkpoints.get("reliability", {}).get("path", False):
+                if self._checkpoints.get("reliability", {}).get("path", False):
+                    try:
                         models["jaeger_reliability"].load_weights(
                             self._checkpoints.get("reliability").get("path"),
-                            skip_mismatch=True,
+                            skip_mismatch=False,
                         )
                         logger.info(
                             f"Loaded reliability model weights from "
                             f"{self._checkpoints.get('reliability').get('path')}"
                         )
-                except Exception:
-                    logger.warning(
-                        "could not load the weights to reliability model from checkpoint. "
-                        "trying to load weights partially"
-                    )
-                    models["jaeger_reliability"].load_weights(
-                        self._checkpoints.get("reliability").get("path"),
-                        skip_mismatch=True,
-                    )
-                    self._checkpoints["reliability"] = {
-                        "path": None,
-                        "epoch": 0,
-                        "loss": None,
-                        "is_converged": False,
-                    }
+                    except (ValueError, KeyError) as exc:
+                        logger.warning(
+                            "Could not load reliability weights from checkpoint "
+                            "(%s). The architecture no longer matches the "
+                            "checkpoint — training the reliability head from "
+                            "scratch.",
+                            exc,
+                        )
+                        self._checkpoints["reliability"] = {
+                            "path": None,
+                            "epoch": 0,
+                            "loss": None,
+                            "is_converged": False,
+                        }
 
         # === 5. COMBINED MODEL ===
         rep_out = models["rep_model"].output
@@ -1429,6 +1536,19 @@ class DynamicModelBuilder:
                 raise ValueError(f"Unsupported callback: {name}")
         # Gradient accumulation is handled internally by Keras 3 optimizers;
         # no epoch-end callback is required.
+        # Persist optimizer LR and scheduler/early-stopping state so a
+        # --from_last_checkpoint resume does not warm-restart at the initial
+        # LR. Appended last so it snapshots state after ReduceLROnPlateau and
+        # EarlyStopping have updated theirs for the epoch.
+        branch_dir = self.train_cfg.get(f"{branch}_dir")
+        if branch_dir:
+            callbacks.append(
+                TrainingStateCallback(
+                    branch_dir,
+                    callbacks,
+                    restore=self._from_last_checkpoint,
+                )
+            )
         return callbacks
 
     # ------------------------------------------------------------------

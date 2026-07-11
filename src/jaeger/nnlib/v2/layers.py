@@ -1875,6 +1875,23 @@ class ResidualBlock(tf.keras.layers.Layer):
 # if not implemented correctly, this can lead to overflow/underflow issues.
 
 
+class _ArcFaceLossRef:
+    """Plain (non-Keras) holder for the ArcFace loss model.
+
+    Keras' weight-file walker recurses into every model attribute that is a
+    ``KerasSaveable``. Wrapping the loss model in a non-Keras object keeps it
+    out of the main ``.weights.h5`` file: ``MetricModel`` persists it via its
+    own ``*.arcface.weights.h5`` sidecar instead. A directly tracked copy would
+    be deduplicated against the compiled ``loss_fn`` on save, leaving an empty
+    group that a strict uncompiled load cannot restore.
+    """
+
+    __slots__ = ("model",)
+
+    def __init__(self, model):
+        self.model = model
+
+
 class MetricModel(tf.keras.Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1989,10 +2006,20 @@ class MetricModel(tf.keras.Model):
         # (Usually people don’t track reg-loss in test, but you can if you want)
         return {"loss": self.loss_tracker.result()}
 
+    def set_arcface_loss(self, arcface_model):
+        """Attach an ArcFace loss model, persisted via the sidecar file."""
+        self._arcface_loss = _ArcFaceLossRef(arcface_model)
+
+    def _get_arcface_loss(self):
+        ref = getattr(self, "_arcface_loss", None)
+        if isinstance(ref, _ArcFaceLossRef):
+            return ref.model
+        return ref
+
     def save_weights(self, filepath, *args, **kwargs):
         """Save model weights plus the attached ArcFace loss weights, if any."""
         super().save_weights(filepath, *args, **kwargs)
-        arcface = getattr(self, "_arcface_loss", None)
+        arcface = self._get_arcface_loss()
         if arcface is not None:
             arcface_path = Path(filepath).with_suffix(".arcface.weights.h5")
             arcface.save_weights(str(arcface_path), *args, **kwargs)
@@ -2000,7 +2027,7 @@ class MetricModel(tf.keras.Model):
     def load_weights(self, filepath, *args, **kwargs):
         """Load model weights plus the attached ArcFace loss weights, if present."""
         super().load_weights(filepath, *args, **kwargs)
-        arcface = getattr(self, "_arcface_loss", None)
+        arcface = self._get_arcface_loss()
         if arcface is not None:
             arcface_path = Path(filepath).with_suffix(".arcface.weights.h5")
             if arcface_path.exists():
