@@ -47,6 +47,7 @@ from jaeger.nnlib.v2.layers import (
     MaskedBiLSTM,
     MaskedDYT,
     MaskedGlobalAvgPooling,
+    MaskedGlobalMaxPooling,
     MaskedConv1D,
     MaskedLayerNormalization,
     MetricModel,
@@ -1457,6 +1458,7 @@ class DynamicModelBuilder:
             "max1d": tf.keras.layers.GlobalMaxPooling1D,
             "average1d": tf.keras.layers.GlobalAveragePooling1D,
             "masked_average": MaskedGlobalAvgPooling,
+            "masked_max": MaskedGlobalMaxPooling,
             "gatedframe": GatedFrameGlobalMaxPooling,
         }
         return poolers[name]

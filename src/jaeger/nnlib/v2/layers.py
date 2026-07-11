@@ -471,6 +471,42 @@ class MaskedGlobalAvgPooling(tf.keras.layers.Layer):
         return super().get_config()
 
 
+class MaskedGlobalMaxPooling(tf.keras.layers.Layer):
+    """Global max pooling over the frame and length axes that ignores masked
+    positions.
+
+    Like :class:`MaskedGlobalAvgPooling` but with a max reduction. Masked-out
+    positions (mask == 0) are set to a large negative sentinel before the
+    reduction so they can never win the max. This is the correct pooler for
+    fragment models whose inputs carry padding/ambiguous positions: the plain
+    ``GlobalMaxPooling2D`` does not consume the Keras mask and otherwise folds
+    padded positions into the reduction, which collapses the representation
+    when a window is partially masked (see probe evidence in the Jaeger
+    reliability/masking investigation).
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.supports_masking = True
+
+    def call(self, inputs, mask=None):
+        if mask is not None:
+            mask = tf.cast(mask, inputs.dtype)
+            mask = tf.expand_dims(mask, axis=-1)
+            sentinel = tf.constant(-1.0e9, dtype=inputs.dtype)
+            inputs = tf.where(mask > 0, inputs, sentinel)
+        return tf.reduce_max(inputs, axis=[1, 2])
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[-1])
+
+    def compute_mask(self, inputs, mask=None):
+        return None
+
+    def get_config(self):
+        return super().get_config()
+
+
 class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
     """
     Frame-aware global max pooling.
