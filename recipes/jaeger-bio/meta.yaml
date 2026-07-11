@@ -50,6 +50,7 @@ requirements:
     - pyyaml >=6.0.2
     - jinja2 >=3.1
     - pydustmasker >=1.0.3
+    - pyrodigal-gv >=0.3.0
     # Optional: for ONNX inference and quantization
     # - onnxruntime-gpu >=1.26
     # - tf2onnx >=1.17
