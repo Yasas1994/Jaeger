@@ -243,7 +243,15 @@ def _build_prediction_dataset(
 
 
 def _concat_predictions(a: dict, b: dict) -> dict:
-    """Concatenate two model prediction dicts along the batch axis."""
+    """Concatenate two model prediction dicts along the batch axis.
+
+    In two-pass inference either pass may match no contigs and return an
+    empty dict; the other pass's predictions are then returned as-is.
+    """
+    if not a:
+        return b
+    if not b:
+        return a
     return {k: np.concatenate([a[k], b[k]], axis=0) for k in a}
 
 
