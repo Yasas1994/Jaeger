@@ -8,7 +8,8 @@ from jaeger.commands import utils
 
 
 def test_optimize_data_core_interprets_codon_units(monkeypatch, tmp_path: Path):
-    """crop_size and stride are multiplied by 3 when units is codon."""
+    """Crop sizes convert via 3*crop_size + 5 and strides scale by 3 (a shift)
+    when units is codon: 10/20 codons -> 35/65 nt, stride 5 -> 15."""
     called = {}
 
     def _fake_convert_dataset(*, crop_size, stride, strides, **kwargs):
@@ -28,7 +29,7 @@ def test_optimize_data_core_interprets_codon_units(monkeypatch, tmp_path: Path):
         num_classes=3,
     )
 
-    assert called["crop_size"] == (30, 60)
+    assert called["crop_size"] == (35, 65)
     assert called["stride"] == 15
     assert called["strides"] is None
 
@@ -76,4 +77,5 @@ def test_optimize_data_core_overlap_respects_codon_units(monkeypatch, tmp_path: 
         num_classes=3,
     )
 
-    assert called["strides"] == [15]
+    # 10 codons -> 3*10 + 5 = 35 nt; stride = int(35 * (1 - 0.5)) = 17
+    assert called["strides"] == [17]

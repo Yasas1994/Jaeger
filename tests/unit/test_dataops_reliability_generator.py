@@ -536,7 +536,11 @@ def test_generate_reliability_data_skips_if_outputs_exist(monkeypatch, tmp_path:
 
 
 def test_convert_to_npz_derives_crop_size_from_crop_sizes(monkeypatch, tmp_path: Path):
-    """_convert_to_npz falls back to max(crop_sizes) when crop_size is missing."""
+    """_convert_to_npz falls back to max(crop_sizes) when crop_size is missing.
+
+    The value is in codons and converts to nt via ``3*crop_size + 5``:
+    max([100, ..., 600]) = 600 codons -> 1805 nt.
+    """
     called = {}
 
     def _fake_convert_dataset(*, crop_size, **kwargs):
@@ -557,11 +561,15 @@ def test_convert_to_npz_derives_crop_size_from_crop_sizes(monkeypatch, tmp_path:
         model_cfg={"string_processor": {}},
     )
 
-    assert called["crop_size"] == 600
+    assert called["crop_size"] == 1805
 
 
 def test_convert_to_npz_uses_generator_cfg_crop_size(monkeypatch, tmp_path: Path):
-    """_convert_to_npz prefers crop_size from generator_cfg over string_processor."""
+    """_convert_to_npz prefers crop_size from generator_cfg over string_processor.
+
+    generator crop_size=250 codons -> 755 nt; had string_processor won, the
+    result would be 1805 nt (max crop_sizes=600 codons).
+    """
     called = {}
 
     def _fake_convert_dataset(*, crop_size, **kwargs):
@@ -583,11 +591,11 @@ def test_convert_to_npz_uses_generator_cfg_crop_size(monkeypatch, tmp_path: Path
         generator_cfg={"crop_size": 250},
     )
 
-    assert called["crop_size"] == 250
+    assert called["crop_size"] == 755
 
 
 def test_convert_to_npz_converts_codon_units(monkeypatch, tmp_path: Path):
-    """generator_cfg.units='codon' multiplies crop_size by 3."""
+    """generator_cfg.units='codon' converts crop_size via 3*crop_size + 5."""
     called = {}
 
     def _fake_convert_dataset(*, crop_size, **kwargs):
@@ -605,7 +613,7 @@ def test_convert_to_npz_converts_codon_units(monkeypatch, tmp_path: Path):
         generator_cfg={"crop_size": 250, "units": "codon"},
     )
 
-    assert called["crop_size"] == 750
+    assert called["crop_size"] == 755
 
 
 def test_build_inference_dataset_uses_passed_crop_size(tmp_path: Path):
