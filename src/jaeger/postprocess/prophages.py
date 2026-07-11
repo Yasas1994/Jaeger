@@ -684,7 +684,11 @@ def get_prophage_alignment_summary(
 
 
 def prophage_report(
-    fsize: int, filehandle: Any, prophage_cordinates: dict, outdir: Path
+    fsize: int,
+    filehandle: Any,
+    prophage_cordinates: dict,
+    outdir: Path,
+    refined_boundaries: dict | None = None,
 ):
     """
     Searches for direct repeats at prophage boundaries and generates
@@ -692,10 +696,14 @@ def prophage_report(
 
     Args:
     ----
-        args: Arguments for the search process.
+        fsize: Fragment / window size in bp.
         filehandle: File handle for reading DNA sequences.
         prophage_cordinates: Coordinates of prophages for comparison.
         outdir: Output directory for saving prophage summaries.
+        refined_boundaries: Optional mapping from contig id to a list of
+            ``(raw_start, raw_end, refined_start, refined_end)`` tuples. When
+            provided, the att-region search and reported region coordinates use
+            the refined boundaries.
     Returns
     -------
         None
@@ -725,30 +733,36 @@ def prophage_report(
         logger.debug(f"generating prophage report for {header}")
         if seq_len > 500_000:
             cords, scores = prophage_cordinates.get(f"{header}", [[], []])
+            contig_refined = (
+                refined_boundaries.get(header) if refined_boundaries else None
+            )
             if len(cords) > 0 and len(scores) > 0:
-                for (start, end), j in zip(cords, scores):
-                    start, end = start * fsize, end * fsize
-                    scan_length = min(max(int(seq_len * 0.04), 400), 4000)
-                    off_set = (
-                        2000 if (end - start) // 2 >= 14000 else (end - start) // 4
-                    )
+                for idx, ((start, end), j) in enumerate(zip(cords, scores)):
+                    raw_start, raw_end = int(start * fsize), int(end * fsize)
+                    if contig_refined is not None and idx < len(contig_refined):
+                        _, _, refined_start, refined_end = contig_refined[idx]
+                    else:
+                        refined_start, refined_end = raw_start, raw_end
 
-                    # logger.info(
-                    #     f"searching for direct repeats {start - scan_length}:{start + off_set} | {end - off_set}:{end + scan_length}"
-                    # )
+                    region_len = refined_end - refined_start
+                    scan_length = min(max(int(seq_len * 0.04), 400), 4000)
+                    off_set = 2000 if region_len // 2 >= 14000 else region_len // 4
+
+                    search_start = max(refined_start - scan_length, 0)
+                    search_end = min(refined_end + scan_length, seq_len)
 
                     result_dtr = parasail.sw_trace_scan_16(
-                        str(record[1][start - scan_length : start + off_set]),
-                        str(record[1][end - off_set : end + scan_length]),
+                        str(record[1][search_start : refined_start + off_set]),
+                        str(record[1][refined_end - off_set : search_end]),
                         100,
                         5,
                         user_matrix,
                     )
 
                     result_itr = parasail.sw_trace_scan_16(
-                        str(record[1][start - scan_length : start + off_set]),
+                        str(record[1][search_start : refined_start + off_set]),
                         reverse_complement(
-                            str(record[1][end - off_set : end + scan_length])
+                            str(record[1][refined_end - off_set : search_end])
                         ),
                         100,
                         5,
@@ -760,39 +774,51 @@ def prophage_report(
                         or len(result_dtr.traceback.query) > 12
                     ):
                         if result_itr.score > result_dtr.score:
-                            append_summary(
-                                result_itr,
-                                seq_len,
-                                record,
-                                start - scan_length,
-                                end + scan_length,
-                                j,
-                                "ITR",
-                            )
-                        else:
-                            append_summary(
-                                result_dtr,
-                                seq_len,
-                                record,
-                                start - scan_length,
-                                end + scan_length,
-                                j,
-                                "DTR",
-                            )
-                    else:
-                        summaries.append(
-                            get_prophage_alignment_summary(
-                                result_object=None,
+                            summary = get_prophage_alignment_summary(
+                                result_object=result_itr,
                                 seq_len=seq_len,
                                 record=record,
                                 cordinates={
-                                    "start": [start, None],
-                                    "end": [end, None],
+                                    "start": [search_start, search_start + off_set],
+                                    "end": [
+                                        refined_end - off_set,
+                                        search_end,
+                                    ],
                                 },
                                 phage_score=j,
-                                type_=None,
+                                type_="ITR",
                             )
+                        else:
+                            summary = get_prophage_alignment_summary(
+                                result_object=result_dtr,
+                                seq_len=seq_len,
+                                record=record,
+                                cordinates={
+                                    "start": [search_start, search_start + off_set],
+                                    "end": [
+                                        refined_end - off_set,
+                                        search_end,
+                                    ],
+                                },
+                                phage_score=j,
+                                type_="DTR",
+                            )
+                    else:
+                        summary = get_prophage_alignment_summary(
+                            result_object=None,
+                            seq_len=seq_len,
+                            record=record,
+                            cordinates={
+                                "start": [refined_start, None],
+                                "end": [refined_end, None],
+                            },
+                            phage_score=j,
+                            type_=None,
                         )
+
+                    summary["raw_start"] = raw_start
+                    summary["raw_end"] = raw_end
+                    summaries.append(summary)
 
     if summaries:
         df = pd.DataFrame(summaries)
