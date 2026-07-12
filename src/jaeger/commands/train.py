@@ -723,7 +723,9 @@ def train_fragment_core(**kwargs):
         # ============ check convergence & train classifier ===========
         checkpoint = builder._checkpoints
         _apply_ignore_convergence(
-            checkpoint, kwargs.get("ignore_convergence", False), ["classifier"]
+            checkpoint,
+            kwargs.get("ignore_convergence", False),
+            ["classifier", "projection"],
         )
         cls_converged = checkpoint and checkpoint.get("classifier", {}).get(
             "is_converged", False
@@ -762,43 +764,82 @@ def train_fragment_core(**kwargs):
 
                 # self-supervised pre-training
                 if kwargs.get("self_supervised_pretraining", False):
-                    projection_data = _build_branch_datasets(
-                        builder=builder,
-                        data_spec=_train_data,
-                        branch="projection",
-                        num_classes=builder.classifier_out_dim,
-                        string_processor_config=string_processor_config,
-                        batching_cfg=batching_cfg,
-                        data_format=data_format,
-                        multi_gpu=multi_gpu,
-                        num_replicas=strategy.num_replicas_in_sync,
-                        buffer_size=_buffer_size,
-                    )
-                    builder.compile_model(models, train_branch="pretrain")
-                    # models.get("jaeger_projection").summary()
-                    self_supervised_train_args = {
-                        "validation_data": projection_data.get("validation").take(
-                            builder.train_cfg.get(
-                                "projection_validation_steps",
-                                builder.train_cfg.get("classifier_validation_steps"),
+                    proj_converged = checkpoint and checkpoint.get(
+                        "projection", {}
+                    ).get("is_converged", False)
+                    if proj_converged:
+                        logger.info(
+                            "Projection pre-training already converged; skipping. "
+                            "Use --ignore_convergence to retrain."
+                        )
+                    else:
+                        projection_data = _build_branch_datasets(
+                            builder=builder,
+                            data_spec=_train_data,
+                            branch="projection",
+                            num_classes=builder.classifier_out_dim,
+                            string_processor_config=string_processor_config,
+                            batching_cfg=batching_cfg,
+                            data_format=data_format,
+                            multi_gpu=multi_gpu,
+                            num_replicas=strategy.num_replicas_in_sync,
+                            buffer_size=_buffer_size,
+                        )
+                        builder.compile_model(models, train_branch="pretrain")
+                        # models.get("jaeger_projection").summary()
+                        self_supervised_train_args = {
+                            "validation_data": projection_data.get("validation").take(
+                                builder.train_cfg.get(
+                                    "projection_validation_steps",
+                                    builder.train_cfg.get(
+                                        "classifier_validation_steps"
+                                    ),
+                                )
+                            ),
+                            "epochs": builder.train_cfg.get("projection_epochs"),
+                            "callbacks": builder.get_callbacks(branch="projection"),
+                        }
+                        if checkpoint:
+                            self_supervised_train_args["initial_epoch"] = (
+                                checkpoint.get("projection", {}).get("epoch", 0)
                             )
-                        ),
-                        "epochs": builder.train_cfg.get("projection_epochs"),
-                        "callbacks": builder.get_callbacks(branch="projection"),
-                    }
-                    if checkpoint:
-                        self_supervised_train_args["initial_epoch"] = checkpoint.get(
-                            "projection", {}
-                        ).get("epoch", 0)
-                    models.get("jaeger_projection").fit(
-                        projection_data.get("train").take(
-                            builder.train_cfg.get(
-                                "projection_train_steps",
-                                builder.train_cfg.get("classifier_train_steps"),
+                        projection_history = models.get("jaeger_projection").fit(
+                            projection_data.get("train").take(
+                                builder.train_cfg.get(
+                                    "projection_train_steps",
+                                    builder.train_cfg.get("classifier_train_steps"),
+                                )
+                            ),
+                            **self_supervised_train_args,
+                        )
+
+                        # fit() returning normally means projection pre-training
+                        # finished as configured — either early-stopped or ran
+                        # all epochs. Mark convergence in both cases so a
+                        # re-invocation skips this stage.
+                        projection_dir = builder.train_cfg.get("projection_dir")
+                        if projection_dir is None:
+                            _cls_dir = builder.train_cfg.get("classifier_dir")
+                            if _cls_dir is not None:
+                                projection_dir = str(
+                                    Path(_cls_dir).parent / "projection"
+                                )
+                        proj_last_epoch = (
+                            int(projection_history.epoch[-1])
+                            if projection_history.epoch
+                            else int(self_supervised_train_args.get("initial_epoch", 0))
+                        )
+                        if projection_dir is not None:
+                            _write_convergence_marker(
+                                projection_dir,
+                                branch="projection",
+                                epoch=proj_last_epoch,
                             )
-                        ),
-                        **self_supervised_train_args,
-                    )
+                        else:
+                            logger.warning(
+                                "projection_dir is not configured; "
+                                "skipping convergence marker"
+                            )
 
                 # Freeze the representation learner for head-only fine-tuning, then
                 # recompile the classifier so the trainability change takes effect.
@@ -821,21 +862,26 @@ def train_fragment_core(**kwargs):
                     class_weight=builder.train_cfg.get("classifier_class_weights"),
                     **train_args,
                 )
-                if (
-                    classifier_history.epoch
-                    and classifier_history.epoch[-1] < train_args["epochs"] - 1
-                ):
-                    classifier_dir = builder.train_cfg.get("classifier_dir")
-                    if classifier_dir is not None:
-                        _write_convergence_marker(
-                            classifier_dir,
-                            branch="classifier",
-                            epoch=int(classifier_history.epoch[-1]),
-                        )
-                    else:
-                        logger.warning(
-                            "classifier_dir is not configured; skipping convergence marker"
-                        )
+                # fit() returning normally means classifier training finished as
+                # configured — either early-stopped or ran all epochs. Mark
+                # convergence in both cases so a re-invocation skips this stage.
+                # (An interrupted run never reaches this line.)
+                classifier_dir = builder.train_cfg.get("classifier_dir")
+                last_epoch = (
+                    int(classifier_history.epoch[-1])
+                    if classifier_history.epoch
+                    else int(train_args.get("initial_epoch", 0))
+                )
+                if classifier_dir is not None:
+                    _write_convergence_marker(
+                        classifier_dir,
+                        branch="classifier",
+                        epoch=last_epoch,
+                    )
+                else:
+                    logger.warning(
+                        "classifier_dir is not configured; skipping convergence marker"
+                    )
 
                 # unload classifier data before loading reliability data
                 logger.info("unloading classifier training data")
@@ -1073,20 +1119,25 @@ def train_fragment_core(**kwargs):
                         **train_args,
                     )
                     reliability_dir = builder.train_cfg.get("reliability_dir")
-                    if (
-                        reliability_history.epoch
-                        and reliability_history.epoch[-1] < train_args["epochs"] - 1
-                    ):
-                        if reliability_dir is not None:
-                            _write_convergence_marker(
-                                reliability_dir,
-                                branch="reliability",
-                                epoch=int(reliability_history.epoch[-1]),
-                            )
-                        else:
-                            logger.warning(
-                                "reliability_dir is not configured; skipping convergence marker"
-                            )
+                    # fit() returning normally means reliability training
+                    # finished as configured — either early-stopped or ran all
+                    # epochs. Mark convergence in both cases so a re-invocation
+                    # skips this stage. (An interrupted run never reaches here.)
+                    rel_last_epoch = (
+                        int(reliability_history.epoch[-1])
+                        if reliability_history.epoch
+                        else int(train_args.get("initial_epoch", 0))
+                    )
+                    if reliability_dir is not None:
+                        _write_convergence_marker(
+                            reliability_dir,
+                            branch="reliability",
+                            epoch=rel_last_epoch,
+                        )
+                    else:
+                        logger.warning(
+                            "reliability_dir is not configured; skipping convergence marker"
+                        )
 
                     # ---- reliability threshold tuning ----
                     if builder.train_cfg.get("tune_reliability_threshold", True):
