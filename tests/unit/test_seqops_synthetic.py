@@ -148,3 +148,56 @@ def test_apply_mix_pads_when_sources_are_shorter_than_segments():
 def test_apply_mix_negative_output_length_raises():
     with pytest.raises(ValueError):
         synthetic.apply_mix(["AAAA"], output_length=-1)
+
+
+def test_apply_n_stretch_fraction_within_range():
+    seq = "ATCG" * 500
+    for _ in range(200):
+        corrupted = synthetic.apply_n_stretch(seq, n_fraction_range=(0.3, 1.0))
+        assert len(corrupted) == len(seq)
+        fraction = corrupted.count("N") / len(seq)
+        assert 0.29 <= fraction <= 1.0
+
+
+def test_apply_n_stretch_preserves_non_n_bases_in_place():
+    seq = "ATCG" * 500
+    corrupted = synthetic.apply_n_stretch(seq)
+    # Positions not replaced by N must still hold the original base.
+    for c, o in zip(corrupted, seq):
+        if c != "N":
+            assert c == o
+
+
+def test_apply_n_stretch_stretches_are_contiguous_and_bounded():
+    import re
+
+    seq = "ATCG" * 500
+    corrupted = synthetic.apply_n_stretch(seq, max_stretches=3, point_n_share=0.0)
+    runs = re.findall(r"N+", corrupted)
+    assert 1 <= len(runs) <= 3
+
+
+def test_apply_n_stretch_scatters_point_ns():
+    import re
+
+    seq = "ATCG" * 500
+    synthetic.random.seed(123)
+    corrupted = synthetic.apply_n_stretch(
+        seq, n_fraction_range=(0.2, 0.2), point_n_share=1.0
+    )
+    # The whole budget is scattered: exact count, no long placed stretches.
+    assert corrupted.count("N") == 400
+    runs = re.findall(r"N+", corrupted)
+    assert runs and max(len(r) for r in runs) <= 6
+
+
+def test_apply_n_stretch_full_range_single_stretch():
+    seq = "ATCG" * 500
+    corrupted = synthetic.apply_n_stretch(
+        seq, n_fraction_range=(1.0, 1.0), max_stretches=1
+    )
+    assert corrupted == "N" * len(seq)
+
+
+def test_apply_n_stretch_empty_sequence():
+    assert synthetic.apply_n_stretch("") == ""

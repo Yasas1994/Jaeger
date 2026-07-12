@@ -153,6 +153,67 @@ def apply_tandem_repeat_window(
     return seq[:start] + fill + seq[end:]
 
 
+def apply_n_stretch(
+    seq: str,
+    n_fraction_range: tuple[float, float] = (0.3, 1.0),
+    max_stretches: int = 3,
+    point_n_share: float = 0.2,
+) -> str:
+    """Replace a random fraction of *seq* with ambiguous bases (N).
+
+    The total N fraction is sampled uniformly from *n_fraction_range*. A fixed
+    share of it (*point_n_share*) is scattered as single Ns at random
+    positions; the rest is distributed over 1 to *max_stretches* contiguous,
+    non-overlapping stretches at random positions. Sequence length is preserved
+    and the realised N fraction matches the sampled target (up to integer
+    rounding).
+    """
+    if not seq:
+        return seq
+    seq_len = len(seq)
+    lo, hi = n_fraction_range
+    fraction = random.uniform(lo, hi)
+    total_n = min(seq_len, max(1, int(round(seq_len * fraction))))
+
+    # Split the N budget between scattered single-base Ns and stretches.
+    n_points = min(total_n, int(round(total_n * point_n_share)))
+    stretch_n = total_n - n_points
+
+    chars = list(seq)
+    if stretch_n > 0:
+        n_stretches = random.randint(1, max(1, min(max_stretches, stretch_n)))
+        # Partition stretch_n into n_stretches positive stretch lengths.
+        remaining = stretch_n
+        lengths: list[int] = []
+        for i in range(n_stretches - 1):
+            take = random.randint(1, remaining - (n_stretches - 1 - i))
+            lengths.append(take)
+            remaining -= take
+        lengths.append(remaining)
+
+        # Random composition of the remaining bases into (n_stretches + 1) gaps
+        # (zeros allowed) so stretches never overlap.
+        n_keep = seq_len - stretch_n
+        cuts = sorted(random.choices(range(n_keep + 1), k=n_stretches))
+        gaps = (
+            [cuts[0]]
+            + [cuts[i + 1] - cuts[i] for i in range(n_stretches - 1)]
+            + [n_keep - cuts[-1]]
+        )
+        pos = 0
+        for i in range(n_stretches):
+            pos += gaps[i]
+            chars[pos : pos + lengths[i]] = "N" * lengths[i]
+            pos += lengths[i]
+
+    if n_points > 0:
+        free = [i for i, c in enumerate(chars) if c != "N"]
+        for i in random.sample(free, k=min(n_points, len(free))):
+            chars[i] = "N"
+
+    return "".join(chars)
+
+
 def apply_mix(
     sequences: list[str],
     output_length: int | None = None,

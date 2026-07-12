@@ -26,6 +26,7 @@ from jaeger.seqops.synthetic import (
     apply_dinuc_shuffle,
     apply_kmer_shuffle,
     apply_mix,
+    apply_n_stretch,
     apply_shuffle,
     apply_subseq_repeat_window,
     apply_tandem_repeat_window,
@@ -95,6 +96,26 @@ def _normalize_perturbation_cfg(
                     "motif_length_range": tuple(motif_range),
                     "window_fraction": tandem_dict.get("window_fraction", 0.25),
                     "num_repeats": tandem_dict.get("num_repeats"),
+                },
+            }
+        )
+
+    # ---- N stretch (ambiguous-base corruption) ----
+    # Opt-in: unlike the other perturbations this one is disabled unless the
+    # config explicitly enables it, so existing configs keep their behaviour.
+    n_stretch_value = perturbations_cfg.get("n_stretch", False)
+    if _is_enabled(n_stretch_value):
+        n_stretch_dict = n_stretch_value if isinstance(n_stretch_value, dict) else {}
+        specs.append(
+            {
+                "name": "n_stretch",
+                "fn": apply_n_stretch,
+                "kwargs": {
+                    "n_fraction_range": tuple(
+                        n_stretch_dict.get("n_fraction_range", [0.3, 1.0])
+                    ),
+                    "max_stretches": n_stretch_dict.get("max_stretches", 3),
+                    "point_n_share": n_stretch_dict.get("point_n_share", 0.2),
                 },
             }
         )
