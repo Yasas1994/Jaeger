@@ -194,6 +194,7 @@ def _build_prediction_dataset(
     dynamic_stride: bool,
     dynamic_stride_threshold: float,
     use_padded_batch: bool,
+    dustmask: bool = True,
 ) -> tf.data.Dataset:
     """Build a tf.data dataset for one prediction pass."""
     from jaeger.seqops.encode import process_string_inference
@@ -209,6 +210,7 @@ def _build_prediction_dataset(
             dynamic_stride_threshold=dynamic_stride_threshold,
             min_len=min_len,
             max_len=max_len,
+            dustmask=dustmask,
         ),
         output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
     )
@@ -614,6 +616,7 @@ def run_core(**kwargs):
     logger.info(f"outpath: {OUTPUT_DIR.resolve()}")
     logger.info(f"fragment size: {kwargs.get('fsize')}")
     logger.info(f"stride: {kwargs.get('stride')}")
+    logger.info(f"dustmask: {kwargs.get('dustmask', True)}")
     logger.info(f"batch size: {kwargs.get('batch')}")
     logger.info(f"mode: {mode}")
     logger.info(f"model: {model_id}")
@@ -726,6 +729,7 @@ def run_core(**kwargs):
     fsize = kwargs.get("fsize")
     stride = kwargs.get("stride")
     dynamic_stride = kwargs.get("dynamic_stride", False)
+    dustmask = kwargs.get("dustmask", True)
     dynamic_stride_threshold = kwargs.get("dynamic_stride_threshold", 10.0)
 
     _trained_codons = string_processor_config.get("crop_size_codons")
@@ -760,6 +764,7 @@ def run_core(**kwargs):
             max_len=None,
             dynamic_stride=dynamic_stride,
             dynamic_stride_threshold=dynamic_stride_threshold,
+            dustmask=dustmask,
             use_padded_batch=False,
         )
         short_dataset = _build_prediction_dataset(
@@ -773,6 +778,7 @@ def run_core(**kwargs):
             max_len=fsize - 1,
             dynamic_stride=dynamic_stride,
             dynamic_stride_threshold=dynamic_stride_threshold,
+            dustmask=dustmask,
             use_padded_batch=True,
         )
         with strategy.scope():
@@ -800,6 +806,7 @@ def run_core(**kwargs):
             max_len=None,
             dynamic_stride=dynamic_stride,
             dynamic_stride_threshold=dynamic_stride_threshold,
+            dustmask=dustmask,
             use_padded_batch=False,
         )
         with strategy.scope():

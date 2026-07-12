@@ -154,6 +154,12 @@ def health(**kwargs):
     help="Multiplier of --fsize below which dynamic stride is applied (default: 10.0).",
 )
 @click.option(
+    "--dustmask/--no-dustmask",
+    default=True,
+    help="Mask low-complexity regions with pydustmasker before fragmenting. "
+    "Use --no-dustmask to disable.",
+)
+@click.option(
     "--min-len",
     type=int,
     default=None,

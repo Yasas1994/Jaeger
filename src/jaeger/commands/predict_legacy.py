@@ -181,6 +181,7 @@ def run_core(**kwargs):
                 dynamic_stride=kwargs.get("dynamic_stride", False),
                 dynamic_stride_threshold=kwargs.get("dynamic_stride_threshold", 10.0),
                 min_len=min_len,
+                dustmask=kwargs.get("dustmask", True),
             ),
             output_signature=(tf.TensorSpec(shape=(), dtype=tf.string)),
         )
