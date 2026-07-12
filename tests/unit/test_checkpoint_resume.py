@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 
+import numpy as np
 import pytest
 import tensorflow as tf
+import yaml
 
 from jaeger.nnlib.builder import DynamicModelBuilder, TrainingStateCallback
 
@@ -158,3 +160,183 @@ def test_metric_model_arcface_round_trip_strict(tmp_path):
         tf.debugging.assert_near(a, b)
     centroids = fresh._get_arcface_loss().trainable_variables[0]
     tf.debugging.assert_near(centroids, tf.ones((3, 4)) * 0.7)
+
+
+RESUME_CONFIG = """
+model:
+  name: test_resume
+  experiment: test
+  seed: 42
+  classifier_out_dim: 6
+  base_dir: PLACEHOLDER_BASE
+  activation: gelu
+  embedding:
+    use_embedding_layer: true
+    input_type: translated
+    strands: 2
+    frames: 6
+    length: null
+    input_shape: [6, null]
+    embedding_size: 16
+  string_processor:
+    data_format: numpy
+    seq_onehot: false
+    codon: CODON
+    codon_id: CODON_ID
+    crop_sizes: [64]
+    validation_crop_sizes: [64]
+    buffer_size: 100
+    shuffle: false
+    mutate: false
+    classifier_labels: [0, 1, 2, 3, 4, 5]
+    classifier_labels_map: [0, 1, 2, 3, 4, 5]
+  representation_learner:
+    hidden_layers:
+      - name: masked_conv1d
+        config:
+          filters: 8
+          kernel_size: 3
+          strides: 1
+          use_bias: true
+          activation: null
+      - name: masked_layernorm
+      - name: activation
+        config:
+          activation: gelu
+    pooling: max
+  classifier:
+    input_shape: 8
+    hidden_layers:
+      - name: dense
+        config:
+          units: 6
+          activation: null
+          dtype: float32
+          use_bias: true
+  projection:
+    margin: 0.5
+    scale: 16
+    input_shape: 8
+    hidden_layers:
+      - name: dense
+        config: { units: 8, activation: gelu, use_bias: true }
+      - name: dense
+        config: { units: 8, activation: gelu, use_bias: true }
+
+training:
+  data_dir: /tmp/jaeger_test_data
+  classifier_dir: PLACEHOLDER_CLASSIFIER
+  projection_dir: PLACEHOLDER_PROJECTION
+  classifier_epochs: 1
+  classifier_train_steps: 2
+  classifier_validation_steps: 1
+  projection_epochs: 0
+  reliability_epochs: 0
+  batch_size: 64
+  optimizer: adamw
+  optimizer_params:
+    learning_rate: 0.0003
+    clipnorm: 1
+  loss_classifier: categorical_crossentropy
+  loss_params_classifier:
+    from_logits: true
+  classifier_class_weights:
+    0: 1.0
+    1: 1.0
+    2: 1.0
+    3: 1.0
+    4: 1.0
+    5: 1.0
+  metrics_classifier:
+    - name: categorical_accuracy
+      params: null
+  callbacks:
+    classifier: []
+    projection: []
+    reliability: []
+  model_saving:
+    path: /tmp/jaeger_test_resume/model
+    save_weights: false
+    save_exec_graph: false
+  fragment_classifier_data:
+    train: []
+    validation: []
+"""
+
+
+def _resume_cfg(tmp_path, from_last_checkpoint: bool) -> dict:
+    base = tmp_path / "resume_test"
+    text = (
+        RESUME_CONFIG.replace("PLACEHOLDER_BASE", str(base))
+        .replace("PLACEHOLDER_CLASSIFIER", str(base / "checkpoints" / "classifier"))
+        .replace("PLACEHOLDER_PROJECTION", str(base / "checkpoints" / "projection"))
+    )
+    cfg = yaml.safe_load(text)
+    cfg["from_last_checkpoint"] = from_last_checkpoint
+    return cfg
+
+
+def _save_stage_checkpoints(tmp_path):
+    """Build once; save classifier and projection checkpoints with distinct
+    sentinel weights in the shared representation layers."""
+    cfg = _resume_cfg(tmp_path, from_last_checkpoint=False)
+    builder = DynamicModelBuilder(cfg)
+    models = builder.build_fragment_classifier()
+
+    base = tmp_path / "resume_test"
+    classifier_dir = base / "checkpoints" / "classifier"
+    projection_dir = base / "checkpoints" / "projection"
+    classifier_dir.mkdir(parents=True, exist_ok=True)
+    projection_dir.mkdir(parents=True, exist_ok=True)
+
+    rep_w = models["rep_model"].weights[0]
+
+    classifier_sentinel = 0.123
+    rep_w.assign(tf.ones_like(rep_w) * classifier_sentinel)
+    models["jaeger_classifier"].save_weights(
+        str(classifier_dir / "epoch:02-loss:0.50.weights.h5")
+    )
+
+    projection_sentinel = 0.987
+    rep_w.assign(tf.ones_like(rep_w) * projection_sentinel)
+    models["jaeger_projection"].save_weights(
+        str(projection_dir / "epoch:01-loss:0.90.weights.h5")
+    )
+    return classifier_sentinel, projection_sentinel
+
+
+def test_resume_prefers_classifier_over_projection_with_pretraining_flag(tmp_path):
+    # Regression: with self_supervised_pretraining=True the classifier
+    # checkpoint was skipped and the older projection checkpoint loaded,
+    # so a resumed classifier run started from stale rep weights.
+    classifier_sentinel, _ = _save_stage_checkpoints(tmp_path)
+
+    cfg = _resume_cfg(tmp_path, from_last_checkpoint=True)
+    builder = DynamicModelBuilder(cfg)
+    models = builder.build_fragment_classifier(self_supervised_pretraining=True)
+
+    np.testing.assert_allclose(
+        models["rep_model"].weights[0].numpy(),
+        classifier_sentinel,
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+
+def test_resume_loads_projection_when_only_projection_checkpoint_exists(tmp_path):
+    _, projection_sentinel = _save_stage_checkpoints(tmp_path)
+    # Remove the classifier checkpoint: resume must fall back to projection.
+    classifier_dir = tmp_path / "resume_test" / "checkpoints" / "classifier"
+    for f in classifier_dir.iterdir():
+        f.unlink()
+
+    cfg = _resume_cfg(tmp_path, from_last_checkpoint=True)
+    builder = DynamicModelBuilder(cfg)
+    models = builder.build_fragment_classifier(self_supervised_pretraining=True)
+
+    np.testing.assert_allclose(
+        models["rep_model"].weights[0].numpy(),
+        projection_sentinel,
+        rtol=1e-5,
+        atol=1e-6,
+    )

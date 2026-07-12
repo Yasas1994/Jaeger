@@ -423,15 +423,31 @@ class DynamicModelBuilder:
         """Build the full fragment-level model graph.
 
         Args:
-            self_supervised_pretraining: If True, skip loading classifier checkpoint
-                weights so the representation learner starts from the projection
-                checkpoint instead of being overwritten by the classifier checkpoint.
+            self_supervised_pretraining: Kept for API compatibility; checkpoint
+                loading no longer depends on it. On resume, the checkpoint of the
+                most advanced training stage is loaded with the priority
+                reliability > classifier > projection.
 
         Returns a dict with keys such as ``rep_model``, ``classification_head``,
         ``reliability_head``, ``jaeger_classifier``, ``jaeger_reliability``,
         ``jaeger_model``, etc.
         """
         models: dict[str, tf.keras.Model] = {}
+
+        # Resolve which stage to resume from: the most advanced stage with an
+        # existing checkpoint wins (reliability > classifier > projection). This
+        # guarantees that an interrupted classifier run resumes from the
+        # classifier checkpoint instead of the older projection checkpoint.
+        resume_stage = None
+        for stage in ("reliability", "classifier", "projection"):
+            if self._checkpoints.get(stage, {}).get("path", False):
+                resume_stage = stage
+                break
+        if resume_stage is not None:
+            logger.info(
+                f"Resume: using {resume_stage} checkpoint "
+                f"(priority: reliability > classifier > projection)"
+            )
 
         # === 1. EMBEDDING ===
         if "embedding" in self.model_cfg:
@@ -510,7 +526,7 @@ class DynamicModelBuilder:
             # loss model out of Keras' weight-file walker and persists it via its
             # own ``*.arcface.weights.h5`` sidecar (see MetricModel.set_arcface_loss).
             models["jaeger_projection"].set_arcface_loss(models["arcface_loss_model"])
-            if self._checkpoints.get("projection", {}).get("path", False):
+            if resume_stage == "projection":
                 models["jaeger_projection"].load_weights(
                     self._checkpoints.get("projection").get("path"),
                     skip_mismatch=False,
@@ -573,9 +589,7 @@ class DynamicModelBuilder:
             models["jaeger_classifier"] = tf.keras.Model(
                 inputs=models["rep_model"].input, outputs=x, name="Jaeger_classifier"
             )
-            if not self_supervised_pretraining and self._checkpoints.get(
-                "classifier", {}
-            ).get("path", False):
+            if resume_stage == "classifier":
                 models["jaeger_classifier"].load_weights(
                     self._checkpoints.get("classifier").get("path"),
                     skip_mismatch=False,
@@ -691,7 +705,7 @@ class DynamicModelBuilder:
                     outputs=x,
                     name="Jaeger_reliability",
                 )
-                if self._checkpoints.get("reliability", {}).get("path", False):
+                if resume_stage == "reliability":
                     try:
                         models["jaeger_reliability"].load_weights(
                             self._checkpoints.get("reliability").get("path"),
@@ -715,6 +729,26 @@ class DynamicModelBuilder:
                             "loss": None,
                             "is_converged": False,
                         }
+                        # Fall back to the next most advanced stage so the
+                        # shared representation layers still resume from the
+                        # correct checkpoint.
+                        for fallback_stage in ("classifier", "projection"):
+                            if not self._checkpoints.get(fallback_stage, {}).get(
+                                "path", False
+                            ):
+                                continue
+                            fallback_model = models.get(f"jaeger_{fallback_stage}")
+                            if fallback_model is None:
+                                continue
+                            fallback_model.load_weights(
+                                self._checkpoints.get(fallback_stage).get("path"),
+                                skip_mismatch=False,
+                            )
+                            logger.info(
+                                f"Resume: fell back to {fallback_stage} checkpoint "
+                                f"{self._checkpoints.get(fallback_stage).get('path')}"
+                            )
+                            break
 
         # === 5. COMBINED MODEL ===
         rep_out = models["rep_model"].output
