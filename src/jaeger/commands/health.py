@@ -4,6 +4,7 @@ os.environ["WRAPT_DISABLE_EXTENSIONS"] = "true"
 import json
 import sys
 import platform
+import tempfile
 from pathlib import Path
 from importlib.resources import files
 from importlib.metadata import version, PackageNotFoundError
@@ -241,18 +242,17 @@ def health_core(**kwargs) -> None:
         model = JaegerModel(inputs=inputs, outputs=outputs)
         model.load_weights(filepath=weights_path)
         model.summary()
-        logger.info(files("jaeger.data.models.test").joinpath("jaeger_fragment_graph"))
-        tf.saved_model.save(
-            model,
-            files("jaeger.data.models.test").joinpath("jaeger_fragment_graph"),
-        )
+        # Save into a temp dir: the package directory is read-only inside
+        # containers, and health checks must not mutate bundled package data.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph_dir = Path(tmpdir) / "jaeger_fragment_graph"
+            logger.info(graph_dir)
+            tf.saved_model.save(model, graph_dir)
 
-        logger.info("loading the model")
-        model = InferModel(
-            files("jaeger.data.models.test").joinpath("jaeger_fragment_graph")
-        )
-        logger.info("starting model inference")
-        _ = model.predict(idataset)
+            logger.info("loading the model")
+            model = InferModel(graph_dir)
+            logger.info("starting model inference")
+            _ = model.predict(idataset)
         logger.info("5 test model passed!")
         passed += 1
     except Exception as e:
