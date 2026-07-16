@@ -1,5 +1,6 @@
 import sys
 import time
+import json
 import traceback
 from importlib.metadata import version
 from importlib.resources import files
@@ -284,11 +285,26 @@ def _write_prediction_outputs(
     if kwargs.get("getalllabels"):
         pass
 
+    # Experimental CRF (Viterbi) window decoding
+    crf_switch_cost = None
+    if kwargs.get("crf", False):
+        logger.warning(
+            "CRF window decoding is experimental; results may change between releases"
+        )
+        crf_switch_cost = kwargs.get("crf_switch_cost", 2.0)
+        matrix_path = kwargs.get("crf_transition_matrix")
+        if matrix_path:
+            with open(matrix_path) as fh:
+                kwargs["crf_transition_matrix"] = json.load(fh)
+
     data, data_full = pred_to_dict(
         y_pred,
         class_map=model.class_map,
         fsize=kwargs.get("fsize"),
         term_repeats=term_repeats,
+        crf_switch_cost=crf_switch_cost,
+        crf_prior=kwargs.get("crf_prior", "biological"),
+        crf_transition_matrix=kwargs.get("crf_transition_matrix"),
     )
 
     refined_contig = None

@@ -274,6 +274,181 @@ def smoothen_scores(x, w=5):
     )
 
 
+# --- Experimental linear-chain CRF (Viterbi) window decoding -----------------
+#
+# ``smoothen_scores`` above is unused; CRF decoding below supersedes it.
+#
+# A contig's window labels are decoded jointly:
+#     y_hat = argmax_y  sum_t s_t(y_t) - lambda * sum_t P(y_{t-1}, y_t)
+# where s_t is the per-window log-softmax of the network logits and P is a
+# transition-prior matrix (0 on the diagonal). No training is involved; the
+# prior is fixed a priori from biological class co-occurrence plausibility.
+
+#: Biological co-occurrence prior tiers for the transition-cost matrix, keyed
+#: by lower-cased class name. Pairs not listed stay at the neutral cost 1.0.
+#: 0.5 = plausible on one contig (prophages, plasmids, eukaryotic viruses),
+#: 3.0 = implausible (cellular domain switches, phages in eukaryotes).
+_CRF_PRIOR_TIERS: tuple = (
+    (
+        0.5,
+        (
+            ("bacteria", "phage"),
+            ("bacteria", "plasmid"),
+            ("archaea", "phage"),
+            ("archaea", "plasmid"),
+            ("phage", "plasmid"),
+            ("eukarya", "virus"),
+        ),
+    ),
+    (
+        3.0,
+        (
+            ("bacteria", "eukarya"),
+            ("archaea", "eukarya"),
+            ("bacteria", "archaea"),
+            ("eukarya", "phage"),
+            ("eukarya", "plasmid"),
+        ),
+    ),
+)
+
+
+def default_transition_prior(class_names: list[str]) -> np.ndarray:
+    """
+    Builds the default biological transition-prior matrix P for CRF decoding.
+
+    Costs are symmetric with a zero diagonal; pairs not listed in
+    ``_CRF_PRIOR_TIERS`` get the neutral cost 1.0. Class names not present in
+    ``class_names`` are skipped, so models with fewer classes (e.g. 4-class or
+    binary heads) degrade gracefully to a uniform Potts prior.
+
+    Args:
+    ----
+        class_names (list[str]): Class names in index order.
+
+    Returns:
+    -------
+        np.ndarray: Prior matrix P of shape (len(class_names), len(class_names)).
+    """
+
+    names = [str(n).lower() for n in class_names]
+    n = len(names)
+    prior = np.ones((n, n), dtype=np.float64)
+    np.fill_diagonal(prior, 0.0)
+    for value, pairs in _CRF_PRIOR_TIERS:
+        for a, b in pairs:
+            if a in names and b in names:
+                i, j = names.index(a), names.index(b)
+                prior[i, j] = value
+                prior[j, i] = value
+    return prior
+
+
+def build_transition_costs(
+    class_names: list[str],
+    switch_cost: float,
+    prior: str = "biological",
+    user_matrix: dict | None = None,
+) -> np.ndarray:
+    """
+    Assembles the CxC transition-cost matrix ``lambda * P`` for CRF decoding.
+
+    Args:
+    ----
+        class_names (list[str]): Class names in index order.
+        switch_cost (float): Global transition cost lambda (log-probability
+                             units).
+        prior (str): "biological" (default tier table) or "uniform" (same cost
+                     for every class switch, i.e. plain Potts smoothing).
+        user_matrix (dict | None): Optional custom costs keyed by class name,
+                     e.g. ``{"bacteria": {"phage": 0.5}}``. Entries are applied
+                     symmetrically; unspecified pairs stay neutral. Overrides
+                     ``prior``.
+
+    Returns:
+    -------
+        np.ndarray: Cost matrix of shape (len(class_names), len(class_names)).
+    """
+
+    names = [str(n).lower() for n in class_names]
+    n = len(names)
+    if user_matrix:
+        p = np.ones((n, n), dtype=np.float64)
+        np.fill_diagonal(p, 0.0)
+        for a, row in user_matrix.items():
+            a = str(a).lower()
+            if a not in names or not isinstance(row, dict):
+                continue
+            for b, value in row.items():
+                b = str(b).lower()
+                if b not in names:
+                    continue
+                i, j = names.index(a), names.index(b)
+                p[i, j] = float(value)
+                p[j, i] = float(value)
+        np.fill_diagonal(p, 0.0)
+    elif prior == "uniform":
+        p = np.ones((n, n), dtype=np.float64)
+        np.fill_diagonal(p, 0.0)
+    else:
+        p = default_transition_prior(names)
+    return float(switch_cost) * p
+
+
+def viterbi_decode(
+    logits: np.ndarray,
+    switch_cost: float = 2.0,
+    transition_costs: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    MAP-decodes a contig's window class sequence with a linear-chain CRF.
+
+    Emissions are the per-window log-softmax of the network logits; switching
+    from class a to class b between adjacent windows costs
+    ``transition_costs[a, b]`` (uniform ``switch_cost`` off-diagonal when not
+    given). Solved exactly with the Viterbi algorithm in O(T * C^2).
+
+    Args:
+    ----
+        logits (np.ndarray): Per-window logits, shape (T, C).
+        switch_cost (float): Uniform transition cost lambda, used only when
+                             ``transition_costs`` is None. 0.0 reproduces
+                             independent per-window argmax.
+        transition_costs (np.ndarray | None): Full CxC cost matrix (lambda * P)
+                             as built by :func:`build_transition_costs`.
+
+    Returns:
+    -------
+        np.ndarray: Decoded class indices, int array of shape (T,).
+    """
+
+    z = np.asarray(logits, dtype=np.float64)
+    if z.ndim == 1:
+        z = z.reshape(1, -1)
+    t_len, n_classes = z.shape
+    emissions = z - logsumexp(z, axis=-1)[:, None]
+    if t_len == 1 or n_classes == 1:
+        return np.argmax(emissions, axis=-1)
+    if transition_costs is None:
+        costs = np.full((n_classes, n_classes), float(switch_cost))
+        np.fill_diagonal(costs, 0.0)
+    else:
+        costs = np.asarray(transition_costs, dtype=np.float64)
+    delta = np.empty((t_len, n_classes))
+    backptr = np.empty((t_len, n_classes), dtype=np.int64)
+    delta[0] = emissions[0]
+    for t in range(1, t_len):
+        # scores[prev, cur]: best path score arriving at cur from prev
+        scores = delta[t - 1][:, None] - costs
+        backptr[t] = np.argmax(scores, axis=0)
+        delta[t] = emissions[t] + scores[backptr[t], np.arange(n_classes)]
+    path = np.empty(t_len, dtype=np.int64)
+    path[-1] = int(np.argmax(delta[-1]))
+    for t in range(t_len - 2, -1, -1):
+        path[t] = backptr[t + 1][path[t + 1]]
+    return path
+
+
 def ood_predict(x_features, params):
     """
     Predicts out-of-distribution (OOD) probabilities using logistic regression

@@ -154,6 +154,35 @@ def health(**kwargs):
     help="Multiplier of --fsize below which dynamic stride is applied (default: 10.0).",
 )
 @click.option(
+    "--crf",
+    is_flag=True,
+    help="(experimental) Decode per-window predictions jointly with a linear-chain "
+    "CRF (Viterbi) instead of independent per-window argmax.",
+)
+@click.option(
+    "--crf-switch-cost",
+    type=float,
+    default=2.0,
+    help="(experimental) Global CRF transition cost lambda in log-probability units. "
+    "Higher values smooth more aggressively.",
+)
+@click.option(
+    "--crf-prior",
+    type=click.Choice(["biological", "uniform"]),
+    default="biological",
+    help="(experimental) CRF transition-cost prior. 'biological' encodes class "
+    "co-occurrence priors (cheap bacteria<->phage switches, expensive "
+    "eukarya<->phage); 'uniform' uses the same cost for every class switch.",
+)
+@click.option(
+    "--crf-transition-matrix",
+    type=click.Path(exists=True),
+    default=None,
+    help="(experimental) Path to a JSON file with a custom class-name-keyed "
+    'transition-cost matrix (e.g. {"bacteria": {"phage": 0.5}}). '
+    "Overrides --crf-prior.",
+)
+@click.option(
     "--dustmask/--no-dustmask",
     default=True,
     help="Mask low-complexity regions with pydustmasker before fragmenting. "
@@ -1237,6 +1266,24 @@ def convert(**kwargs):
     show_default=True,
     help="Deprecated and ignored",
 )
+@click.option(
+    "--balance-classes",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help=(
+        "Deal every class round-robin across output shards so each shard "
+        "holds an equal share of every class, and interleave classes within "
+        "each shard (avoids class-blocked shards and same-class runs)."
+    ),
+)
+@click.option(
+    "--shuffle-seed",
+    type=int,
+    default=42,
+    show_default=True,
+    help="Seed for the within-class shuffle used with --balance-classes",
+)
 def optimize_data(**kwargs):
     """Convert CSV training data to an optimized NPZ dataset."""
     from jaeger.commands.utils import optimize_data_core
@@ -1260,6 +1307,8 @@ def optimize_data(**kwargs):
         max_length=kwargs.get("max_length"),
         max_memory_mb=kwargs.get("max_memory_mb"),
         pad=kwargs.get("pad"),
+        balance_classes=kwargs.get("balance_classes"),
+        shuffle_seed=kwargs.get("shuffle_seed"),
     )
 
 

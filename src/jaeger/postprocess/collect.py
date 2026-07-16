@@ -12,6 +12,8 @@ from jaeger.postprocess.helpers import (
     softmax_entropy,
     binary_entropy,
     energy,
+    build_transition_costs,
+    viterbi_decode,
 )
 
 logger = logging.getLogger("jaeger")
@@ -264,6 +266,26 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
     else:
         classifier_type = "softmax"
 
+    # -- Experimental CRF (Viterbi) window decoding setup --
+    # When crf_switch_cost is set, per-window labels come from joint MAP
+    # decoding of each contig's window sequence instead of independent argmax.
+    crf_switch_cost = kwargs.get("crf_switch_cost")
+    crf_costs = None
+    if crf_switch_cost is not None:
+        _cm = kwargs.get("class_map")
+        _class_names = [
+            name
+            for _, name in sorted(
+                zip(_cm.get("index"), _cm.get("class")), key=lambda t: int(t[0])
+            )
+        ]
+        crf_costs = build_transition_costs(
+            _class_names,
+            switch_cost=crf_switch_cost,
+            prior=kwargs.get("crf_prior", "biological"),
+            user_matrix=kwargs.get("crf_transition_matrix"),
+        )
+
     if y_pred["prediction"].shape[0] == split_indices[-1]:
         split_indices = split_indices[:-1]
 
@@ -318,7 +340,12 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
         entropy_pred = [softmax_entropy(p) for p in predictions]
         energy_pred = [energy(p) for p in predictions]
         consensus = np.argmax(pred_sum, axis=1)  # for each window
-        frag_pred = [np.argmax(p, axis=-1) for p in predictions]
+        if crf_switch_cost is not None:
+            frag_pred = [
+                viterbi_decode(p, crf_switch_cost, crf_costs) for p in predictions
+            ]
+        else:
+            frag_pred = [np.argmax(p, axis=-1) for p in predictions]
 
         per_class_counts = [
             update_dict(
@@ -337,8 +364,18 @@ def pred_to_dict(y_pred: dict, **kwargs) -> tuple[dict, dict]:
         consensus[consensus > 0.5] = 1.0
         consensus[consensus <= 0.5] = 0.0
 
-        frag_pred = [sigmoid(p) for p in predictions]
-        frag_pred = [(p > 0.5).astype(int) for p in frag_pred]
+        if crf_switch_cost is not None:
+            # Two-class CRF: stack [0, z] so log-softmax gives
+            # [log sigmoid(-z), log sigmoid(z)] emissions.
+            frag_pred = [
+                viterbi_decode(
+                    np.concatenate([np.zeros_like(p), p], axis=-1), crf_switch_cost
+                )
+                for p in predictions
+            ]
+        else:
+            frag_pred = [sigmoid(p) for p in predictions]
+            frag_pred = [(p > 0.5).astype(int) for p in frag_pred]
 
         per_class_counts = [
             update_dict(
