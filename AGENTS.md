@@ -247,7 +247,7 @@ Key sections in a training config:
 - `model.representation_learner` — stack of `masked_conv1d`, `residual_block`, `transformer`, etc.
 - `model.classifier` — classification head
 - `model.reliability` — optional reliability / OOD head
-- `training.*` — optimizer, batch size, epochs, paths
+- `training.*` — optimizer, batch size, epochs, paths. `training.optimizer_params` is passed verbatim to the Keras optimizer, so EMA is enabled with `use_ema: true` / `ema_momentum` / `ema_overwrite_frequency` (checkpoints then hold EMA weights). `training.lr_schedule: {name: cosine, initial_lr, min_lr, decay_steps}` replaces the scalar LR with a cosine decay (`decay_steps` = epochs × steps/epoch of the main branch); when set, `ReduceLROnPlateau` callbacks are ignored and the schedule restarts from step 0 on resume.
 
 ### Model registry
 

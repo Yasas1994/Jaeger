@@ -83,6 +83,19 @@ training:
   optimizer: "adam" # adam, rmsprop
   optimizer_params:
     learning_rate: 0.00005
+    # EMA of weights (reduces seed-to-seed output variance). Keras-native;
+    # with ema_overwrite_frequency set, checkpoints contain the EMA weights.
+    # use_ema: true
+    # ema_momentum: 0.999
+    # ema_overwrite_frequency: 100
+  # Optional cosine LR decay to a fixed floor (replaces ReduceLROnPlateau,
+  # which is then ignored). decay_steps = epochs * steps_per_epoch of the
+  # main branch. NOTE: on resume the schedule restarts from step 0.
+  # lr_schedule:
+  #   name: cosine
+  #   initial_lr: 0.0003  # default: optimizer_params.learning_rate
+  #   min_lr: 0.00001
+  #   decay_steps: 540000
 
   loss_classifier: "categorical_crossentropy"
   loss_params_classifier:

@@ -141,6 +141,17 @@ class TrainingStateCallback(tf.keras.callbacks.Callback):
             return float(lr.numpy())
         return float(lr)
 
+    @staticmethod
+    def _uses_lr_schedule(optimizer) -> bool:
+        """True when the optimizer's LR is a LearningRateSchedule.
+
+        Keras 3 stores the schedule in the private ``_learning_rate``; the
+        public ``learning_rate`` property returns the *current* LR tensor in
+        both cases, so detection must look at the stored object.
+        """
+        lr = getattr(optimizer, "_learning_rate", optimizer.learning_rate)
+        return isinstance(lr, tf.keras.optimizers.schedules.LearningRateSchedule)
+
     def on_train_begin(self, logs=None) -> None:
         if not self.restore or not self.state_path.exists():
             return
@@ -151,7 +162,17 @@ class TrainingStateCallback(tf.keras.callbacks.Callback):
             return
         lr = state.get("learning_rate")
         if lr is not None:
-            self.model.optimizer.learning_rate.assign(lr)
+            if self._uses_lr_schedule(self.model.optimizer):
+                # A schedule's LR derives from optimizer.iterations, which a
+                # weights-only checkpoint does not restore; assigning into the
+                # schedule is impossible. Note that the cosine therefore
+                # restarts from step 0 on resume (same caveat as Adam moments).
+                logger.info(
+                    "Skipping learning-rate restore: optimizer uses an LR "
+                    "schedule; the schedule restarts from step 0."
+                )
+            else:
+                self.model.optimizer.learning_rate.assign(lr)
         if self._reduce_lr is not None:
             rlp = state.get("reduce_lr_on_plateau", {})
             self._reduce_lr.best = rlp.get("best", self._reduce_lr.best)
@@ -1563,6 +1584,13 @@ class DynamicModelBuilder:
         for cb in cb_list.get(branch, []):
             name = cb.get("name")
             params = cb.get("params", {})
+            if name == "ReduceLROnPlateau" and self.train_cfg.get("lr_schedule"):
+                logger.warning(
+                    f"Ignoring ReduceLROnPlateau for branch '{branch}': "
+                    "training.lr_schedule replaces it (a callback cannot "
+                    "reduce a schedule-driven learning rate)."
+                )
+                continue
             try:
                 cb_class = getattr(tf.keras.callbacks, name)
                 callbacks.append(cb_class(**params))
@@ -1628,7 +1656,42 @@ class DynamicModelBuilder:
             "rmsprop": tf.keras.optimizers.RMSprop,
             "adagrad": tf.keras.optimizers.Adagrad,
         }
-        return optimizers[name](**kwargs)
+        return optimizers[name](**self._apply_lr_schedule(dict(kwargs)))
+
+    def _apply_lr_schedule(self, kwargs: dict) -> dict:
+        """Replace a scalar ``learning_rate`` with a schedule when configured.
+
+        ``training.lr_schedule``::
+
+            name: cosine
+            initial_lr: 3e-4    # default: optimizer_params.learning_rate
+            min_lr: 1e-5        # LR at the end of decay_steps
+            decay_steps: 540000 # epochs * steps_per_epoch of the main branch
+
+        EMA is available directly through ``optimizer_params``
+        (``use_ema``, ``ema_momentum``, ``ema_overwrite_frequency``), which
+        Keras forwards to the optimizer unchanged.
+        """
+        sched = self.train_cfg.get("lr_schedule") or {}
+        if not sched:
+            return kwargs
+        sched_name = str(sched.get("name", "")).lower()
+        if sched_name != "cosine":
+            raise ValueError(f"Unsupported lr_schedule: {sched_name!r} (use 'cosine')")
+        initial = float(sched.get("initial_lr", kwargs.get("learning_rate", 1e-3)))
+        min_lr = float(sched.get("min_lr", 0.0))
+        decay_steps = sched.get("decay_steps")
+        if not decay_steps:
+            raise ValueError(
+                "training.lr_schedule.decay_steps is required for cosine "
+                "(epochs * steps_per_epoch of the main branch)"
+            )
+        kwargs["learning_rate"] = tf.keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=initial,
+            decay_steps=int(decay_steps),
+            alpha=min_lr / initial if initial > 0 else 0.0,
+        )
+        return kwargs
 
     def _get_pooler(self, name: str):
         poolers = {
