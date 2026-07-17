@@ -2668,6 +2668,17 @@ class HyenaFilter(tf.keras.layers.Layer):
     pre-allocated; calling with a larger `seq_len` will raise an error. Pass
     `seq_len=None` and provide the length at call time for variable-length
     inputs.
+
+    Stability/long-range notes:
+      - Decay rates ``alphas`` are initialized log-uniformly per channel in
+        [1e-3, 1.0], so filters start with a mix of short, medium and global
+        receptive lengths (a constant init of 1.0 makes every filter a ~5-tap
+        local one).
+      - ``|alphas|`` is used at call time, so a negative drift during training
+        can no longer produce exponentially *growing* windows (exp(|a|t)
+        overflow -> NaN).
+      - ``activation="sin"`` gives a SIREN-style implicit filter network (the
+        official Hyena choice for the filter FFN).
     """
 
     def __init__(
@@ -2707,15 +2718,20 @@ class HyenaFilter(tf.keras.layers.Layer):
             for j in range(self.num_layers):
                 is_last = j == self.num_layers - 1
                 units = self.dim if is_last else self.hidden_dim
-                act = self.activation if not is_last else None
+                act = self._hidden_activation() if not is_last else None
                 ffn.add(tf.keras.layers.Dense(units, activation=act))
             setattr(self, f"ffn_{i}", ffn)
             ffn.build((max_len, self.pe_dim))
             self.ffns.append(ffn)
 
+        # Log-uniform per-channel decay init: spans ~1-tap (alpha=1) to
+        # ~1000-tap (alpha=1e-3) filters at initialization.
+        alpha_init = 10.0 ** tf.random.uniform(
+            (self.order, self.dim), minval=-3.0, maxval=0.0, dtype=tf.float32
+        )
         self.alphas = self.add_weight(
             shape=(self.order, self.dim),
-            initializer="ones",
+            initializer=tf.keras.initializers.Constant(alpha_init.numpy()),
             trainable=True,
             name="alphas",
         )
@@ -2726,6 +2742,13 @@ class HyenaFilter(tf.keras.layers.Layer):
             name="biases",
         )
         super().build(input_shape)
+
+    def _hidden_activation(self):
+        # "sin" gives a SIREN-style implicit filter network (the official
+        # Hyena choice); any other value is resolved by Keras.
+        if self.activation == "sin":
+            return tf.sin
+        return tf.keras.activations.get(self.activation)
 
     def _make_positional_encoding(self, length: int | tf.Tensor, dim: int) -> tf.Tensor:
         length = tf.cast(length, tf.int32)
@@ -2754,7 +2777,10 @@ class HyenaFilter(tf.keras.layers.Layer):
         # clashes with the float32 positional encoding / FFT path. Casting operands
         # here keeps filter generation stable and dtype-consistent.
         t = tf.cast(tf.range(L), tf.float32)
-        alphas = tf.cast(self.alphas, tf.float32)
+        # |alphas|: keeps the window a decay even if training pushes a decay
+        # rate negative; otherwise exp(+|a|*t) overflows (NaN) for large t.
+        # No-op for checkpoints whose learned decay rates are all positive.
+        alphas = tf.abs(tf.cast(self.alphas, tf.float32))
         biases = tf.cast(self.biases, tf.float32)
 
         filters = []
@@ -2859,6 +2885,10 @@ class HyenaBlock(tf.keras.layers.Layer):
     Masking is supported by zeroing padded positions before and after the block.
     Note that the internal LayerNormalization is not masked, so padded positions
     still affect the normalization statistics.
+
+    Set ``output_projection=True`` to add a Dense(dim) after the Hyena operator
+    (as in the official Hyena block). Default False keeps the architecture
+    identical to earlier Jaeger versions.
     """
 
     def __init__(
@@ -2870,6 +2900,7 @@ class HyenaBlock(tf.keras.layers.Layer):
         filter_layers: int = 2,
         filter_activation: str = "gelu",
         dropout: float = 0.0,
+        output_projection: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -2880,6 +2911,7 @@ class HyenaBlock(tf.keras.layers.Layer):
         self.filter_layers = filter_layers
         self.filter_activation = filter_activation
         self.dropout = dropout
+        self.output_projection = output_projection
         self.supports_masking = True
 
     def build(self, input_shape):
@@ -2894,6 +2926,15 @@ class HyenaBlock(tf.keras.layers.Layer):
             filter_activation=self.filter_activation,
         )
         self.hyena.build((None, input_shape[2], self.dim))
+        # Optional output projection (present in the official Hyena block);
+        # off by default so existing checkpoints/configs are unaffected.
+        self.out_proj = (
+            tf.keras.layers.Dense(self.dim, name="out_proj")
+            if self.output_projection
+            else None
+        )
+        if self.out_proj is not None:
+            self.out_proj.build((None, input_shape[2], self.dim))
         self.dropout_layer = tf.keras.layers.Dropout(self.dropout)
         self.dropout_layer.build((None, input_shape[2], self.dim))
         super().build(input_shape)
@@ -2916,6 +2957,8 @@ class HyenaBlock(tf.keras.layers.Layer):
         x = self.norm(x)
         x = tf.reshape(x, [batch * strands, length, self.dim])
         x = self.hyena(x)
+        if self.out_proj is not None:
+            x = self.out_proj(x)
         x = self.dropout_layer(x, training=training)
         x = tf.reshape(x, [batch, strands, length, self.dim])
         out = x + residual
@@ -2935,6 +2978,7 @@ class HyenaBlock(tf.keras.layers.Layer):
                 "filter_layers": self.filter_layers,
                 "filter_activation": self.filter_activation,
                 "dropout": self.dropout,
+                "output_projection": self.output_projection,
             }
         )
         return cfg

@@ -166,3 +166,60 @@ def test_builder_creates_hyena_model():
     models = builder.build_fragment_classifier()
     assert "rep_model" in models
     assert "jaeger_classifier" in models
+
+
+def test_hyena_filter_alphas_loguniform_init():
+    layer = HyenaFilter(seq_len=32, dim=64, order=2)
+    layer.build((None, 64, 32))
+    alphas = layer.alphas.numpy()
+    assert alphas.min() >= 1e-3
+    assert alphas.max() <= 1.0
+    # log-uniform over 3 decades should span short and long filters
+    assert alphas.min() < 1e-2
+    assert alphas.max() > 1e-1
+
+
+def test_hyena_filter_negative_alphas_stay_finite():
+    """A negative drift of decay rates must not explode (exp(+|a|t) NaN)."""
+    layer = HyenaFilter(seq_len=256, dim=8, order=2)
+    layer.build((None, 8, 256))
+    layer.alphas.assign(tf.fill((2, 8), -5.0))
+    filters = layer()
+    assert np.all(np.isfinite(filters.numpy()))
+
+
+def test_hyena_filter_siren_activation():
+    layer = HyenaFilter(seq_len=16, dim=8, order=2, activation="sin")
+    layer.build((None, 8, 16))
+    hidden_dense = layer.ffns[0].layers[0]
+    assert hidden_dense.activation is tf.sin
+    filters = layer()
+    assert np.all(np.isfinite(filters.numpy()))
+
+
+def test_hyena_block_output_projection_opt_in():
+    block = HyenaBlock(dim=8, seq_len=16, order=2, output_projection=True)
+    x = tf.random.normal((2, 6, 16, 8))
+    y = block(x)
+    assert y.shape.as_list() == [2, 6, 16, 8]
+    assert block.out_proj is not None
+    weight_names = [getattr(w, "path", w.name) for w in block.weights]
+    assert any("out_proj" in n for n in weight_names)
+
+    default_block = HyenaBlock(dim=8, seq_len=16, order=2)
+    default_block(x)
+    assert default_block.out_proj is None
+
+
+def test_hyena_block_output_projection_serialization_roundtrip():
+    block = HyenaBlock(dim=8, seq_len=16, order=2, output_projection=True)
+    x = tf.random.normal((2, 6, 16, 8))
+    block(x)
+    weights = block.get_weights()
+
+    restored = HyenaBlock.from_config(block.get_config())
+    restored(x)
+    restored.set_weights(weights)
+    np.testing.assert_allclose(
+        block(x, training=False).numpy(), restored(x, training=False).numpy(), atol=1e-5
+    )
