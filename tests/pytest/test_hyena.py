@@ -232,5 +232,104 @@ def test_hyena_block_output_projection_serialization_roundtrip():
     restored(x)
     restored.set_weights(weights)
     np.testing.assert_allclose(
-        block(x, training=False).numpy(), restored(x, training=False).numpy(), atol=1e-5
+        block(x, training=False).numpy(),
+        restored(x, training=False).numpy(),
+        atol=1e-5,
     )
+
+
+def test_hyena_filter_normalize_unit_l2():
+    layer = HyenaFilter(seq_len=64, dim=8, order=2, normalize=True)
+    layer.build((None, 8, 64))
+    filters = layer()  # (order, dim, L)
+    norms = tf.linalg.norm(filters, axis=-1).numpy()  # (order, dim)
+    np.testing.assert_allclose(norms, np.ones((2, 8)), atol=1e-5)
+
+
+def test_hyena_block_filter_normalize_preserves_magnitude():
+    """Normalized filters keep the block output at input scale; unnormalized
+    long/flat filters amplify it (loss explosion seen at init)."""
+    tf.random.set_seed(0)
+    x = tf.random.normal((2, 6, 666, 64))
+    normed = HyenaBlock(dim=64, order=2, filter_normalize=True)
+    plain = HyenaBlock(dim=64, order=2, filter_normalize=False)
+    y_normed = normed(x, training=False)
+    y_plain = plain(x, training=False)
+    in_std = float(tf.math.reduce_std(x))
+    out_std_normed = float(tf.math.reduce_std(y_normed))
+    out_std_plain = float(tf.math.reduce_std(y_plain))
+    # normed: op output ~ input scale, so block (op + residual) stays bounded
+    assert out_std_normed < 2.5 * in_std
+    # unnormalized long/flat filters always amplify more than normalized ones
+    assert out_std_plain > out_std_normed
+
+
+def test_hyena_block_filter_normalize_tail_does_not_leak():
+    """With a fixed (padded) length, tail content must not change valid
+    outputs: the causal conv only looks backward. This is the invariant that
+    matters for the padded-batch path — per-tap filter scale is normalized
+    over the runtime length, so padded==truncated does NOT hold exactly."""
+    layer = HyenaBlock(dim=8, seq_len=None, order=2, filter_normalize=True)
+    x = tf.random.normal((2, 6, 32, 8))
+    mask = tf.concat([tf.ones((2, 6, 20)), tf.zeros((2, 6, 12))], axis=-1)
+    mask = tf.cast(mask, tf.bool)
+    y1 = layer(x, mask=mask, training=False)
+    # same valid prefix, garbage tail
+    x2 = tf.concat([x[:, :, :20], tf.random.normal((2, 6, 12, 8)) * 100], axis=2)
+    y2 = layer(x2, mask=mask, training=False)
+    np.testing.assert_allclose(y1[:, :, :20].numpy(), y2[:, :, :20].numpy(), atol=1e-4)
+    # padded positions are zeroed in both cases
+    np.testing.assert_allclose(
+        y1[:, :, 20:].numpy(), np.zeros((2, 6, 12, 8)), atol=1e-5
+    )
+
+
+def test_hyena_block_kernel_regularizer_adds_losses():
+    block = HyenaBlock(
+        dim=8,
+        seq_len=16,
+        order=2,
+        output_projection=True,
+        kernel_regularizer=tf.keras.regularizers.L2(1e-5),
+    )
+    x = tf.random.normal((2, 6, 16, 8))
+    _ = block(x)
+    assert len(block.losses) > 0
+    # L2(1e-5) on fresh weights is tiny
+    total = float(tf.add_n(block.losses))
+    assert 0 < total < 1.0
+
+    plain = HyenaBlock(dim=8, seq_len=16, order=2)
+    _ = plain(x)
+    assert len(plain.losses) == 0
+
+
+def test_hyena_block_kernel_regularizer_serialization_roundtrip():
+    block = HyenaBlock(dim=8, seq_len=16, order=2, kernel_regularizer="l2")
+    restored = HyenaBlock.from_config(block.get_config())
+    assert isinstance(restored.kernel_regularizer, tf.keras.regularizers.L2)
+
+
+def test_builder_hyena_block_regularizer_from_yaml(tmp_path):
+    """Config keys kernel_regularizer/kernel_regularizer_w on hyena_block must
+    be converted to a regularizer instance by the builder."""
+    cfg = load_model_config(Path("train_config/hyena_test.yaml"))
+    for layer in cfg["model"]["representation_learner"]["hidden_layers"]:
+        if layer["name"] == "hyena_block":
+            layer["config"]["kernel_regularizer"] = "l2"
+            layer["config"]["kernel_regularizer_w"] = 1e-5
+    import shutil
+
+    shutil.rmtree(cfg["training"]["data_dir"], ignore_errors=True)
+    builder = DynamicModelBuilder(cfg)
+    models = builder.build_fragment_classifier()
+    assert "rep_model" in models
+    rep = models["rep_model"]
+    assert any(isinstance(layer, HyenaBlock) for layer in rep.layers)
+    hyena = next(layer for layer in rep.layers if isinstance(layer, HyenaBlock))
+    assert isinstance(hyena.kernel_regularizer, tf.keras.regularizers.L2)
+    _ = rep(
+        tf.constant(np.random.randint(1, 33, size=(2, 6, 666)), dtype=tf.int32),
+        training=False,
+    )
+    assert len(hyena.losses) > 0

@@ -477,12 +477,15 @@ class MaskedGlobalMaxPooling(tf.keras.layers.Layer):
 
     Like :class:`MaskedGlobalAvgPooling` but with a max reduction. Masked-out
     positions (mask == 0) are set to a large negative sentinel before the
-    reduction so they can never win the max. This is the correct pooler for
-    fragment models whose inputs carry padding/ambiguous positions: the plain
-    ``GlobalMaxPooling2D`` does not consume the Keras mask and otherwise folds
-    padded positions into the reduction, which collapses the representation
-    when a window is partially masked (see probe evidence in the Jaeger
-    reliability/masking investigation).
+    reduction so they can never win the max. Samples whose mask is entirely
+    zero (e.g. windows fully masked out by ambiguous nucleotides compounding
+    through the strict conv masks) produce a zero vector instead of the
+    sentinel, keeping downstream logits and the loss finite. This is the
+    correct pooler for fragment models whose inputs carry padding/ambiguous
+    positions: the plain ``GlobalMaxPooling2D`` does not consume the Keras
+    mask and otherwise folds padded positions into the reduction, which
+    collapses the representation when a window is partially masked (see probe
+    evidence in the Jaeger reliability/masking investigation).
     """
 
     def __init__(self, **kwargs):
@@ -494,7 +497,13 @@ class MaskedGlobalMaxPooling(tf.keras.layers.Layer):
             mask = tf.cast(mask, inputs.dtype)
             mask = tf.expand_dims(mask, axis=-1)
             sentinel = tf.constant(-1.0e9, dtype=inputs.dtype)
-            inputs = tf.where(mask > 0, inputs, sentinel)
+            masked_inputs = tf.where(mask > 0, inputs, sentinel)
+            pooled = tf.reduce_max(masked_inputs, axis=[1, 2])
+            # A sample whose mask is entirely zero would pool to the sentinel
+            # (-1e9), exploding downstream logits and the loss. Emit zeros
+            # (neutral features) instead.
+            has_valid = tf.reduce_max(mask, axis=[1, 2])
+            return tf.where(has_valid > 0, pooled, tf.zeros_like(pooled))
         return tf.reduce_max(inputs, axis=[1, 2])
 
     def compute_output_shape(self, input_shape):
@@ -2679,6 +2688,12 @@ class HyenaFilter(tf.keras.layers.Layer):
         overflow -> NaN).
       - ``activation="sin"`` gives a SIREN-style implicit filter network (the
         official Hyena choice for the filter FFN).
+      - ``normalize=True`` scales each generated filter to unit L2 norm over
+        the time axis, so the convolution preserves the input magnitude
+        regardless of filter length (long/flat filters otherwise amplify the
+        residual stream ~sqrt(L)-fold and can explode the loss). Strongly
+        recommended for new configs; default False keeps earlier checkpoints
+        bit-compatible.
     """
 
     def __init__(
@@ -2690,6 +2705,8 @@ class HyenaFilter(tf.keras.layers.Layer):
         hidden_dim: int = 32,
         num_layers: int = 2,
         activation: str = "gelu",
+        normalize: bool = False,
+        kernel_regularizer=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -2700,6 +2717,8 @@ class HyenaFilter(tf.keras.layers.Layer):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.activation = activation
+        self.normalize = normalize
+        self.kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
 
     def build(self, input_shape):
         max_len = self.seq_len or 1
@@ -2719,7 +2738,13 @@ class HyenaFilter(tf.keras.layers.Layer):
                 is_last = j == self.num_layers - 1
                 units = self.dim if is_last else self.hidden_dim
                 act = self._hidden_activation() if not is_last else None
-                ffn.add(tf.keras.layers.Dense(units, activation=act))
+                ffn.add(
+                    tf.keras.layers.Dense(
+                        units,
+                        activation=act,
+                        kernel_regularizer=self.kernel_regularizer,
+                    )
+                )
             setattr(self, f"ffn_{i}", ffn)
             ffn.build((max_len, self.pe_dim))
             self.ffns.append(ffn)
@@ -2788,6 +2813,10 @@ class HyenaFilter(tf.keras.layers.Layer):
             x = tf.cast(self.ffns[i](pe), tf.float32)
             window = tf.exp(-alphas[i][None, :] * t[:, None]) + biases[i][None, :]
             h = window * x
+            if self.normalize:
+                # Unit L2 norm per channel over time: the convolution then
+                # preserves the input magnitude regardless of filter length.
+                h = tf.math.divide_no_nan(h, tf.linalg.norm(h, axis=0, keepdims=True))
             filters.append(h)
 
         return tf.transpose(tf.stack(filters, axis=0), [0, 2, 1])
@@ -2803,6 +2832,10 @@ class HyenaFilter(tf.keras.layers.Layer):
                 "hidden_dim": self.hidden_dim,
                 "num_layers": self.num_layers,
                 "activation": self.activation,
+                "normalize": self.normalize,
+                "kernel_regularizer": tf.keras.regularizers.serialize(
+                    self.kernel_regularizer
+                ),
             }
         )
         return cfg
@@ -2819,6 +2852,8 @@ class HyenaOperator(tf.keras.layers.Layer):
         filter_hidden: int = 32,
         filter_layers: int = 2,
         filter_activation: str = "gelu",
+        filter_normalize: bool = False,
+        kernel_regularizer=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -2828,10 +2863,17 @@ class HyenaOperator(tf.keras.layers.Layer):
         self.filter_hidden = filter_hidden
         self.filter_layers = filter_layers
         self.filter_activation = filter_activation
+        self.filter_normalize = filter_normalize
+        self.kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
 
     def build(self, input_shape):
         self.projs = [
-            tf.keras.layers.Dense(self.dim, use_bias=False, name=f"proj_{i}")
+            tf.keras.layers.Dense(
+                self.dim,
+                use_bias=False,
+                name=f"proj_{i}",
+                kernel_regularizer=self.kernel_regularizer,
+            )
             for i in range(self.order + 1)
         ]
         for i, proj in enumerate(self.projs):
@@ -2845,6 +2887,8 @@ class HyenaOperator(tf.keras.layers.Layer):
             hidden_dim=self.filter_hidden,
             num_layers=self.filter_layers,
             activation=self.filter_activation,
+            normalize=self.filter_normalize,
+            kernel_regularizer=self.kernel_regularizer,
         )
         self.filter_gen.build((None, self.seq_len or 1, self.dim))
         super().build(input_shape)
@@ -2874,6 +2918,10 @@ class HyenaOperator(tf.keras.layers.Layer):
                 "filter_hidden": self.filter_hidden,
                 "filter_layers": self.filter_layers,
                 "filter_activation": self.filter_activation,
+                "filter_normalize": self.filter_normalize,
+                "kernel_regularizer": tf.keras.regularizers.serialize(
+                    self.kernel_regularizer
+                ),
             }
         )
         return cfg
@@ -2893,6 +2941,14 @@ class HyenaBlock(tf.keras.layers.Layer):
     Set ``output_projection=True`` to add a Dense(dim) after the Hyena operator
     (as in the official Hyena block). Default False keeps the architecture
     identical to earlier Jaeger versions.
+
+    Set ``filter_normalize=True`` to scale generated filters to unit L2 norm,
+    keeping the operator's output magnitude independent of filter length
+    (recommended for new configs; required if the loss explodes at init).
+    Note the per-tap filter scale then depends on the runtime length, so the
+    same contig processed at a different padded length yields smoothly
+    rescaled (not bit-identical) outputs; valid outputs are unaffected by
+    tail content because the convolution is causal.
     """
 
     def __init__(
@@ -2905,6 +2961,8 @@ class HyenaBlock(tf.keras.layers.Layer):
         filter_activation: str = "gelu",
         dropout: float = 0.0,
         output_projection: bool = False,
+        filter_normalize: bool = False,
+        kernel_regularizer=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -2916,6 +2974,8 @@ class HyenaBlock(tf.keras.layers.Layer):
         self.filter_activation = filter_activation
         self.dropout = dropout
         self.output_projection = output_projection
+        self.filter_normalize = filter_normalize
+        self.kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
         self.supports_masking = True
 
     def build(self, input_shape):
@@ -2928,12 +2988,16 @@ class HyenaBlock(tf.keras.layers.Layer):
             filter_hidden=self.filter_hidden,
             filter_layers=self.filter_layers,
             filter_activation=self.filter_activation,
+            filter_normalize=self.filter_normalize,
+            kernel_regularizer=self.kernel_regularizer,
         )
         self.hyena.build((None, input_shape[2], self.dim))
         # Optional output projection (present in the official Hyena block);
         # off by default so existing checkpoints/configs are unaffected.
         self.out_proj = (
-            tf.keras.layers.Dense(self.dim, name="out_proj")
+            tf.keras.layers.Dense(
+                self.dim, name="out_proj", kernel_regularizer=self.kernel_regularizer
+            )
             if self.output_projection
             else None
         )
@@ -2987,6 +3051,10 @@ class HyenaBlock(tf.keras.layers.Layer):
                 "filter_activation": self.filter_activation,
                 "dropout": self.dropout,
                 "output_projection": self.output_projection,
+                "filter_normalize": self.filter_normalize,
+                "kernel_regularizer": tf.keras.regularizers.serialize(
+                    self.kernel_regularizer
+                ),
             }
         )
         return cfg
