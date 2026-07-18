@@ -49,6 +49,23 @@ def test_masked_max_pooling_excludes_padded_constants():
     assert float(tf.reduce_max(tf.abs(stock - expected))) > 1e3
 
 
+def test_fully_masked_sample_pools_to_zero_not_sentinel():
+    """A sample whose mask is entirely zero must produce a zero vector, not
+    the -1e9 sentinel (which explodes downstream logits/loss)."""
+    x = tf.random.normal((2, 6, 16, 8))
+    mask = tf.concat(
+        [tf.ones((1, 6, 16), tf.bool), tf.zeros((1, 6, 16), tf.bool)], axis=0
+    )
+    pooled = MaskedGlobalMaxPooling()(x, mask=mask)
+    assert pooled.shape == (2, 8)
+    # valid sample: plain max over everything
+    np.testing.assert_allclose(
+        pooled[0].numpy(), tf.reduce_max(x[0], axis=(0, 1)).numpy(), atol=1e-6
+    )
+    # fully-masked sample: zeros, not -1e9
+    np.testing.assert_allclose(pooled[1].numpy(), np.zeros(8), atol=0.0)
+
+
 def test_masked_max_pooling_no_mask_matches_stock():
     x, _, _ = _padded_pair()
     masked = MaskedGlobalMaxPooling()(x)
