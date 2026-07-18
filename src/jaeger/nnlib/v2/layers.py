@@ -2882,9 +2882,13 @@ class HyenaOperator(tf.keras.layers.Layer):
 class HyenaBlock(tf.keras.layers.Layer):
     """Apply the Hyena block.
 
-    Masking is supported by zeroing padded positions before and after the block.
-    Note that the internal LayerNormalization is not masked, so padded positions
-    still affect the normalization statistics.
+    Masking: padded positions are zeroed on entry and again after the
+    LayerNormalization (whose per-position statistics do not depend on other
+    positions, but which otherwise turns padded zeros into a constant beta
+    vector), after the operator, and before the residual output. Because the
+    long convolution is causal and padded positions are always zeroed,
+    valid-position outputs are identical to running on the unpadded prefix
+    (verified to float precision in tests).
 
     Set ``output_projection=True`` to add a Dense(dim) after the Hyena operator
     (as in the official Hyena block). Default False keeps the architecture
@@ -2955,6 +2959,10 @@ class HyenaBlock(tf.keras.layers.Layer):
 
         residual = x
         x = self.norm(x)
+        if mask_float is not None:
+            # LayerNorm turns padded zeros into a constant beta vector; keep
+            # padded positions at zero so nothing leaks into the operator.
+            x = x * mask_float
         x = tf.reshape(x, [batch * strands, length, self.dim])
         x = self.hyena(x)
         if self.out_proj is not None:

@@ -158,6 +158,17 @@ def test_hyena_block_respects_mask():
     np.testing.assert_allclose(out[0, 0, 8:].numpy(), np.zeros((8, 8)), atol=1e-5)
 
 
+def test_hyena_block_masked_equals_truncated():
+    """Valid-position outputs must be identical to running on the unpadded
+    prefix (causal conv + re-zeroed padded positions)."""
+    layer = HyenaBlock(dim=8, seq_len=None, order=2)
+    x = tf.random.normal((2, 6, 32, 8))
+    mask = tf.concat([tf.ones((2, 6, 20)), tf.zeros((2, 6, 12))], axis=-1)
+    y_masked = layer(x, mask=tf.cast(mask, tf.bool), training=False)
+    y_trunc = layer(x[:, :, :20], training=False)
+    np.testing.assert_allclose(y_masked[:, :, :20].numpy(), y_trunc.numpy(), atol=1e-4)
+
+
 def test_builder_creates_hyena_model():
     cfg_path = Path("train_config/hyena_test.yaml")
     cfg = load_model_config(cfg_path)

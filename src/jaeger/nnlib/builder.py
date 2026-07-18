@@ -1694,9 +1694,14 @@ class DynamicModelBuilder:
         return kwargs
 
     def _get_pooler(self, name: str):
+        # "max"/"average" map to the masked variants: they are numerically
+        # identical to the stock Keras poolers when no mask is present, but
+        # exclude padded positions when a mask exists (stock Global*Pooling2D
+        # silently ignores the mask, so padded-batch inference — e.g. the
+        # two-pass short-contig path — pooled garbage into the representation).
         poolers = {
-            "max": tf.keras.layers.GlobalMaxPooling2D,
-            "average": tf.keras.layers.GlobalAveragePooling2D,
+            "max": MaskedGlobalMaxPooling,
+            "average": MaskedGlobalAvgPooling,
             "max1d": tf.keras.layers.GlobalMaxPooling1D,
             "average1d": tf.keras.layers.GlobalAveragePooling1D,
             "masked_average": MaskedGlobalAvgPooling,
