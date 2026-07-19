@@ -1822,21 +1822,23 @@ class ResidualBlock(tf.keras.layers.Layer):
         if self.norm_type == "masked_batchnorm":
             x = self.bn1(x, training=training)
         else:
-            x = self.bn1(x)
+            x = self.bn1(x, mask=mask)
         x = self.activation_layer(x)
 
         x = self.conv2(x)
         if self.return_nmd:
             x, x_nmd = self.bn2(x, training=training)
+        elif self.norm_type == "masked_batchnorm":
+            x = self.bn2(x, training=training)
         else:
-            x = self.bn2(x)
+            x = self.bn2(x, mask=mask)
 
         if self.conv3 is not None:
             shortcut = self.conv3(inputs, mask=mask)
             if self.norm_type == "masked_batchnorm":
                 shortcut = self.bn3(shortcut, training=training)
             else:
-                shortcut = self.bn3(shortcut)
+                shortcut = self.bn3(shortcut, mask=mask)
         else:
             shortcut = inputs
 
