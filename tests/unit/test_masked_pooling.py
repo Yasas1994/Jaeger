@@ -105,6 +105,81 @@ def test_builder_default_poolers_are_masked():
     assert builder._get_pooler("masked_max") is MaskedGlobalMaxPooling
 
 
+# --- MaskedLastPooling ---------------------------------------------------------
+
+
+def test_last_pooling_no_mask_takes_last_position():
+    from jaeger.nnlib.v2.layers import MaskedLastPooling
+
+    x = tf.reshape(tf.range(2 * 6 * 8, dtype=tf.float32), (2, 6, 8, 1))
+    pooled = MaskedLastPooling()(x)
+    # last position per frame = indices 7, 15, ..., mean over 6 frames
+    last = x[:, :, -1, 0]  # (2, 6)
+    expected = tf.reduce_mean(last, axis=1)
+    np.testing.assert_allclose(pooled.numpy().flatten(), expected.numpy(), atol=1e-6)
+
+
+def test_last_pooling_uses_last_valid_position_not_padding():
+    from jaeger.nnlib.v2.layers import MaskedLastPooling
+
+    x = tf.reshape(tf.range(1 * 1 * 8, dtype=tf.float32), (1, 1, 8, 1))
+    # real content at 0..4, padding at 5..7
+    mask = tf.constant([[[True] * 5 + [False] * 3]])
+    pooled = MaskedLastPooling()(x, mask=mask)
+    np.testing.assert_allclose(pooled.numpy().flatten(), [4.0], atol=1e-6)
+
+
+def test_last_pooling_fully_masked_sample_is_zero():
+    from jaeger.nnlib.v2.layers import MaskedLastPooling
+
+    x = tf.random.normal((2, 6, 16, 8))
+    mask = tf.concat(
+        [tf.ones((1, 6, 16), tf.bool), tf.zeros((1, 6, 16), tf.bool)], axis=0
+    )
+    pooled = MaskedLastPooling()(x, mask=mask)
+    np.testing.assert_allclose(
+        pooled[0].numpy(), tf.reduce_mean(x[0, :, -1, :], axis=0).numpy(), atol=1e-6
+    )
+    np.testing.assert_allclose(pooled[1].numpy(), np.zeros(8), atol=0.0)
+
+
+def test_last_pooling_per_frame_independent():
+    from jaeger.nnlib.v2.layers import MaskedLastPooling
+
+    # 1 sample, 2 frames with different valid lengths
+    x = tf.reshape(tf.range(2 * 8, dtype=tf.float32), (1, 2, 8, 1))
+    mask = tf.constant([[[True] * 4 + [False] * 4, [True] * 8]])
+    pooled = MaskedLastPooling()(x, mask=mask)
+    # frame0 last valid index 3 -> value 3.0; frame1 last valid index 7 -> 15.0
+    np.testing.assert_allclose(pooled.numpy().flatten(), [(3.0 + 15.0) / 2], atol=1e-6)
+
+
+def test_builder_maps_last_pooling():
+    from jaeger.nnlib.v2.layers import MaskedLastPooling
+
+    builder = DynamicModelBuilder({"model": {"name": "jaeger"}, "training": {}})
+    assert builder._get_pooler("last") is MaskedLastPooling
+    assert builder._get_pooler("masked_last") is MaskedLastPooling
+
+
+def test_last_pooling_mixed_bfloat16():
+    from jaeger.nnlib.v2.layers import MaskedLastPooling
+
+    old_policy = tf.keras.mixed_precision.global_policy().name
+    tf.keras.mixed_precision.set_global_policy("mixed_bfloat16")
+    try:
+        x = tf.cast(tf.random.normal((2, 6, 16, 8)), tf.bfloat16)
+        mask = tf.concat(
+            [tf.ones((2, 6, 10), tf.bool), tf.zeros((2, 6, 6), tf.bool)], axis=-1
+        )
+        pooled = MaskedLastPooling()(x, mask=mask)
+        assert pooled.shape == (2, 8)
+        assert pooled.dtype == tf.bfloat16
+        assert np.all(np.isfinite(pooled.numpy()))
+    finally:
+        tf.keras.mixed_precision.set_global_policy(old_policy)
+
+
 # --- end-to-end: embedding -> MaskedBatchNorm -> max pool ----------------------
 
 

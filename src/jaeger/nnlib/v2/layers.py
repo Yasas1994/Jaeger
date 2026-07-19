@@ -516,6 +516,46 @@ class MaskedGlobalMaxPooling(tf.keras.layers.Layer):
         return super().get_config()
 
 
+class MaskedLastPooling(tf.keras.layers.Layer):
+    """Pool the last *valid* position per (batch, frame), averaged over frames.
+
+    Suited to causal sequence models (e.g. hyena blocks): the last position is
+    the only one that has seen the whole frame sequence. With right padding or
+    ambiguous nucleotides, the last *valid* position is used per frame (never a
+    padded one); frames that are entirely masked contribute zeros, and a
+    sample whose frames are all masked pools to a zero vector. Input shape is
+    (batch, frames, length, channels), output (batch, channels).
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.supports_masking = True
+
+    def call(self, inputs, mask=None):
+        if mask is None:
+            # Full-length inputs: the last position of every frame.
+            return tf.reduce_mean(inputs[:, :, -1, :], axis=1)
+        m = tf.cast(mask, tf.int32)
+        # index of the last valid position per (batch, frame); -1 if none
+        idx = tf.reduce_sum(m, axis=-1) - 1
+        idx_safe = tf.maximum(idx, 0)
+        gathered = tf.gather(inputs, idx_safe, axis=2, batch_dims=2)  # (B, F, C)
+        frame_valid = tf.cast(idx >= 0, inputs.dtype)  # (B, F)
+        gathered = gathered * frame_valid[..., None]
+        count = tf.reduce_sum(frame_valid, axis=1, keepdims=True)
+        count = tf.maximum(count, tf.constant(1.0, dtype=count.dtype))
+        return tf.reduce_sum(gathered, axis=1) / count
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], input_shape[-1])
+
+    def compute_mask(self, inputs, mask=None):
+        return None
+
+    def get_config(self):
+        return super().get_config()
+
+
 class GatedFrameGlobalMaxPooling(tf.keras.layers.Layer):
     """
     Frame-aware global max pooling.
