@@ -1069,6 +1069,18 @@ class MaskedConv1D(tf.keras.layers.Layer):
     mask positions to zero before applying convolution. Also propagates the mask
     to the next layer. Accepts inputs like (batch, frames, length, channels) where
     batch and length dimension can be unknown.
+
+    ``mask_mode`` controls how the output mask is derived from the k valid
+    inputs under each kernel window:
+
+    - ``"any"`` (default): a position stays valid if *at least one* window
+      input is valid. An isolated ambiguous position (N) invalidates only
+      itself; N-runs invalidate only the run. Prevents the mask-erosion
+      compounding where a few percent Ns erase whole fragments through deep
+      stacks, and right-padding/short contigs lose no real content.
+    - ``"majority"``: valid if at least half the window inputs are valid.
+    - ``"strict"``: valid only if *all* window inputs are valid (legacy
+      behavior pre-1.27; one N kills ~k positions per layer, compounding).
     """
 
     def __init__(
@@ -1085,6 +1097,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         bias_initializer="zeros",
         kernel_regularizer=None,
         use_masking=True,
+        mask_mode="any",
         dtype=None,  # keep for compatibility, but usually leave None under MP
         **kwargs,
     ):
@@ -1092,6 +1105,10 @@ class MaskedConv1D(tf.keras.layers.Layer):
             kwargs["dtype"] = dtype  # let Keras handle policy + dtype
         super().__init__(**kwargs)
 
+        if mask_mode not in ("any", "majority", "strict"):
+            raise ValueError(
+                f"Invalid mask_mode: {mask_mode!r} (use 'any', 'majority' or 'strict')"
+            )
         self.axis = axis
         self.filters = filters
         self.kernel_size = kernel_size
@@ -1104,6 +1121,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
         self.bias_initializer = tf.keras.initializers.get(bias_initializer)
         self.kernel_regularizer = kernel_regularizer
         self.use_masking = use_masking
+        self.mask_mode = mask_mode
 
         self.supports_masking = use_masking
 
@@ -1162,7 +1180,14 @@ class MaskedConv1D(tf.keras.layers.Layer):
                 dilations=self.dilation_rate,
                 data_format="NWC",
             )
-            output_mask = tf.equal(mask_conv, float(self.kernel_size))
+            if self.mask_mode == "any":
+                # valid if at least one window input is valid
+                output_mask = mask_conv > 0
+            elif self.mask_mode == "majority":
+                # valid if at least half the window inputs are valid
+                output_mask = mask_conv >= (self.kernel_size + 1) // 2
+            else:  # "strict" — legacy: valid only if all inputs are valid
+                output_mask = tf.equal(mask_conv, float(self.kernel_size))
             output_mask = tf.squeeze(output_mask, axis=-1)
             output_mask = tf.reshape(output_mask, shape=output_shape[:-1])
 
@@ -1215,6 +1240,7 @@ class MaskedConv1D(tf.keras.layers.Layer):
                 ),
                 "axis": self.axis,
                 "use_masking": self.use_masking,
+                "mask_mode": self.mask_mode,
                 "kernel_regularizer": tf.keras.regularizers.serialize(
                     self.kernel_regularizer
                 )
