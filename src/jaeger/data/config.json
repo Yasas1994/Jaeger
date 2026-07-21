@@ -170,6 +170,8 @@
     "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/Jaeger/models",
     "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format/experiments/experiment_500bp_axial_npz_42",
     "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/genomad_train_data/jaeger_format/experiments/experiment_500bp_axial_npz_42/model",
-    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/models/jaeger_models"
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/models/jaeger_models",
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/training/jaeger_train_data/jaeger_experiments/experiments/experiment_nmd_merge_layernorm_425425",
+    "/home/yasas-wijesekara/ssd/Projects/Jaeger_revisions/models/jaeger_models/jaeger_256c8b7e_1.9M_fragment"
   ]
 }
