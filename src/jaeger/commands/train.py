@@ -335,6 +335,7 @@ def _build_numpy_split(
         strides=_strides,
         overlap=_overlap,
         pad_to_max=(batching_strategy != "grouped"),
+        crop_mode=string_processor_config.get("crop_mode", "all"),
     )
 
     ds = _data

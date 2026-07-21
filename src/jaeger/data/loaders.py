@@ -165,8 +165,23 @@ def _load_sharded_numpy_dataset(
     strides: list[int] | None = None,
     overlap: float | None = None,
     pad_to_max: bool = True,
+    crop_mode: str = "all",
 ) -> tf.data.Dataset:
-    """Load a sharded NPZ produced by the streaming converter."""
+    """Load a sharded NPZ produced by the streaming converter.
+
+    ``crop_mode`` (only relevant when ``crop_sizes`` is set):
+      - ``"all"``: every record fans out to all its crop variants.
+      - ``"sample"``: each record yields one uniformly sampled crop variant
+        per epoch (re-drawn each epoch); crops of the same record never
+        share a batch and epoch size is unchanged.
+      - ``"range"``: each record yields one crop of uniform length in
+        [min(crop_sizes), max(crop_sizes)] (inclusive) at a uniform start,
+        re-drawn each epoch — continuous variable-length augmentation.
+    """
+    if crop_mode not in ("all", "sample", "range"):
+        raise ValueError(
+            f"Invalid crop_mode: {crop_mode!r} (use 'all', 'sample' or 'range')"
+        )
     manifest = json.loads(str(data["_jaeger_manifest"].item()))
     num_shards = int(manifest["num_shards"])
     feature_keys = [k for k in manifest["keys"] if k in ("nucleotide", "translated")]
@@ -338,35 +353,58 @@ def _load_sharded_numpy_dataset(
                 else:
                     converted[key] = _convert_feature(arr, key)
                     needs_per_crop_conversion[key] = False
+            rng = np.random.default_rng()
             for i in range(len(shard_labels)):
                 label_arr = _encode_label(int(shard_labels[i]))
                 actual_len = int(shard_lengths[feature_keys[0]][i])
-                for cs, stride in zip(
-                    cast("list[int]", crop_sizes), cast("list[int]", resolved_strides)
-                ):
-                    for start in _crop_starts(
-                        actual_len, cs, stride, pad_to_max=pad_to_max
-                    ):
-                        length = min(cs, actual_len - start)
-                        features = {}
-                        for key in feature_keys:
-                            arr = converted[key]
-                            sample = arr[i]
-                            crop = sample[:, start : start + length, ...]
-                            if needs_per_crop_conversion[key]:
-                                crop = _convert_feature(crop, key)
-                            if pad_to_max and length < cast(int, max_crop_size):
-                                pad_len = cast(int, max_crop_size) - length
-                                pad_width = (
-                                    [(0, 0), (0, pad_len)]
-                                    if crop.ndim == 2
-                                    else [(0, 0), (0, pad_len), (0, 0)]
-                                )
-                                crop = np.pad(
-                                    crop, pad_width, mode="constant", constant_values=0
-                                )
-                            features[key] = crop
-                        yield features, label_arr
+                if crop_mode == "sample":
+                    variants = [
+                        _sample_crop_variant(
+                            rng,
+                            actual_len,
+                            cast("list[int]", crop_sizes),
+                            cast("list[int]", resolved_strides),
+                            pad_to_max,
+                        )
+                    ]
+                elif crop_mode == "range":
+                    variants = [
+                        _sample_range_crop(
+                            rng, actual_len, cast("list[int]", crop_sizes)
+                        )
+                    ]
+                else:
+                    variants = [
+                        (cs, start)
+                        for cs, stride in zip(
+                            cast("list[int]", crop_sizes),
+                            cast("list[int]", resolved_strides),
+                        )
+                        for start in _crop_starts(
+                            actual_len, cs, stride, pad_to_max=pad_to_max
+                        )
+                    ]
+                for cs, start in variants:
+                    length = min(cs, actual_len - start)
+                    features = {}
+                    for key in feature_keys:
+                        arr = converted[key]
+                        sample = arr[i]
+                        crop = sample[:, start : start + length, ...]
+                        if needs_per_crop_conversion[key]:
+                            crop = _convert_feature(crop, key)
+                        if pad_to_max and length < cast(int, max_crop_size):
+                            pad_len = cast(int, max_crop_size) - length
+                            pad_width = (
+                                [(0, 0), (0, pad_len)]
+                                if crop.ndim == 2
+                                else [(0, 0), (0, pad_len), (0, 0)]
+                            )
+                            crop = np.pad(
+                                crop, pad_width, mode="constant", constant_values=0
+                            )
+                        features[key] = crop
+                    yield features, label_arr
 
     with tf.device("/CPU:0"):
         ds = tf.data.Dataset.from_generator(
@@ -435,6 +473,35 @@ def _densify_object_array(arr: np.ndarray, pad_value: int = 0) -> np.ndarray | N
         return None
 
 
+def _sample_crop_variant(
+    rng: np.random.Generator,
+    actual_len: int,
+    crop_sizes: list[int],
+    strides: list[int],
+    pad_to_max: bool,
+) -> tuple[int, int]:
+    """Uniformly sample one (crop_size, start) variant for a record."""
+    variants = [
+        (cs, start)
+        for cs, stride in zip(crop_sizes, strides)
+        for start in _crop_starts(actual_len, cs, stride, pad_to_max=pad_to_max)
+    ]
+    return variants[int(rng.integers(len(variants)))]
+
+
+def _sample_range_crop(
+    rng: np.random.Generator,
+    actual_len: int,
+    crop_sizes: list[int],
+) -> tuple[int, int]:
+    """Sample a crop of uniform length in [min(crop_sizes), max(crop_sizes)]
+    (inclusive) and uniform start covering the whole record."""
+    lo, hi = int(min(crop_sizes)), int(max(crop_sizes))
+    cs = min(int(rng.integers(lo, hi + 1)), actual_len)
+    start = int(rng.integers(0, actual_len - cs + 1)) if actual_len > cs else 0
+    return cs, start
+
+
 def _load_cropped_numpy_dataset(
     data: np.lib.npyio.NpzFile,
     crop_sizes: list[int],
@@ -446,8 +513,25 @@ def _load_cropped_numpy_dataset(
     num_classes: int | None,
     one_hot_labels: bool,
     pad_to_max: bool = True,
+    crop_mode: str = "all",
 ) -> tf.data.Dataset:
-    """Load a NumPy NPZ and slice runtime crops from full-length arrays."""
+    """Load a NumPy NPZ and slice runtime crops from full-length arrays.
+
+    ``crop_mode``:
+      - ``"all"``: every record fans out to all its crop variants
+        (``crop_sizes`` x sliding-window starts); siblings of one record can
+        co-occur in a batch unless the shuffle buffer is very large.
+      - ``"sample"``: each record yields exactly one uniformly sampled crop
+        variant per epoch (re-drawn each epoch), so different crops of the
+        same record never share a batch and epoch size is unchanged.
+      - ``"range"``: each record yields one crop of uniform length in
+        [min(crop_sizes), max(crop_sizes)] (inclusive) at a uniform start,
+        re-drawn each epoch — continuous variable-length augmentation.
+    """
+    if crop_mode not in ("all", "sample", "range"):
+        raise ValueError(
+            f"Invalid crop_mode: {crop_mode!r} (use 'all', 'sample' or 'range')"
+        )
     if input_type == "both":
         raise NotImplementedError(
             "Runtime crop generation for input_type='both' is not supported yet."
@@ -589,9 +673,22 @@ def _load_cropped_numpy_dataset(
         )
 
         def generator():
+            rng = np.random.default_rng()
             for i in range(n):
                 actual_len = int(lengths[i])
                 label = _encode_label(int(labels[i]))
+                if crop_mode == "sample":
+                    cs, start = _sample_crop_variant(
+                        rng, actual_len, crop_sizes, strides, pad_to_max
+                    )
+                    length = min(cs, actual_len - start)
+                    yield _sample_features(i, start, length), label
+                    continue
+                if crop_mode == "range":
+                    cs, start = _sample_range_crop(rng, actual_len, crop_sizes)
+                    length = min(cs, actual_len - start)
+                    yield _sample_features(i, start, length), label
+                    continue
                 for cs, stride in zip(crop_sizes, strides):
                     for start in _crop_starts(
                         actual_len, cs, stride, pad_to_max=pad_to_max
@@ -668,8 +765,23 @@ def _load_cropped_numpy_dataset(
     sample_indices: list[int] = []
     starts_list: list[int] = []
     lengths_list: list[int] = []
+    rng = np.random.default_rng()
     for i in range(n):
         actual_len = int(lengths[i])
+        if crop_mode == "sample":
+            cs, start = _sample_crop_variant(
+                rng, actual_len, crop_sizes, strides, pad_to_max
+            )
+            sample_indices.append(i)
+            starts_list.append(start)
+            lengths_list.append(min(cs, actual_len - start))
+            continue
+        if crop_mode == "range":
+            cs, start = _sample_range_crop(rng, actual_len, crop_sizes)
+            sample_indices.append(i)
+            starts_list.append(start)
+            lengths_list.append(min(cs, actual_len - start))
+            continue
         for cs, stride in zip(crop_sizes, strides):
             for start in _crop_starts(actual_len, cs, stride, pad_to_max=pad_to_max):
                 length = min(cs, actual_len - start)
@@ -806,6 +918,7 @@ def _load_numpy_dataset(
     strides: list[int] | None = None,
     overlap: float | None = None,
     pad_to_max: bool = True,
+    crop_mode: str = "all",
 ) -> tf.data.Dataset:
     """Load a unified NPZ file and return a ``tf.data.Dataset``.
 
@@ -865,6 +978,7 @@ def _load_numpy_dataset(
             strides=strides,
             overlap=overlap,
             pad_to_max=pad_to_max,
+            crop_mode=crop_mode,
         )
 
     if crop_sizes is not None:
@@ -880,6 +994,7 @@ def _load_numpy_dataset(
             num_classes=num_classes,
             one_hot_labels=one_hot_labels,
             pad_to_max=pad_to_max,
+            crop_mode=crop_mode,
         )
 
     if _is_ragged(data, input_type):

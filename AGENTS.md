@@ -243,7 +243,7 @@ Key sections in a training config:
 
 - `model.name`, `model.experiment`, `model.seed`
 - `model.embedding` — input type (`translated`, etc.), frames, strands, embedding size
-- `model.string_processor` — data format (`csv`, `numpy`), crop size, augmentation flags. `crop_size` is canonically in **codons**; `crop_units` (default `codon`, or `nucleotide`) selects the unit. The nucleotide window is `3 * crop_size + 5` (see `jaeger.seqops.crop`), which is the only length where the TensorFlow and numba frame extractors agree on the codon count.
+- `model.string_processor` — data format (`csv`, `numpy`), crop size, augmentation flags. `crop_size` is canonically in **codons**; `crop_units` (default `codon`, or `nucleotide`) selects the unit. The nucleotide window is `3 * crop_size + 5` (see `jaeger.seqops.crop`), which is the only length where the TensorFlow and numba frame extractors agree on the codon count. `crop_sizes` (plural list) enables runtime multi-crop training: `crop_mode: all` (default) fans every record out to all its crop variants (siblings can co-batch), `crop_mode: sample` draws one uniform variant per record per epoch (siblings never co-batch, uniform length mix), and `crop_mode: range` draws one crop per record per epoch with length uniform in [min(crop_sizes), max(crop_sizes)] inclusive and uniform start (continuous variable-length augmentation). Epoch size is unchanged in `sample`/`range` modes.
 - `model.representation_learner` — stack of `masked_conv1d`, `residual_block`, `transformer`, etc.
 - `model.classifier` — classification head
 - `model.reliability` — optional reliability / OOD head
