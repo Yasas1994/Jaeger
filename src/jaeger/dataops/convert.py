@@ -1003,6 +1003,125 @@ def _finalize_batch_arrays(
     return save_dict
 
 
+def _class_interleaved_permutation(labels: np.ndarray, seed: int) -> np.ndarray:
+    """Return a permutation that maximally interleaves classes.
+
+    Rows within each class are shuffled with a seeded RNG; classes are then
+    emitted with a smooth weighted round-robin (deficit scheduler), so each
+    class appears in exact proportion and same-class runs are as short as the
+    class proportions allow.
+    """
+    labels = np.asarray(labels)
+    total = len(labels)
+    if total == 0:
+        return np.empty(0, dtype=np.int64)
+    rng = np.random.default_rng(seed)
+    _, inverse = np.unique(labels, return_inverse=True)
+    pools = []
+    for c in range(int(inverse.max()) + 1):
+        idx = np.flatnonzero(inverse == c)
+        rng.shuffle(idx)
+        pools.append(idx)
+    counts = np.array([len(p) for p in pools], dtype=np.int64)
+    deficits = np.zeros(len(pools), dtype=np.int64)
+    ptr = np.zeros(len(pools), dtype=np.int64)
+    perm = np.empty(total, dtype=np.int64)
+    for i in range(total):
+        deficits += counts
+        c = int(np.argmax(deficits))
+        deficits[c] -= total
+        perm[i] = pools[c][ptr[c]]
+        ptr[c] += 1
+    return perm
+
+
+def _apply_permutation(
+    batch_dict: dict[str, np.ndarray | str], perm: np.ndarray
+) -> dict[str, np.ndarray | str]:
+    """Apply a row permutation to every per-sample array in a batch dict."""
+    n = len(perm)
+    out: dict[str, np.ndarray | str] = {}
+    for key, value in batch_dict.items():
+        if isinstance(value, np.ndarray) and value.shape[:1] == (n,) and n > 0:
+            out[key] = value[perm]
+        else:
+            out[key] = value
+    return out
+
+
+def _iter_class_balanced_lines(
+    input_path: str, num_shards: int, shard_idx: int, chunk_lines: int
+):
+    """Yield CSV lines assigned to ``shard_idx`` by per-class round-robin.
+
+    A running counter per class deals each line (and therefore all of its
+    crops) to shard ``counter[label] % num_shards``, so every shard receives
+    ``floor``/``ceil`` of every class regardless of the CSV's row order.
+    """
+    counters: dict[int, int] = {}
+    with open(input_path) as f:
+        while True:
+            chunk = list(itertools.islice(f, chunk_lines))
+            if not chunk:
+                break
+            for line in chunk:
+                line = line.strip()
+                if not line:
+                    continue
+                comma_idx = line.find(",")
+                if comma_idx == -1:
+                    continue
+                label = int(line[:comma_idx])
+                rank = counters.get(label, 0)
+                counters[label] = rank + 1
+                if rank % num_shards == shard_idx:
+                    yield line
+
+
+def _merge_chunk_results(results: list[dict]) -> dict:
+    """Merge per-sub-chunk ``_process_chunk_npz`` results into one result."""
+    merged: dict = {}
+    for key in ("nucleotide", "translated"):
+        first = results[0][key]
+        if first:
+            merged[key] = [
+                np.concatenate([r[key][i] for r in results], axis=0)
+                for i in range(len(first))
+            ]
+        else:
+            merged[key] = first
+    for key in ("labels", "lengths", "translated_lengths"):
+        merged[key] = np.concatenate([r[key] for r in results], axis=0)
+    return merged
+
+
+def _log_distribution_report(shard_labels: list[np.ndarray], num_classes: int) -> None:
+    """Log per-shard and global class distributions."""
+    if not shard_labels:
+        return
+    logger.info("class distribution per shard:")
+    header = "shard    rows      " + "".join(
+        f"class {c:<8d}" for c in range(num_classes)
+    )
+    logger.info(header)
+    all_labels = []
+    for s, labels in enumerate(shard_labels):
+        counts = np.bincount(labels, minlength=num_classes).astype(np.float64)
+        pcts = counts / max(counts.sum(), 1.0) * 100.0
+        logger.info(
+            f"{s:05d}   {len(labels):<9d} "
+            + "".join(f"{p:6.2f}%{'':<4s}" for p in pcts)
+        )
+        all_labels.append(labels)
+    global_labels = np.concatenate(all_labels)
+    counts = np.bincount(global_labels, minlength=num_classes).astype(np.float64)
+    pcts = counts / max(counts.sum(), 1.0) * 100.0
+    logger.info(
+        f"global  {len(global_labels):<9d} "
+        + "".join(f"{p:6.2f}%{'':<4s}" for p in pcts)
+    )
+
+
 def _convert_to_npz(
     input_path: str,
     output_path: str,
@@ -1018,6 +1137,8 @@ def _convert_to_npz(
     compress: str,
     pad: bool = True,
     dtype: str = "auto",
+    balance_classes: bool = False,
+    shuffle_seed: int = 42,
 ) -> None:
     """Convert a CSV dataset to an ``.npz`` file.
 
@@ -1173,6 +1294,11 @@ def _convert_to_npz(
         }
     )
 
+    if balance_classes:
+        perm = _class_interleaved_permutation(save_dict["labels"], shuffle_seed)
+        save_dict = _apply_permutation(save_dict, perm)
+        _log_distribution_report([np.asarray(save_dict["labels"])], num_classes)
+
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     _save_npz(output_path, save_dict, compress)
 
@@ -1239,6 +1365,9 @@ def _convert_to_npz_streaming(
     max_memory_bytes: int,
     pad: bool,
     dtype: str = "auto",
+    balance_classes: bool = False,
+    shuffle_seed: int = 42,
+    total_lines: int | None = None,
 ) -> None:
     """Memory-bounded CSV -> NPZ converter that writes sharded batches.
 
@@ -1294,52 +1423,100 @@ def _convert_to_npz_streaming(
     try:
         keys: list[str] = []
         batch_idx = 0
+        shard_labels: list[np.ndarray] = []
         with zipfile.ZipFile(
             output_path,
             "w",
             compression=compress_type,
             compresslevel=compress_level or 6,
         ) as zf:
-            with open(input_path) as f:
-                while True:
-                    batch_lines = list(itertools.islice(f, batch_rows))
-                    if not batch_lines:
-                        break
 
-                    result = _process_chunk_npz(batch_lines, **worker_kwargs)
-                    batch_dict = _finalize_batch_arrays(
-                        result,
-                        fmt=fmt,
-                        crop_sizes=crop_sizes,
-                        one_hot=one_hot,
-                        codon_map_len=codon_map_len,
-                        pad=pad,
-                        pad_int=pad_int,
-                        nucleotide_map=nucleotide_map,
-                        codon_map_name=codon_map_name,
-                        feature_dtype=feature_dtype,
+            def _write_shard(batch_dict: dict) -> None:
+                nonlocal keys, batch_idx
+                if not keys:
+                    keys.extend(
+                        k
+                        for k in batch_dict.keys()
+                        if k not in ("nucleotide_map", "codon_map")
                     )
+                for key in keys:
+                    buf = io.BytesIO()
+                    np.save(buf, batch_dict[key])
+                    zf.writestr(
+                        f"{key}_{batch_idx:05d}.npy",
+                        buf.getvalue(),
+                        compress_type=compress_type,
+                        compresslevel=compress_level,
+                    )
+                shard_labels.append(np.asarray(batch_dict["labels"]))
+                batch_idx += 1
 
-                    if not keys:
-                        keys = [
-                            k
-                            for k in batch_dict.keys()
-                            if k not in ("nucleotide_map", "codon_map")
-                        ]
+            def _finalize(result: dict) -> dict:
+                return _finalize_batch_arrays(
+                    result,
+                    fmt=fmt,
+                    crop_sizes=crop_sizes,
+                    one_hot=one_hot,
+                    codon_map_len=codon_map_len,
+                    pad=pad,
+                    pad_int=pad_int,
+                    nucleotide_map=nucleotide_map,
+                    codon_map_name=codon_map_name,
+                    feature_dtype=feature_dtype,
+                )
 
-                    for key in keys:
-                        buf = io.BytesIO()
-                        np.save(buf, batch_dict[key])
-                        zf.writestr(
-                            f"{key}_{batch_idx:05d}.npy",
-                            buf.getvalue(),
-                            compress_type=compress_type,
-                            compresslevel=compress_level,
-                        )
-                    batch_idx += 1
+            if balance_classes:
+                if total_lines is None:
+                    total_lines = _count_lines(input_path)
+                num_shards = max(1, math.ceil(total_lines / batch_rows))
+                logger.info(
+                    f"balance_classes: dealing {total_lines} lines across "
+                    f"{num_shards} shards (round-robin per class, "
+                    f"interleaved within shard, seed={shuffle_seed})"
+                )
+                for shard_idx in range(num_shards):
+                    results = []
+                    selected: list[str] = []
+                    for line in _iter_class_balanced_lines(
+                        input_path, num_shards, shard_idx, batch_rows
+                    ):
+                        selected.append(line)
+                        if len(selected) >= batch_rows:
+                            results.append(
+                                _process_chunk_npz(selected, **worker_kwargs)
+                            )
+                            selected = []
+                    if selected:
+                        results.append(_process_chunk_npz(selected, **worker_kwargs))
+                    if not results:
+                        continue
+                    result = _merge_chunk_results(results)
+                    if len(result["labels"]) == 0:
+                        continue
+                    batch_dict = _finalize(result)
+                    perm = _class_interleaved_permutation(
+                        batch_dict["labels"], shuffle_seed + shard_idx
+                    )
+                    _write_shard(_apply_permutation(batch_dict, perm))
+                    logger.info(
+                        f"shard {batch_idx - 1:05d}: "
+                        f"{len(result['labels'])} rows written"
+                    )
+            else:
+                with open(input_path) as f:
+                    while True:
+                        batch_lines = list(itertools.islice(f, batch_rows))
+                        if not batch_lines:
+                            break
+
+                        result = _process_chunk_npz(batch_lines, **worker_kwargs)
+                        _write_shard(_finalize(result))
 
             if batch_idx == 0:
                 raise ValueError(f"Input file is empty: {input_path}")
+
+            if balance_classes:
+                _log_distribution_report(shard_labels, num_classes)
 
             manifest = {
                 "version": 1,
@@ -1396,6 +1573,8 @@ def convert_dataset(
     use_embedding_layer: bool = True,  # deprecated, ignored
     max_memory_mb: int | None = None,
     pad: bool = False,
+    balance_classes: bool = False,
+    shuffle_seed: int = 42,
 ) -> None:
     """Convert a CSV dataset to a compressed NumPy ``.npz`` file.
 
@@ -1464,6 +1643,13 @@ def convert_dataset(
         If True, pad all crops to the maximum crop length (legacy behavior).
         If False, trim each crop to its actual length and store as object
         arrays.
+    balance_classes : bool, optional
+        If True, deal every class round-robin across output shards so each
+        shard holds ``floor``/``ceil`` of every class, and order rows within a
+        shard so classes are maximally interleaved (default: False).
+    shuffle_seed : int, optional
+        Seed for the within-class shuffle used when ``balance_classes`` is
+        enabled (default: 42).
     """
     if isinstance(crop_size, int):
         crop_sizes = [crop_size]
@@ -1547,6 +1733,9 @@ def convert_dataset(
             dtype=dtype,
             max_memory_bytes=budget,
             pad=pad,
+            balance_classes=balance_classes,
+            shuffle_seed=shuffle_seed,
+            total_lines=total_lines,
         )
     else:
         _convert_to_npz(
@@ -1564,4 +1753,6 @@ def convert_dataset(
             compress=compress,
             dtype=dtype,
             pad=pad,
+            balance_classes=balance_classes,
+            shuffle_seed=shuffle_seed,
         )

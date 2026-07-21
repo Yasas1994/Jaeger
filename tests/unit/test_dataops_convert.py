@@ -990,3 +990,105 @@ class TestFeatureDtype:
         )
         data = np.load(out, allow_pickle=True)
         assert data["translated"][0].dtype == np.dtype(np.int32)
+
+
+class TestBalanceClasses:
+    """Tests for class-balanced sharding (``balance_classes``)."""
+
+    def _blocked_csv(self, tmp_path: Path, per_class: int = 30) -> str:
+        """CSV with classes in contiguous blocks (worst-case ordering)."""
+        lines = []
+        for c in range(3):
+            for _ in range(per_class):
+                lines.append(f"{c}," + "ACGT" * 6)
+        path = tmp_path / "input.csv"
+        path.write_text("\n".join(lines))
+        return str(path)
+
+    @staticmethod
+    def _max_run(labels: np.ndarray) -> int:
+        best = cur = 1
+        for i in range(1, len(labels)):
+            cur = cur + 1 if labels[i] == labels[i - 1] else 1
+            best = max(best, cur)
+        return best
+
+    def _stream_convert(self, csv: str, out: Path, balance: bool, seed: int = 42):
+        convert._convert_to_npz_streaming(
+            input_path=csv,
+            output_path=str(out),
+            fmt="nucleotide",
+            crop_sizes=[24],
+            strides=[0],
+            num_classes=3,
+            one_hot=False,
+            pad_int=0,
+            codon_map_name="codon_id",
+            nucleotide_map={"A": 1, "G": 2, "T": 3, "C": 4, "N": 0},
+            compress="default",
+            max_memory_bytes=6000,  # ~30 rows per shard
+            pad=True,
+            balance_classes=balance,
+            shuffle_seed=seed,
+        )
+
+    def _shard_labels(self, path: Path) -> list[np.ndarray]:
+        data = np.load(path, allow_pickle=True)
+        manifest = json.loads(str(data["_jaeger_manifest"].item()))
+        return [data[f"labels_{i:05d}"] for i in range(manifest["num_shards"])]
+
+    def test_shards_match_global_class_mix(self, tmp_path: Path):
+        csv = self._blocked_csv(tmp_path)
+        out = tmp_path / "out.npz"
+        self._stream_convert(csv, out, balance=True)
+        for labels in self._shard_labels(out):
+            counts = np.bincount(labels, minlength=3)
+            assert counts.max() - counts.min() <= 1
+
+    def test_classes_interleaved_within_shard(self, tmp_path: Path):
+        csv = self._blocked_csv(tmp_path)
+        out = tmp_path / "out.npz"
+        self._stream_convert(csv, out, balance=True)
+        for labels in self._shard_labels(out):
+            assert self._max_run(labels) <= 2
+
+    def test_deterministic_with_same_seed(self, tmp_path: Path):
+        csv = self._blocked_csv(tmp_path)
+        out1, out2 = tmp_path / "a.npz", tmp_path / "b.npz"
+        self._stream_convert(csv, out1, balance=True)
+        self._stream_convert(csv, out2, balance=True)
+        for l1, l2 in zip(self._shard_labels(out1), self._shard_labels(out2)):
+            assert np.array_equal(l1, l2)
+
+    def test_same_rows_as_unbalanced(self, tmp_path: Path):
+        csv = self._blocked_csv(tmp_path)
+        out_bal, out_plain = tmp_path / "bal.npz", tmp_path / "plain.npz"
+        self._stream_convert(csv, out_bal, balance=True)
+        self._stream_convert(csv, out_plain, balance=False)
+        bal = np.concatenate(self._shard_labels(out_bal))
+        plain = np.concatenate(self._shard_labels(out_plain))
+        assert np.array_equal(np.sort(bal), np.sort(plain))
+
+    def test_flag_off_preserves_csv_order(self, tmp_path: Path):
+        csv = self._blocked_csv(tmp_path, per_class=10)
+        out = tmp_path / "out.npz"
+        self._stream_convert(csv, out, balance=False)
+        labels = np.concatenate(self._shard_labels(out))
+        assert labels.tolist() == [0] * 10 + [1] * 10 + [2] * 10
+
+    def test_fast_path_interleaves(self, tmp_path: Path):
+        csv = self._blocked_csv(tmp_path)
+        out = tmp_path / "out.npz"
+        convert.convert_dataset(
+            input_path=csv,
+            output_path=str(out),
+            format="nucleotide",
+            crop_size=24,
+            num_classes=3,
+            num_workers=1,
+            balance_classes=True,
+        )
+        data = np.load(out)
+        counts = np.bincount(data["labels"], minlength=3)
+        assert counts.tolist() == [30, 30, 30]
+        assert self._max_run(data["labels"]) <= 2

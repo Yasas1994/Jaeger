@@ -569,6 +569,8 @@ def optimize_data_core(
     pad: bool = False,
     units: str = "nuc",
     overlap: float | None = None,
+    balance_classes: bool = False,
+    shuffle_seed: int = 42,
 ):
     """Convert Jaeger CSV training data to an optimized ``.npz`` format.
 
@@ -622,6 +624,12 @@ def optimize_data_core(
         Overlap between crops as a fraction of each crop size (0.0-1.0).
         If provided, per-crop strides are computed from the (unit-converted)
         crop sizes and ``stride`` is ignored.
+    balance_classes : bool, optional
+        If True, deal every class round-robin across output shards and
+        interleave classes within each shard (default: False).
+    shuffle_seed : int, optional
+        Seed for the within-class shuffle used when ``balance_classes`` is
+        enabled (default: 42).
     """
     if units not in {"nuc", "codon"}:
         raise ValueError("units must be 'nuc' or 'codon'")
@@ -658,4 +666,6 @@ def optimize_data_core(
         max_length=max_length,
         max_memory_mb=max_memory_mb,
         pad=pad,
+        balance_classes=balance_classes,
+        shuffle_seed=shuffle_seed,
     )
