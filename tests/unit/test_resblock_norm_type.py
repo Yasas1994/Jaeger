@@ -129,3 +129,105 @@ def test_norm_type_serialization_roundtrip():
     block = ResidualBlock(block_number=0, norm_type="masked_dyt", **_BLOCK)
     restored = ResidualBlock.from_config(block.get_config())
     assert restored.norm_type == "masked_dyt"
+
+
+def test_batchnorm_receives_conv_mask_via_auto_masking():
+    """The conv's computed (downsampled) output mask reaches the bn layers via
+    Keras auto-masking, so masked_batchnorm statistics are computed over valid
+    positions only — even under strides>1 with a right-padded batch."""
+    block = ResidualBlock(
+        block_number=0,
+        filters=16,
+        kernel_size=5,
+        strides=2,
+        activation="gelu",
+        use_bias=False,
+        kernel_initializer="ones",
+    )
+    # first half valid (value 2.0), second half zero padding
+    x = tf.concat([2.0 + tf.zeros((2, 6, 16, 16)), tf.zeros((2, 6, 16, 16))], axis=2)
+    mask = tf.concat([tf.ones((2, 6, 16)), tf.zeros((2, 6, 16))], axis=-1)
+    y = block(x, mask=tf.cast(mask, tf.bool), training=True)
+    assert np.all(np.isfinite(y.numpy()))
+
+    # ones-kernel conv: DC ~= 160 at fully-valid positions, 0 at padded ones.
+    # momentum 0.9 -> one training step stores 10% of the batch mean.
+    # valid-only stats: ~13.7; unmasked stats (zeros included) would be ~7.2.
+    mm = float(tf.reduce_mean(block.bn1.moving_mean))
+    assert mm > (13.7 + 7.2) / 2
+
+
+def test_norm_type_strided_with_partial_mask():
+    # user crash case: strides=2 block on a right-padded batch must not mix
+    # pre-stride and post-stride mask shapes, for every norm type
+    for norm_type in ("masked_batchnorm", "masked_layernorm", "masked_dyt"):
+        block = ResidualBlock(
+            block_number=0, norm_type=norm_type, **{**_BLOCK, "strides": 2}
+        )
+        x = tf.concat(
+            [tf.random.normal((2, 6, 16, 16)), tf.zeros((2, 6, 16, 16))], axis=2
+        )
+        mask = tf.concat([tf.ones((2, 6, 16)), tf.zeros((2, 6, 16))], axis=-1)
+        y = block(x, mask=tf.cast(mask, tf.bool))
+        assert y.shape[2] == 16
+        assert np.all(np.isfinite(y.numpy()))
+
+
+def test_top_level_norms_tolerate_return_nmd_false():
+    """Configs migrated from masked_batchnorm may carry return_nmd: false —
+    MaskedLayerNormalization and MaskedDYT must accept (and ignore) it."""
+    for cls in (MaskedLayerNormalization, MaskedDYT):
+        layer = cls(return_nmd=False)
+        assert layer.return_nmd is False
+
+
+def test_top_level_norms_reject_return_nmd_true():
+    for cls in (MaskedLayerNormalization, MaskedDYT):
+        with pytest.raises(ValueError, match="return_nmd"):
+            cls(return_nmd=True)
+
+
+def test_builder_top_level_masked_layernorm_with_return_nmd():
+    cfg = load_model_config(Path("train_config/hyena_test.yaml"))
+    cfg["model"]["representation_learner"]["hidden_layers"] = [
+        {
+            "name": "masked_conv1d",
+            "config": {
+                "filters": 32,
+                "kernel_size": 7,
+                "strides": 1,
+                "activation": None,
+            },
+        },
+        {"name": "masked_layernorm", "config": {"return_nmd": False}},
+        {"name": "activation", "config": {"activation": "gelu"}},
+        {
+            "name": "residual_block",
+            "config": {
+                "use_1x1conv": False,
+                "block_size": 2,
+                "filters": 32,
+                "kernel_size": 5,
+                "strides": 2,
+                "activation": "gelu",
+                "return_nmd": False,
+            },
+        },
+        {"name": "nmd"},
+        {
+            "name": "hyena_block",
+            "config": {
+                "dim": 32,
+                "order": 2,
+                "filter_hidden": 32,
+                "filter_layers": 2,
+                "dropout": 0.1,
+            },
+        },
+        {"name": "masked_layernorm", "config": {"return_nmd": False}},
+        {"name": "nmd"},
+    ]
+    shutil.rmtree(cfg["training"]["data_dir"], ignore_errors=True)
+    builder = DynamicModelBuilder(cfg)
+    models = builder.build_fragment_classifier()
+    assert "rep_model" in models

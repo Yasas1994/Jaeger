@@ -294,13 +294,25 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
     """
     Masked layer normalization ignores the masked positions when calculating the summary
     statistics and normalization
+
+    Accepts ``return_nmd`` for config compatibility with ``masked_batchnorm``;
+    only ``return_nmd=False`` is supported (NMD vectors are produced by
+    ``masked_batchnorm`` or the standalone ``nmd`` layer).
     """
 
-    def __init__(self, epsilon=1e-3, center=True, scale=True, **kwargs):
+    def __init__(
+        self, epsilon=1e-3, center=True, scale=True, return_nmd=False, **kwargs
+    ):
         super(MaskedLayerNormalization, self).__init__(**kwargs)
+        if return_nmd:
+            raise ValueError(
+                "return_nmd=True is not supported by MaskedLayerNormalization "
+                "(NMD vectors require masked_batchnorm or the standalone nmd layer)"
+            )
         self.epsilon = epsilon
         self.center = center
         self.scale = scale
+        self.return_nmd = return_nmd
         self.supports_masking = True
 
     def build(self, input_shape):
@@ -364,6 +376,7 @@ class MaskedLayerNormalization(tf.keras.layers.Layer):
                 "epsilon": self.epsilon,
                 "center": self.center,
                 "scale": self.scale,
+                "return_nmd": self.return_nmd,
             }
         )
         return config
@@ -375,11 +388,20 @@ class MaskedDYT(tf.keras.layers.Layer):
     A normalization-free drop-in replacement that applies a learnable scaled
     hyperbolic tangent followed by a per-channel affine transform. Masked
     positions are kept at zero.
+
+    Accepts ``return_nmd`` for config compatibility with ``masked_batchnorm``;
+    only ``return_nmd=False`` is supported.
     """
 
-    def __init__(self, alpha_init: float = 0.5, **kwargs):
+    def __init__(self, alpha_init: float = 0.5, return_nmd: bool = False, **kwargs):
         super().__init__(**kwargs)
+        if return_nmd:
+            raise ValueError(
+                "return_nmd=True is not supported by MaskedDYT "
+                "(NMD vectors require masked_batchnorm or the standalone nmd layer)"
+            )
         self.alpha_init = alpha_init
+        self.return_nmd = return_nmd
         self.supports_masking = True
 
     def build(self, input_shape):
@@ -426,7 +448,7 @@ class MaskedDYT(tf.keras.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({"alpha_init": self.alpha_init})
+        config.update({"alpha_init": self.alpha_init, "return_nmd": self.return_nmd})
         return config
 
 
@@ -1859,26 +1881,29 @@ class ResidualBlock(tf.keras.layers.Layer):
 
     def call(self, inputs, mask=None, training=None):
         x = self.conv1(inputs, mask=mask)
+        # NOTE: no explicit mask forwarding to the bn layers. MaskedConv1D
+        # attaches its computed (downsampled) output mask to its output tensor,
+        # and Keras auto-masking delivers it to the bn layers. Passing the
+        # input mask explicitly overrides that correct mask with the wrong
+        # (pre-stride) shape and crashes.
         if self.norm_type == "masked_batchnorm":
             x = self.bn1(x, training=training)
         else:
-            x = self.bn1(x, mask=mask)
+            x = self.bn1(x)
         x = self.activation_layer(x)
 
         x = self.conv2(x)
         if self.return_nmd:
             x, x_nmd = self.bn2(x, training=training)
-        elif self.norm_type == "masked_batchnorm":
-            x = self.bn2(x, training=training)
         else:
-            x = self.bn2(x, mask=mask)
+            x = self.bn2(x)
 
         if self.conv3 is not None:
             shortcut = self.conv3(inputs, mask=mask)
             if self.norm_type == "masked_batchnorm":
                 shortcut = self.bn3(shortcut, training=training)
             else:
-                shortcut = self.bn3(shortcut, mask=mask)
+                shortcut = self.bn3(shortcut)
         else:
             shortcut = inputs
 
