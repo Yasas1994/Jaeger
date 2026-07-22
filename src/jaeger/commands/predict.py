@@ -391,6 +391,7 @@ def _write_prediction_outputs(
                     prophage_cordinates=phage_cord,
                     fasta_path=input_file_path,
                     fsize=kwargs.get("fsize"),
+                    stride=kwargs.get("stride"),
                 )
 
                 plot_type = kwargs.get("plot_type", "circular")
@@ -408,6 +409,7 @@ def _write_prediction_outputs(
                         infile_base=file_base,
                         outdir=plots_dir,
                         phage_cordinates=phage_cord,
+                        stride=kwargs.get("stride"),
                     )
                 if plot_type in ("linear", "both"):
                     plot_scores_linear(
@@ -423,6 +425,7 @@ def _write_prediction_outputs(
                         infile_base=file_base,
                         outdir=plots_dir,
                         phage_cordinates=phage_cord,
+                        stride=kwargs.get("stride"),
                     )
                 prophage_report(
                     fsize=kwargs.get("fsize"),
@@ -430,6 +433,7 @@ def _write_prediction_outputs(
                     prophage_cordinates=phage_cord,
                     outdir=pro_dir,
                     refined_boundaries=refined_boundaries,
+                    stride=kwargs.get("stride"),
                 )
             else:
                 logger.info("no prophage regions found")

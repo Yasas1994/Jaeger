@@ -64,9 +64,11 @@ def logits_to_df(config: Any, cmdline_kwargs: dict, **kwargs) -> dict:
                 value,
                 columns=list(config["all_labels"].values()),
             )
-            t = t.assign(
-                length=[i * cmdline_kwargs.get("fsize") for i in range(len(t))]
-            )
+            # window i starts at i * stride (windows overlap when
+            # stride < fsize); clamp the last window's x to the true contig
+            # length (partial terminal window)
+            stride = cmdline_kwargs.get("stride") or cmdline_kwargs.get("fsize")
+            t = t.assign(length=[min(i * stride, length) for i in range(len(t))])
 
             for k, v in lab.items():
                 conv = np.convolve(value[:, k], np.ones(4), mode="same")
@@ -125,9 +127,12 @@ def logits_to_df_v2(
             max_class = np.argmax(np.mean(value, axis=0))
             host = lab.get(max_class, "unknown")
             t = pd.DataFrame(value, columns=list(lab.values()))
-            t = t.assign(
-                length=[i * cmdline_kwargs.get("fsize", 2000) for i in range(len(t))]
-            )
+            # window i starts at i * stride (windows overlap when
+            # stride < fsize); clamp the last window's x to the true contig
+            # length (partial terminal window), which pycirclize rejects as
+            # outside the sector when plotting
+            stride = cmdline_kwargs.get("stride") or cmdline_kwargs.get("fsize", 2000)
+            t = t.assign(length=[min(i * stride, length) for i in range(len(t))])
             for k, v in lab.items():
                 conv = np.convolve(value[:, k], np.ones(4), mode="same")
                 if len(conv) > len(t):
@@ -156,6 +161,7 @@ def plot_scores(
     infile_base: str,
     outdir: Path,
     phage_cordinates: dict,
+    stride: int | None = None,
 ) -> None:
     """
     Creates a circos plot of the host genome including putative prophages
@@ -168,6 +174,7 @@ def plot_scores(
         config: Dictionary containing configuration settings.
         outdir: Output directory for saving the plot.
         phage_cordinates: Dictionary of phage coordinates.
+        stride: Sliding-window stride in bp (default: ``fsize``).
 
     Returns:
     -------
@@ -175,6 +182,7 @@ def plot_scores(
     """
     # quantile cut-off 0.975 (or 0.025 of the right tail)
     lab = {int(k): v for k, v in config["all_labels"].items()}
+    step = stride or fsize
     # legend_lines = []
 
     # Plot outer track with xticks
@@ -215,7 +223,12 @@ def plot_scores(
                 )
 
                 for cords in phage_cordinates[contig_id][0]:
-                    pcs = np.arange(cords[0], cords[-1]) * fsize
+                    # region spans [first window start, last window end];
+                    # clamp to the contig length (partial terminal window),
+                    # which pycirclize rejects as outside the sector
+                    pcs = np.array(
+                        [cords[0] * step, (cords[-1] - 1) * step + fsize]
+                    ).clip(0, length)
                     phage_track.fill_between(
                         pcs,
                         np.ones_like(pcs) * 4,
@@ -353,6 +366,7 @@ def plot_scores_linear(
     infile_base: str,
     outdir: Path,
     phage_cordinates: dict,
+    stride: int | None = None,
 ) -> None:
     """
     Creates a linear genome plot of the host genome including putative
@@ -367,12 +381,14 @@ def plot_scores_linear(
         infile_base: Base name of the input file.
         outdir: Output directory for saving the plot.
         phage_cordinates: Dictionary of phage coordinates.
+        stride: Sliding-window stride in bp (default: ``fsize``).
 
     Returns:
     -------
         None
     """
     lab = {int(k): v for k, v in config["all_labels"].items()}
+    step = stride or fsize
     colors = ["gray", "green", "red", "teal", "brown", "purple", "pink", "olive"]
 
     for contig_id in logits_df.keys():
@@ -396,7 +412,11 @@ def plot_scores_linear(
         )
         # Highlight prophage regions
         for cords in phage_cordinates.get(contig_id, [[], []])[0]:
-            pcs = np.arange(cords[0], cords[-1]) * fsize
+            # region spans [first window start, last window end];
+            # clamp to the contig length (partial terminal window)
+            pcs = np.array([cords[0] * step, (cords[-1] - 1) * step + fsize]).clip(
+                0, length
+            )
             ax_phage.fill_between(
                 pcs,
                 np.ones_like(pcs) * 4,
@@ -689,6 +709,7 @@ def prophage_report(
     prophage_cordinates: dict,
     outdir: Path,
     refined_boundaries: dict | None = None,
+    stride: int | None = None,
 ):
     """
     Searches for direct repeats at prophage boundaries and generates
@@ -704,12 +725,14 @@ def prophage_report(
             ``(raw_start, raw_end, refined_start, refined_end)`` tuples. When
             provided, the att-region search and reported region coordinates use
             the refined boundaries.
+        stride: Sliding-window stride in bp (default: ``fsize``).
     Returns
     -------
         None
     """
 
     user_matrix = parasail.matrix_create("ACGT", 2, -100)
+    step = stride or fsize
     summaries = []
 
     def append_summary(result, seq_len, record, start, end, j, type_):
@@ -738,7 +761,9 @@ def prophage_report(
             )
             if len(cords) > 0 and len(scores) > 0:
                 for idx, ((start, end), j) in enumerate(zip(cords, scores)):
-                    raw_start, raw_end = int(start * fsize), int(end * fsize)
+                    # region spans [first window start, last window end]
+                    raw_start = int(start * step)
+                    raw_end = int((end - 1) * step + fsize)
                     if contig_refined is not None and idx < len(contig_refined):
                         _, _, refined_start, refined_end = contig_refined[idx]
                     else:
@@ -751,19 +776,38 @@ def prophage_report(
                     search_start = max(refined_start - scan_length, 0)
                     search_end = min(refined_end + scan_length, seq_len)
 
+                    left_seq = str(record[1][search_start : refined_start + off_set])
+                    right_seq = str(record[1][refined_end - off_set : search_end])
+                    if not left_seq or not right_seq:
+                        # degenerate (e.g. zero-width) region: parasail
+                        # rejects empty inputs, so report no repeat found
+                        summary = get_prophage_alignment_summary(
+                            result_object=None,
+                            seq_len=seq_len,
+                            record=record,
+                            cordinates={
+                                "start": [refined_start, None],
+                                "end": [refined_end, None],
+                            },
+                            phage_score=j,
+                            type_=None,
+                        )
+                        summary["raw_start"] = raw_start
+                        summary["raw_end"] = raw_end
+                        summaries.append(summary)
+                        continue
+
                     result_dtr = parasail.sw_trace_scan_16(
-                        str(record[1][search_start : refined_start + off_set]),
-                        str(record[1][refined_end - off_set : search_end]),
+                        left_seq,
+                        right_seq,
                         100,
                         5,
                         user_matrix,
                     )
 
                     result_itr = parasail.sw_trace_scan_16(
-                        str(record[1][search_start : refined_start + off_set]),
-                        reverse_complement(
-                            str(record[1][refined_end - off_set : search_end])
-                        ),
+                        left_seq,
+                        reverse_complement(right_seq),
                         100,
                         5,
                         user_matrix,

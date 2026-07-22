@@ -322,6 +322,7 @@ def run_core(**kwargs):
                             infile_base=file_base,
                             outdir=plots_dir,
                             phage_cordinates=phage_cord,
+                            stride=kwargs.get("stride"),
                         )
                     if plot_type in ("linear", "both"):
                         plot_scores_linear(
@@ -332,12 +333,14 @@ def run_core(**kwargs):
                             infile_base=file_base,
                             outdir=plots_dir,
                             phage_cordinates=phage_cord,
+                            stride=kwargs.get("stride"),
                         )
                     prophage_report(
                         fsize=kwargs.get("fsize"),
                         filehandle=str(input_file_path),
                         prophage_cordinates=phage_cord,
                         outdir=pro_dir,
+                        stride=kwargs.get("stride"),
                     )
                 else:
                     logger.info("no prophage regions found")

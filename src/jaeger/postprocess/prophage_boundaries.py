@@ -140,6 +140,7 @@ def refine_prophage_boundaries(
     fasta_path: str | Path,
     fsize: int,
     max_extension: int | None = None,
+    stride: int | None = None,
 ) -> dict[str, list[tuple[int, int, int, int]]]:
     """Refine window-based prophage boundaries against gene coordinates.
 
@@ -150,12 +151,14 @@ def refine_prophage_boundaries(
         fasta_path: Path to the input FASTA file.
         fsize: Sliding-window size used by Jaeger.
         max_extension: Maximum boundary extension allowed (default: ``2 * fsize``).
+        stride: Sliding-window stride used by Jaeger (default: ``fsize``).
 
     Returns:
         ``{contig_id: [(raw_start, raw_end, refined_start, refined_end), ...]}``.
     """
     if max_extension is None:
         max_extension = 2 * fsize
+    step = stride or fsize
 
     fasta_path = Path(fasta_path)
     refined: dict[str, list[tuple[int, int, int, int]]] = {}
@@ -176,8 +179,9 @@ def refine_prophage_boundaries(
 
         contig_refined: list[tuple[int, int, int, int]] = []
         for start_idx, end_idx in cords:
-            raw_start = int(start_idx * fsize)
-            raw_end = int(end_idx * fsize)
+            # region spans [first window start, last window end]
+            raw_start = int(start_idx * step)
+            raw_end = int((end_idx - 1) * step + fsize)
             refined_start, refined_end = refine_region(
                 raw_start, raw_end, genes, max_extension=max_extension
             )

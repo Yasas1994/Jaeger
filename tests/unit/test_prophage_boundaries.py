@@ -107,3 +107,50 @@ def test_refine_prophage_boundaries_snaps_to_predicted_orf(tmp_path: Path):
     )
 
     assert refined == {"contig1": [(orf_start + 5, orf_end - 5, orf_start, orf_end)]}
+
+
+def test_refine_prophage_boundaries_uses_stride(tmp_path: Path):
+    # stop-codon-saturated sequence: no ORFs, so refined == raw boundaries
+    seq = ("TAA" * 3400)[:10000]
+    fasta = tmp_path / "test.fa"
+    fasta.write_text(f">contig1\n{seq}\n")
+
+    prophage_cordinates = {"contig1": [np.array([[2, 5]]), np.array([1.0])]}
+    refined = refine_prophage_boundaries(
+        prophage_cordinates=prophage_cordinates,
+        fasta_path=fasta,
+        fsize=2000,
+        stride=1500,
+    )
+
+    # raw span: [2*1500, (5-1)*1500 + 2000] = [3000, 8000]
+    raw_start, raw_end, _, _ = refined["contig1"][0]
+    assert (raw_start, raw_end) == (3000, 8000)
+
+
+def test_prophage_report_skips_degenerate_region(tmp_path: Path):
+    # zero-width region (fsize=1, single window): boundary slices are empty
+    # and parasail would reject them; the report must skip the alignment
+    from jaeger.postprocess.prophages import prophage_report
+
+    seq = "A" * 500_001  # report only processes contigs > 500 kb
+    fasta = tmp_path / "test.fa"
+    fasta.write_text(f">contig1\n{seq}\n")
+
+    prophage_cordinates = {"contig1": [np.array([[0, 1]]), np.array([2.0])]}
+    prophage_report(
+        fsize=1,
+        filehandle=str(fasta),
+        prophage_cordinates=prophage_cordinates,
+        outdir=tmp_path,
+        stride=1,
+    )
+
+    tsv = tmp_path / "prophages_jaeger.tsv"
+    assert tsv.exists()
+    import pandas as pd
+
+    df = pd.read_csv(tsv, sep="\t")
+    assert len(df) == 1
+    assert df["raw_start"].iloc[0] == 0
+    assert df["raw_end"].iloc[0] == 1
