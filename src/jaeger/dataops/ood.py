@@ -39,6 +39,12 @@ def generate_ood_csv_core(**kwargs):
     subseq_repeat = kwargs.get("subseq_repeat", True)
     tandem_repeat = kwargs.get("tandem_repeat", True)
     n_stretch = kwargs.get("n_stretch", True)
+    gc_shift = kwargs.get("gc_shift", False)
+    gc_shift_rate_range = tuple(kwargs.get("gc_shift_rate_range", (0.05, 0.20)))
+    pad_truncate = kwargs.get("pad_truncate", False)
+    pad_length_range = tuple(kwargs.get("pad_length_range", (500, 1900)))
+    iid_random = kwargs.get("iid_random", False)
+    iid_random_gc_range = tuple(kwargs.get("iid_random_gc_range", (0.25, 0.75)))
     mix = kwargs.get("mix", True)
     window_fraction = kwargs.get("window_fraction", 0.25)
     motif_length_range = tuple(kwargs.get("motif_length_range", (3, 10)))
@@ -115,6 +121,18 @@ def generate_ood_csv_core(**kwargs):
             "enabled": n_stretch,
             "n_fraction_range": list(n_fraction_range),
             "max_stretches": max_stretches,
+        },
+        "gc_shift": {
+            "enabled": gc_shift,
+            "rate_range": list(gc_shift_rate_range),
+        },
+        "pad_truncate": {
+            "enabled": pad_truncate,
+            "length_range": list(pad_length_range),
+        },
+        "iid_random": {
+            "enabled": iid_random,
+            "gc_range": list(iid_random_gc_range),
         },
         "mix": mix,
     }

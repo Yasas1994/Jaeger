@@ -186,4 +186,24 @@ def scan_for_terminal_repeats(
         logger.debug(traceback.format_exc())
         sys.exit(1)
 
+    if not summaries:  # e.g. all sequences are shorter than fsize
+        return pd.DataFrame(
+            columns=[
+                "contig_id",
+                "repeat_length",
+                "identities",
+                "identity",
+                "score",
+                "terminal_repeats",
+                "fgaps",
+                "rgaps",
+                "sstart",
+                "send",
+                "estart",
+                "eend",
+                "seq_len",
+                "front",
+                "rear",
+            ]
+        )
     return pd.DataFrame(summaries)

@@ -153,6 +153,91 @@ def apply_tandem_repeat_window(
     return seq[:start] + fill + seq[end:]
 
 
+def apply_random_seq(
+    seq: str,
+    gc_range: tuple[float, float] = (0.25, 0.75),
+) -> str:
+    """Replace *seq* with an iid random sequence of the same length.
+
+    The G+C content of the random sequence is sampled uniformly from
+    *gc_range*. Unlike shuffles, this destroys all k-mer/compositional
+    structure of the input — the strongest form of out-of-distribution
+    sequence. The input is only used for its length.
+    """
+    if not seq:
+        return seq
+    gc = random.uniform(*gc_range)
+    return "".join(random.choices("ACGT", weights=[1 - gc, gc, gc, 1 - gc], k=len(seq)))
+
+
+def apply_gc_shift(
+    seq: str,
+    rate_range: tuple[float, float] = (0.05, 0.20),
+    direction: str | None = None,
+) -> str:
+    """Shift the G+C content of *seq* by directed point mutations.
+
+    A rate r is sampled uniformly from *rate_range*. With *direction* ``"up"``,
+    r·len(seq) random A/T positions are mutated to G or C; with ``"down"``,
+    r·len(seq) random G/C positions are mutated to A or T. When *direction* is
+    ``None`` (default) one of the two directions is chosen at random. The
+    sequence length and all non-ACGT characters are preserved.
+    """
+    if not seq:
+        return seq
+    if direction is None:
+        direction = random.choice(("up", "down"))
+    if direction not in ("up", "down"):
+        raise ValueError(f"direction must be 'up', 'down' or None, got {direction!r}")
+
+    chars = list(seq)
+    if direction == "up":
+        pool = [i for i, c in enumerate(chars) if c in "ATat"]
+        targets = "GC"
+    else:
+        pool = [i for i, c in enumerate(chars) if c in "GCgc"]
+        targets = "AT"
+    n = min(len(pool), int(round(len(seq) * random.uniform(*rate_range))))
+    for i in random.sample(pool, k=n):
+        chars[i] = random.choice(targets)
+    return "".join(chars)
+
+
+def apply_pad_truncate(
+    seq: str,
+    length_range: tuple[int, int] = (500, 1900),
+    output_length: int | None = None,
+    pad_char: str = "M",
+) -> str:
+    """Truncate *seq* to a random short subsequence and right-pad it.
+
+    A length L is sampled uniformly from *length_range* and a random-start
+    subsequence of length L is kept; the result is right-padded with
+    *pad_char* to *output_length* (defaults to the input length). This mirrors
+    the inference-time padding of short contigs in
+    ``jaeger.seqops.io.fragment_generator``, which pads with ``'M'`` so that
+    padding positions are masked rather than counted as ambiguous (N) content.
+    """
+    if not seq:
+        return seq
+    seq_len = len(seq)
+    if output_length is None:
+        output_length = seq_len
+    lo, hi = length_range
+    hi = min(hi, output_length)
+    if lo > hi:
+        raise ValueError(
+            f"length_range {length_range} incompatible with output_length {output_length}"
+        )
+    target_len = random.randint(lo, hi)
+    keep = min(target_len, seq_len)
+    start = random.randint(0, seq_len - keep)
+    truncated = seq[start : start + keep]
+    if len(truncated) < output_length:
+        truncated += pad_char * (output_length - len(truncated))
+    return truncated[:output_length]
+
+
 def apply_n_stretch(
     seq: str,
     n_fraction_range: tuple[float, float] = (0.3, 1.0),

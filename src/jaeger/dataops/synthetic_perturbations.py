@@ -24,9 +24,12 @@ import numpy as np
 
 from jaeger.seqops.synthetic import (
     apply_dinuc_shuffle,
+    apply_gc_shift,
+    apply_random_seq,
     apply_kmer_shuffle,
     apply_mix,
     apply_n_stretch,
+    apply_pad_truncate,
     apply_shuffle,
     apply_subseq_repeat_window,
     apply_tandem_repeat_window,
@@ -127,6 +130,63 @@ def _normalize_perturbation_cfg(
                 "pre_shuffle": n_stretch_dict.get(
                     "shuffle_before_perturbation", global_pre_shuffle
                 ),
+            }
+        )
+
+    # ---- GC shift (composition corruption) ----
+    # Opt-in: disabled unless the config explicitly enables it.
+    gc_shift_value = perturbations_cfg.get("gc_shift", False)
+    if _is_enabled(gc_shift_value):
+        gc_shift_dict = gc_shift_value if isinstance(gc_shift_value, dict) else {}
+        specs.append(
+            {
+                "name": "gc_shift",
+                "fn": apply_gc_shift,
+                "kwargs": {
+                    "rate_range": tuple(gc_shift_dict.get("rate_range", (0.05, 0.20))),
+                },
+                "pre_shuffle": gc_shift_dict.get(
+                    "shuffle_before_perturbation", global_pre_shuffle
+                ),
+            }
+        )
+
+    # ---- pad + truncate (short-contig padding corruption) ----
+    # Opt-in: disabled unless the config explicitly enables it.
+    pad_truncate_value = perturbations_cfg.get("pad_truncate", False)
+    if _is_enabled(pad_truncate_value):
+        pad_truncate_dict = (
+            pad_truncate_value if isinstance(pad_truncate_value, dict) else {}
+        )
+        specs.append(
+            {
+                "name": "pad_truncate",
+                "fn": apply_pad_truncate,
+                "kwargs": {
+                    "length_range": tuple(
+                        pad_truncate_dict.get("length_range", (500, 1900))
+                    ),
+                    "pad_char": pad_truncate_dict.get("pad_char", "M"),
+                    "output_length": pad_truncate_dict.get("output_length"),
+                },
+                "pre_shuffle": pad_truncate_dict.get(
+                    "shuffle_before_perturbation", global_pre_shuffle
+                ),
+            }
+        )
+
+    # ---- iid random sequence (structureless corruption) ----
+    # Opt-in: disabled unless the config explicitly enables it.
+    iid_random_value = perturbations_cfg.get("iid_random", False)
+    if _is_enabled(iid_random_value):
+        iid_random_dict = iid_random_value if isinstance(iid_random_value, dict) else {}
+        specs.append(
+            {
+                "name": "iid_random",
+                "fn": apply_random_seq,
+                "kwargs": {
+                    "gc_range": tuple(iid_random_dict.get("gc_range", (0.25, 0.75))),
+                },
             }
         )
 
@@ -308,6 +368,10 @@ def _generate_chunk_serial(
     else:
         fn = spec["fn"]
         kwargs = spec["kwargs"]
+        if spec_name == "pad_truncate" and kwargs.get("output_length") is None:
+            # pad back to the record/crop length so masked positions fill the
+            # canvas exactly like inference-time padding of short contigs
+            kwargs = {**kwargs, "output_length": crop_size}
         pre_shuffle = spec.get("pre_shuffle", False)
         for i in range(count):
             _, seq = records[i % n_records]

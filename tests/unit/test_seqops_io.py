@@ -163,3 +163,53 @@ def test_fragment_generator_min_len_below_fsize(tmp_path: Path):
     )
     assert len(frags) == 1
     assert frags[0].split(",")[1] == "short"
+
+
+def test_fragment_generator_counts_lowercase_bases_as_valid(tmp_path: Path):
+    # dustmask soft-masks to lowercase; masked-but-real bases must count as
+    # valid sequence in the g/c/a/t metadata, not as Ns (N% statistic).
+    fasta = tmp_path / "softmasked.fa"
+    fasta.write_text(f">mix\n{'ACGT' * 500}{'acgt' * 500}\n")
+
+    frags = list(
+        fragment_generator(
+            str(fasta),
+            fragsize=2000,
+            stride=2000,
+            num=1,
+            no_progress=True,
+            dustmask=False,
+            min_len=2000,
+        )
+    )
+    assert len(frags) == 2
+    parts = frags[0].split(",")
+    g, c, a, t = (int(parts[i]) for i in (6, 7, 8, 9))
+    assert (g, c, a, t) == (500, 500, 500, 500)
+    # Second window is all lowercase (fully soft-masked): still all valid.
+    parts = frags[1].split(",")
+    g, c, a, t = (int(parts[i]) for i in (6, 7, 8, 9))
+    assert (g, c, a, t) == (500, 500, 500, 500)
+    assert g + c + a + t == 2000
+
+
+def test_fragment_generator_counts_lowercase_short_contig(tmp_path: Path):
+    # Same case-insensitive accounting on the short-contig (M-padded) path.
+    fasta = tmp_path / "softmasked_short.fa"
+    fasta.write_text(f">short\n{'ACGT' * 250}{'acgt' * 250}\n")
+
+    frags = list(
+        fragment_generator(
+            str(fasta),
+            fragsize=2000,
+            stride=2000,
+            num=1,
+            no_progress=True,
+            dustmask=False,
+            min_len=1000,
+        )
+    )
+    assert len(frags) == 1
+    parts = frags[0].split(",")
+    g, c, a, t = (int(parts[i]) for i in (6, 7, 8, 9))
+    assert (g, c, a, t) == (500, 500, 500, 500)

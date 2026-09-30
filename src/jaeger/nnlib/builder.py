@@ -730,6 +730,19 @@ class DynamicModelBuilder:
                 )
                 if resume_stage == "reliability":
                     try:
+                        # The reliability checkpoint holds rep + reliability head
+                        # only (the classifier head is not part of that model), so
+                        # restore the classifier stack from its own checkpoint first.
+                        class_ckpt = self._checkpoints.get("classifier", {}).get(
+                            "path", False
+                        )
+                        if class_ckpt and models.get("jaeger_classifier") is not None:
+                            models["jaeger_classifier"].load_weights(
+                                class_ckpt, skip_mismatch=False
+                            )
+                            logger.info(
+                                f"Loaded classifier model weights from {class_ckpt}"
+                            )
                         models["jaeger_reliability"].load_weights(
                             self._checkpoints.get("reliability").get("path"),
                             skip_mismatch=False,

@@ -201,3 +201,95 @@ def test_apply_n_stretch_full_range_single_stretch():
 
 def test_apply_n_stretch_empty_sequence():
     assert synthetic.apply_n_stretch("") == ""
+
+
+def test_apply_gc_shift_up_increases_gc():
+    seq = "ATAT" * 500  # 0% G+C
+    corrupted = synthetic.apply_gc_shift(seq, rate_range=(0.5, 0.5), direction="up")
+    assert len(corrupted) == len(seq)
+    gc = sum(c in "GC" for c in corrupted) / len(corrupted)
+    assert gc == pytest.approx(0.5, abs=0.05)
+
+
+def test_apply_gc_shift_down_decreases_gc():
+    seq = "GCGC" * 500  # 100% G+C
+    corrupted = synthetic.apply_gc_shift(seq, rate_range=(0.5, 0.5), direction="down")
+    assert len(corrupted) == len(seq)
+    gc = sum(c in "GC" for c in corrupted) / len(corrupted)
+    assert gc == pytest.approx(0.5, abs=0.05)
+
+
+def test_apply_gc_shift_random_direction_and_preserves_non_acgt():
+    seq = "ATCGNNNN" * 250
+    corrupted = synthetic.apply_gc_shift(seq, rate_range=(0.3, 0.3))
+    assert len(corrupted) == len(seq)
+    # Ns untouched
+    for c, o in zip(corrupted, seq):
+        if o == "N":
+            assert c == "N"
+    # direction is random: up adds 0.30 GC, down removes all 0.25 GC
+    gc_in = sum(c in "GC" for c in seq) / len(seq)  # 0.25
+    gc_out = sum(c in "GC" for c in corrupted) / len(corrupted)
+    assert gc_out == pytest.approx(0.55, abs=0.04) or gc_out == pytest.approx(
+        0.0, abs=0.04
+    )
+    assert gc_in == 0.25
+
+
+def test_apply_gc_shift_invalid_direction_raises():
+    with pytest.raises(ValueError):
+        synthetic.apply_gc_shift("ATCG", direction="sideways")
+
+
+def test_apply_gc_shift_empty_sequence():
+    assert synthetic.apply_gc_shift("") == ""
+
+
+def test_apply_pad_truncate_output_shape():
+    seq = "ACGT" * 1000  # 4000 nt
+    corrupted = synthetic.apply_pad_truncate(
+        seq, length_range=(500, 1000), output_length=4000
+    )
+    assert len(corrupted) == 4000
+    valid = corrupted.rstrip("M")
+    assert 500 <= len(valid) <= 1000
+    # valid part is a subsequence of the input
+    assert valid in seq
+
+
+def test_apply_pad_truncate_defaults_to_input_length():
+    seq = "ACGT" * 500  # 2000 nt
+    corrupted = synthetic.apply_pad_truncate(seq, length_range=(500, 1900))
+    assert len(corrupted) == len(seq)
+    assert set(corrupted) <= set("ACGTM")
+
+
+def test_apply_pad_truncate_bad_range_raises():
+    with pytest.raises(ValueError):
+        synthetic.apply_pad_truncate("ACGT" * 100, length_range=(500, 1900),
+                                     output_length=100)
+
+
+def test_apply_pad_truncate_empty_sequence():
+    assert synthetic.apply_pad_truncate("") == ""
+
+
+def test_apply_random_seq_shape_and_gc():
+    seq = "ATCG" * 500
+    corrupted = synthetic.apply_random_seq(seq, gc_range=(0.3, 0.3))
+    assert len(corrupted) == len(seq)
+    assert set(corrupted) <= set("ACGT")
+    gc = sum(c in "GC" for c in corrupted) / len(corrupted)
+    assert gc == pytest.approx(0.3, abs=0.05)
+
+
+def test_apply_random_seq_gc_bounds():
+    seq = "ATCG" * 500
+    for _ in range(50):
+        corrupted = synthetic.apply_random_seq(seq)
+        gc = sum(c in "GC" for c in corrupted) / len(corrupted)
+        assert 0.20 <= gc <= 0.80
+
+
+def test_apply_random_seq_empty():
+    assert synthetic.apply_random_seq("") == ""

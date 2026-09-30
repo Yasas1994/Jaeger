@@ -475,10 +475,12 @@ def generate_summary(data, **kwargs) -> pd.DataFrame:
     if data.get("has_reliability", True):
         reliability_score = data["ood"]
         # Contigs the reliability head cannot vouch for (mean per-window
-        # probability below 0.5) are labeled "uncertain" instead of the
+        # probability below the reliability gate, 0.5 by default and
+        # adjustable via --uc) are labeled "uncertain" instead of the
         # argmax class.
+        gate = kwargs.get("reliability_gate", 0.5)
         prediction = [
-            class_map[c] if r >= 0.5 else "uncertain"
+            class_map[c] if r >= gate else "uncertain"
             for c, r in zip(data["consensus"], reliability_score)
         ]
     else:

@@ -155,6 +155,49 @@ def _deprecated_alias(command: click.Command, old_name: str) -> None:
     help="Enable mix (chimera) perturbation",
 )
 @click.option(
+    "--gc-shift/--no-gc-shift",
+    default=False,
+    show_default=True,
+    help="Enable directed G+C-shift perturbation (AT<->GC mutagenesis)",
+)
+@click.option(
+    "--gc-shift-rate-range",
+    type=float,
+    nargs=2,
+    default=(0.05, 0.20),
+    show_default=True,
+    help="Mutation-rate range for gc_shift",
+)
+@click.option(
+    "--pad-truncate/--no-pad-truncate",
+    default=False,
+    show_default=True,
+    help="Enable truncate-and-pad perturbation (mirrors short-contig padding "
+    "at inference; pads with 'M')",
+)
+@click.option(
+    "--iid-random/--no-iid-random",
+    default=False,
+    show_default=True,
+    help="Enable iid random-sequence perturbation (structureless OOD)",
+)
+@click.option(
+    "--iid-random-gc-range",
+    type=float,
+    nargs=2,
+    default=(0.25, 0.75),
+    show_default=True,
+    help="G+C range for iid_random sequences",
+)
+@click.option(
+    "--pad-length-range",
+    type=int,
+    nargs=2,
+    default=(500, 1900),
+    show_default=True,
+    help="Retained-length range (nt) for pad_truncate",
+)
+@click.option(
     "--window-fraction",
     type=float,
     default=0.25,

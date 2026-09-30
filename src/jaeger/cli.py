@@ -258,6 +258,13 @@ def health(**kwargs):
     help="Minimum reliability score required to accept predictions",
 )
 @click.option(
+    "--uc",
+    type=float,
+    default=0.5,
+    help="Reliability score below which contigs are labeled 'uncertain' "
+    "instead of the argmax class (default: 0.5)",
+)
+@click.option(
     "--pc",
     type=float,
     default=0.5,
@@ -444,6 +451,156 @@ def predict(**kwargs):
                 bold=True,
             )
         )
+
+
+@click.command(context_settings={"show_default": True})
+@click.option(
+    "-i",
+    "--input",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to input FASTA file",
+)
+@click.option(
+    "-o", "--output", type=str, required=True, help="Path to output directory"
+)
+@click.option(
+    "-m",
+    "--model",
+    default="default",
+    help=(
+        f"Select a deep-learning model to use. "
+        f"Available choices: {', '.join(AVAIL_MODELS)}"
+    ),
+)
+@click.option(
+    "--model_path",
+    default=None,
+    help=("Give the path to a model. overrides --model"),
+)
+@click.option(
+    "--config",
+    type=click.Path(exists=True),
+    help="Path to Jaeger config file (e.g., when using Apptainer or Docker)",
+)
+@click.option(
+    "--fsize",
+    type=int,
+    default=2000,
+    help="Length of the sliding window",
+)
+@click.option(
+    "--stride",
+    type=int,
+    default=1500,
+    help="The gap between two the sliding windows",
+)
+@click.option(
+    "--min-len",
+    type=int,
+    default=None,
+    help="Minimum contig length to process (default: --fsize). "
+    "Shorter contigs are skipped.",
+)
+@click.option(
+    "--batch",
+    type=int,
+    default=16,
+    help="Parallel batch size, lower if GPU runs out of memory",
+)
+@click.option("--workers", type=int, default=4, help="Number of threads to use")
+@click.option(
+    "--class-index",
+    type=int,
+    default=None,
+    help="Class index to compute saliency for (default: the predicted class per window)",
+)
+@click.option(
+    "--flavour",
+    type=click.Choice(["raw", "gradxinput", "integrated"]),
+    default="raw",
+    help="Attribution method: raw (sum of |gradient| over embedding dims), "
+    "gradxinput (gradient x (embedding - null baseline), signed), or "
+    "integrated (integrated gradients from the null baseline; slow, eager "
+    "mode). The null baseline is the embedding of input id 0 (N/pad codon).",
+)
+@click.option(
+    "--ig-steps",
+    type=int,
+    default=50,
+    help="Number of interpolation steps for --flavour integrated",
+)
+@click.option(
+    "--all-classes",
+    is_flag=True,
+    help="Compute saliency/attribution for every class (not just the "
+    "predicted class); stored as saliency_by_class in the npz",
+)
+@click.option(
+    "--store-gradients",
+    is_flag=True,
+    help="Also store raw per-embedding-dimension gradients in the npz file "
+    "(only with --flavour raw)",
+)
+@click.option(
+    "--whole-sequence",
+    is_flag=True,
+    help="Use each contig as a single (padded) window instead of sliding windows",
+)
+@click.option(
+    "--dustmask/--no-dustmask",
+    default=True,
+    help="Mask low-complexity regions with pydustmasker before fragmenting. "
+    "Use --no-dustmask to disable.",
+)
+@click.option(
+    "--cpu",
+    is_flag=True,
+    help="Ignore available GPUs and explicitly run on CPU",
+)
+@click.option(
+    "--physicalid",
+    type=int,
+    default=0,
+    help="Set default GPU device ID for multi-GPU systems",
+)
+@click.option(
+    "--mem",
+    type=int,
+    default=4,
+    help="GPU memory limit",
+)
+@click.option(
+    "--precision",
+    type=click.Choice(["fp32", "fp16", "bf16"]),
+    default="fp32",
+    help="GPU precision: fp32 (default), fp16, or bf16.",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    count=True,
+    help="Verbosity level: -vv debug, -v info",
+    default=1,
+)
+@click.option("-f", "--overwrite", is_flag=True, help="Overwrite existing files")
+def interpret(**kwargs):
+    """Generate gradient-based saliency maps for model interpretation.
+
+    Rebuilds the Keras model from the model's project recipe and weights
+    (unlike `jaeger predict`, which runs the frozen SavedModel graph), then
+    computes the gradient of the predicted-class probability with respect to
+    the codon embeddings for every sliding window.
+    """
+    model = kwargs.get("model")
+    if kwargs.get("model_path") is None and model not in AVAIL_MODELS:
+        raise click.BadParameter(
+            f"Model '{model}' is not one of the available options: {', '.join(AVAIL_MODELS)}"
+        )
+
+    from jaeger.commands.interpret import run_core
+
+    run_core(**kwargs)
 
 
 @click.command(context_settings={"show_default": True})
@@ -1084,6 +1241,7 @@ def predict_tax(**kwargs):  # noqa: F811
 
 main.add_command(health)
 main.add_command(predict)
+main.add_command(interpret)
 main.add_command(train)
 main.add_command(register_models)
 main.add_command(download)

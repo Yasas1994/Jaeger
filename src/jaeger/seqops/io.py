@@ -121,13 +121,17 @@ def fragment_generator(
                             dynamic_stride_threshold,
                         )
                         for i, (b, index) in enumerate(signal_l(indices)):
-                            g = sequence[index : index + fragsize].count("G")
-                            c = sequence[index : index + fragsize].count("C")
-                            a = sequence[index : index + fragsize].count("A")
-                            t = sequence[index : index + fragsize].count("T")
+                            window = sequence[index : index + fragsize]
+                            # Count bases case-insensitively: dustmask soft-masks
+                            # to lowercase, and lowercase bases must count as
+                            # valid sequence, not as Ns, in the N% statistic.
+                            g = window.count("G") + window.count("g")
+                            c = window.count("C") + window.count("c")
+                            a = window.count("A") + window.count("a")
+                            t = window.count("T") + window.count("t")
                             gc_skew = safe_divide((g - c), (g + c))
                             yield (
-                                f"{sequence[index : index + fragsize]},"
+                                f"{window},"
                                 f"{header},{index},{b},{i},{seqlen},{g},{c},{a},{t},"
                                 f"{gc_skew: .3f}"
                             )
@@ -136,10 +140,10 @@ def fragment_generator(
                     # with 'M' so it can share the fixed-shape long-contig path.
                     # 'M' is used instead of 'N' because N-stretches are otherwise
                     # treated as low-quality sequence and filtered downstream.
-                    g = sequence.count("G")
-                    c = sequence.count("C")
-                    a = sequence.count("A")
-                    t = sequence.count("T")
+                    g = sequence.count("G") + sequence.count("g")
+                    c = sequence.count("C") + sequence.count("c")
+                    a = sequence.count("A") + sequence.count("a")
+                    t = sequence.count("T") + sequence.count("t")
                     gc_skew = safe_divide((g - c), (g + c))
                     padded_sequence = sequence + ("M" * (fragsize - seqlen))
                     yield (

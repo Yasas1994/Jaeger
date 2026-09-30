@@ -527,6 +527,7 @@ def _write_prediction_outputs(
         output_table_path=output_table_path,
         output_phage_table_path=output_phage_table_path,
         reliability_cutoff=kwargs.get("rc", 0.5),
+        reliability_gate=kwargs.get("uc", 0.5),
         phage_score=kwargs.get("pc", 1),
         refined_contig=refined_contig.to_pandas()
         if refined_contig is not None
