@@ -60,3 +60,18 @@ def test_optimize_data_help_includes_new_flags():
     assert "--max-memory-mb" in result.output
     assert "--pad" in result.output
     assert "--units" in result.output
+
+
+def test_predict_help_includes_taxonomy_flags():
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["predict", "--help"])
+    assert result.exit_code == 0
+    assert "--taxonomy" in result.output
+    assert "--taxonomy-k" in result.output
+
+
+def test_taxonomy_predict_help_includes_k():
+    runner = CliRunner()
+    result = runner.invoke(cli.main, ["taxonomy", "predict", "--help"])
+    assert result.exit_code == 0
+    assert "-k" in result.output

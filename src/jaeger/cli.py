@@ -265,6 +265,23 @@ def health(**kwargs):
     "instead of the argmax class (default: 0.5)",
 )
 @click.option(
+    "--taxonomy",
+    is_flag=True,
+    help="Predict contig taxonomy using the taxonomy database bundled with "
+    "the model ('taxonomy_db' directory inside the model directory). "
+    "Window embeddings are streamed to disk and searched against the "
+    "database after inference; results are written to <input>_taxonomy.tsv.",
+)
+@click.option(
+    "--taxonomy-k",
+    type=click.IntRange(min=1),
+    default=5,
+    help="Number of nearest database neighbors voting on each window's "
+    "taxonomy (default: 5). The per-contig call is the majority-vote LCA "
+    "of all window votes; the support_frac column in <input>_taxonomy.tsv "
+    "reports the fraction of votes supporting it.",
+)
+@click.option(
     "--pc",
     type=float,
     default=0.5,
@@ -424,8 +441,11 @@ def predict(**kwargs):
         _click.echo(
             _click.style(
                 f"Warning: model '{model}' uses the legacy prediction workflow and is deprecated. "
-                "It will be removed in a future release. Please migrate to a modern model "
-                "(e.g., 'jaeger_38341_1.4M_fragment').",
+                "It will be removed in a future release.\n"
+                "Please switch to a modern model: run 'jaeger download --list' to see "
+                "the available models and their upload dates, then download the latest "
+                "one with 'jaeger download -p /path/to/models' and pass it to "
+                "'jaeger predict' via '--model'.",
                 fg="yellow",
             ),
             err=True,
@@ -899,7 +919,8 @@ def register_models(**kwargs):
     "--model_name",
     required=False,
     default=None,
-    help="identifier of the model to download",
+    help="Identifier of the model to download. If omitted, the latest model "
+    "in the catalog is downloaded. Use '--list' to see available models.",
 )
 @click.option(
     "-l",
@@ -918,7 +939,11 @@ def register_models(**kwargs):
 )
 def download(path, model_name, list_models, **kwargs):
     """Downloads model weights and updated model paths, or lists available models."""
-    from jaeger.commands.downloads import list_ckan_model_download_links, download_file
+    from jaeger.commands.downloads import (
+        list_ckan_model_download_links,
+        download_file,
+        get_latest_model_name,
+    )
 
     # Enforce mutual exclusivity
     if list_models and (model_name or path):
@@ -926,18 +951,29 @@ def download(path, model_name, list_models, **kwargs):
             "The '--list' option cannot be used with '--model' or '--path'."
         )
 
-    if not list_models and (not model_name or not path):
-        raise click.UsageError(
-            "You must provide both '--model' and '--path', or just '--list'."
-        )
+    if not list_models and not path:
+        raise click.UsageError("You must provide '--path', or just '--list'.")
 
     model_links = list_ckan_model_download_links()
 
     if list_models:
         click.echo("Available models:")
-        for name in sorted(model_links.keys()):
-            click.echo(f"- {name}")
+        for name in sorted(
+            model_links,
+            key=lambda n: model_links[n].get("created") or "",
+            reverse=True,
+        ):
+            created = (model_links[name].get("created") or "unknown date").split("T")[0]
+            click.echo(f"- {name} (uploaded {created})")
         return
+
+    if model_name is None:
+        model_name = get_latest_model_name(model_links)
+        if model_name is None:
+            raise click.UsageError(
+                "No models found in the catalog. Check your internet connection."
+            )
+        click.echo(f"No model specified; downloading the latest model: {model_name}")
 
     if model_name not in model_links:
         raise click.UsageError(
@@ -948,7 +984,7 @@ def download(path, model_name, list_models, **kwargs):
     model_path = Path(path).resolve() / "jaeger_models"
     model_path.mkdir(parents=True, exist_ok=True)
 
-    download_file((model_name, model_links[model_name]), output_dir=model_path)
+    download_file((model_name, model_links[model_name]["url"]), output_dir=model_path)
 
     if kwargs.get("config", False):
         # update an external config file
@@ -1120,7 +1156,10 @@ def build(**kwargs):
             usage                                                                      
             -----                                                                      
 
-            jaeger taxonomy predict [OPTIONS] -i contigs.fasta -d taxonomy_db -o output_dir
+            jaeger taxonomy predict [OPTIONS] -i contigs.fasta -o output_dir
+
+            If -d/--db is omitted, the 'taxonomy_db' directory inside the
+            selected model's directory is used automatically.
 
         """,
 )
@@ -1135,8 +1174,9 @@ def build(**kwargs):
     "-d",
     "--db",
     type=click.Path(exists=True),
-    required=True,
-    help="Path to taxonomy database",
+    default=None,
+    help="Path to taxonomy database. If omitted, the 'taxonomy_db' directory "
+    "inside the selected model's directory is used automatically.",
 )
 @click.option(
     "-o", "--output", type=str, required=True, help="Path to output directory"
@@ -1152,6 +1192,13 @@ def build(**kwargs):
     type=int,
     default=2048,
     help="The gap between two sliding of the sliding window (fsize = stride)",
+)
+@click.option(
+    "-k",
+    type=click.IntRange(min=1),
+    default=5,
+    help="Number of nearest database neighbors voting on each window's "
+    "taxonomy (default: 5)",
 )
 @click.option(
     "-m",

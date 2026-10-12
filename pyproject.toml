@@ -89,3 +89,9 @@ taxonomy = [
     "taxopy",
     "faiss-cpu",
 ]
+# GPU-accelerated taxonomy search. faiss-gpu and faiss-cpu share the 'faiss'
+# namespace and are mutually exclusive — install ONE of the two extras.
+taxonomy-gpu = [
+    "taxopy",
+    "faiss-gpu",
+]

@@ -1,4 +1,5 @@
 # experimental taxonomy predicton workflow
+import logging
 import os
 
 os.environ["GRPC_VERBOSITY"] = "ERROR"
@@ -31,6 +32,8 @@ from jaeger.utils.gpu import get_device_name
 from jaeger.utils.fs import validate_fasta_entries
 from jaeger.utils.misc import json_to_dict, AvailableModels, get_model_id  # noqa: F401
 from jaeger.utils.logging import description, get_logger
+
+logger = logging.getLogger("jaeger")
 
 
 # Standard abbreviated rank prefixes for the full-lineage string.
@@ -84,9 +87,11 @@ class TaxonomyModel:
         faiss_path: Union[str, Path],
         index2taxid_path: Union[str, Path],
         taxdump_path: Union[str, Path],
+        use_gpu: bool = True,
     ):
+        self._gpu_resources = None
         self.index2taxid = self.load_index2taxid(path=index2taxid_path)
-        self.faiss_index = self.load_faiss_index(path=faiss_path)
+        self.faiss_index = self.load_faiss_index(path=faiss_path, use_gpu=use_gpu)
         self.taxdb = self.load_taxdb(path=taxdump_path)
         # Cache Taxon objects because constructing them is expensive.
         self._taxon_cache: dict[int, Any] = {}
@@ -102,8 +107,25 @@ class TaxonomyModel:
         data = np.load(path)
         return data["taxids"]
 
-    def load_faiss_index(self, path):
-        return faiss.read_index(str(path))
+    def load_faiss_index(self, path, use_gpu: bool = True):
+        """Load the FAISS index, moving it to GPU when possible.
+
+        GPU search requires the ``faiss-gpu`` build (``pip install
+        jaeger-bio[taxonomy-gpu]``) and a visible CUDA device; under
+        ``faiss-cpu`` or without a GPU the index stays on CPU.
+        """
+        index = faiss.read_index(str(path))
+        if not use_gpu:
+            return index
+        try:
+            if faiss.get_num_gpus() > 0:
+                self._gpu_resources = faiss.StandardGpuResources()
+                index = faiss.index_cpu_to_gpu(self._gpu_resources, 0, index)
+                logger.info("taxonomy nearest-neighbor search will run on GPU")
+        except (AttributeError, RuntimeError) as e:
+            # faiss-cpu builds lack GPU entry points / report 0 GPUs
+            logger.debug(f"GPU taxonomy search unavailable ({e}); using CPU")
+        return index
 
     def _get_taxon(self, taxid: int):
         taxon = self._taxon_cache.get(taxid)
@@ -120,14 +142,35 @@ class TaxonomyModel:
             )
         return taxons[0]
 
-    def predict(self, embeddings: List, headers: List, k: int = 1):
+    def support_fraction(self, taxids, lca) -> float:
+        """Fraction of neighbor votes whose lineage contains the LCA taxid.
+
+        Per-contig confidence signal for the taxonomy call: a value near 1
+        means the k x n_windows votes overwhelmingly support the assigned
+        lineage, while low values flag discordant (likely unreliable) calls.
+        """
+        target = getattr(lca, "taxid", None)
+        if target is None or len(taxids) == 0:
+            return 0.0
+        unique, counts = np.unique(taxids, return_counts=True)
+        supporting = sum(
+            count
+            for taxid, count in zip(unique, counts)
+            if target in self._get_taxon(int(taxid)).taxid_lineage
+        )
+        return float(supporting) / len(taxids)
+
+    def predict(self, embeddings: List, headers: List, k: int = 5):
         """Batch all contig windows into a single FAISS search.
 
         ``embeddings`` is a list of 2-D arrays, one per contig. The result is an
-        LCA call per contig using the ``k`` nearest neighbors of every window.
+        LCA call per contig using the ``k`` nearest neighbors of every window,
+        plus the fraction of votes supporting the call (``support_frac``).
         """
         if not embeddings:
             return []
+
+        k = min(k, self.faiss_index.ntotal)
 
         # Stack all windows from all contigs into one contiguous float32 array.
         all_embeddings = np.vstack(embeddings).astype(np.float32, copy=False)
@@ -145,7 +188,14 @@ class TaxonomyModel:
             start = offsets[idx]
             end = offsets[idx + 1]
             taxids = all_taxids[start:end]
-            tmp_l.append({"header": header, "lca": self.get_lca(taxids)})
+            lca = self.get_lca(taxids)
+            tmp_l.append(
+                {
+                    "header": header,
+                    "lca": lca,
+                    "support_frac": self.support_fraction(taxids, lca),
+                }
+            )
         return tmp_l
 
 
@@ -252,6 +302,126 @@ def get_acc2taxid(path: str):
                 continue
             map_[fields[1]] = int(fields[2])
     return map_
+
+
+TAXDB_REQUIRED_FILES = ("genomes.faiss", "index2tax.npz", "tax")
+
+
+def find_taxdb(model_info: dict) -> Path | None:
+    """Return the taxonomy database bundled with a model, or None.
+
+    The convention is a ``taxonomy_db`` directory inside the model's root
+    directory (the parent of the ``model`` dir that holds the graph)
+    containing ``genomes.faiss``, ``index2tax.npz`` and ``tax/``.
+    """
+    graph = model_info.get("graph")
+    if graph is None:
+        return None
+    candidate = Path(graph).parent.parent / "taxonomy_db"
+    if all((candidate / f).exists() for f in TAXDB_REQUIRED_FILES):
+        return candidate
+    return None
+
+
+def split_windows_by_contig(y_pred: dict, embeddings: np.ndarray):
+    """Split per-window embeddings and headers into per-contig lists.
+
+    Uses the ``meta_2`` split flags emitted by the inference dataset; the
+    embedding rows correspond 1:1 to the prediction rows. ``embeddings`` may
+    be a memory-mapped array — splits are views, so nothing is copied.
+    """
+    split_flags = np.array(y_pred["meta_2"], dtype=np.int32)
+    split_indices = np.where(split_flags == 1)[0] + 1
+
+    if embeddings.shape[0] == split_indices[-1]:
+        split_indices = split_indices[:-1]
+
+    emb_split = np.split(embeddings, split_indices, axis=0)
+    headers = [i[0] for i in np.split(y_pred["meta_0"], split_indices, axis=0)]
+    return emb_split, headers
+
+
+def contig_annotations(
+    y_pred: dict, class_map: dict, fsize: int, reliability_gate: float = 0.5
+) -> dict:
+    """Per-contig classifier summary for annotating taxonomy output.
+
+    Reuses ``postprocess.collect.pred_to_dict`` so values match the main
+    Jaeger summary table by construction. Returns a dict keyed by contig
+    header holding the contig length, the final prediction label
+    (``uncertain`` when the reliability score is below ``reliability_gate``),
+    the reliability score, the mean window entropy, and one
+    ``<class>_score`` column per class (softmax of the contig's mean window
+    logits).
+    """
+    from jaeger.postprocess.collect import _logits_to_probs, pred_to_dict
+
+    data, _ = pred_to_dict(y_pred, class_map=class_map, fsize=fsize, term_repeats=None)
+    cmap = {
+        int(i): label
+        for i, label in zip(class_map.get("index"), class_map.get("class"))
+    }
+    probs = _logits_to_probs(data["pred_sum"])
+    has_reliability = data.get("has_reliability", True)
+
+    annotations = {}
+    for i, header in enumerate(data["headers"]):
+        consensus = int(data["consensus"][i])
+        if has_reliability:
+            reliability = float(data["ood"][i])
+            prediction = (
+                cmap[consensus] if reliability >= reliability_gate else "uncertain"
+            )
+        else:
+            reliability = None
+            prediction = cmap[consensus]
+        entry = {
+            "length": int(data["length"][i]),
+            "prediction": prediction,
+            "entropy": round(float(data["entropy"][i]), 4),
+            "reliability_score": (
+                round(reliability, 4) if reliability is not None else "unavailable"
+            ),
+        }
+        if probs.shape[-1] == 1:
+            entry["score"] = round(float(probs[i, 0]), 4)
+        else:
+            for cls_idx, label in cmap.items():
+                entry[f"{label}_score"] = round(float(probs[i, cls_idx]), 4)
+        annotations[str(header)] = entry
+    return annotations
+
+
+def write_taxonomy_tsv(predictions, output_path, annotations=None) -> None:
+    """Write taxonomy predictions (from TaxonomyModel.predict) to a TSV.
+
+    When ``annotations`` (from ``contig_annotations``) is given, each row is
+    extended with the contig's classifier summary: length (placed after
+    ``header``), final prediction, entropy, reliability score and per-class
+    scores.
+    """
+    import pandas as pd
+
+    rows = []
+    for pred in predictions:
+        header = pred["header"]
+        if isinstance(header, bytes):
+            header = header.decode("utf-8")
+        lca = pred["lca"]
+        ann = annotations.get(header, {}) if annotations is not None else {}
+        row = {
+            "header": header,
+            **({"length": ann["length"]} if "length" in ann else {}),
+            "taxid": getattr(lca, "taxid", ""),
+            "name": getattr(lca, "name", ""),
+            "rank": getattr(lca, "rank", ""),
+            "support_frac": round(pred.get("support_frac", 0.0), 4),
+        }
+        row.update({k: v for k, v in ann.items() if k != "length"})
+        row["lineage"] = _format_ranked_lineage(lca)
+        rows.append(row)
+
+    pd.DataFrame(rows).to_csv(output_path, sep="\t", index=False)
 
 
 def build_taxdb(**kwargs):
@@ -480,7 +650,6 @@ def predict_taxonomy(**kwargs):
 
     OUTPUT_DIR = Path(kwargs.get("output"))
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    DATABASE_DIR = Path(kwargs.get("db"))
 
     log_file = Path(f"{file_base}_jaeger.log")
     logger = get_logger(OUTPUT_DIR, log_file, level=kwargs.get("verbose"))
@@ -490,6 +659,31 @@ def predict_taxonomy(**kwargs):
     logger.debug(DATA_PATH)
     logger.debug(AvailableModels(path=USER_MODEL_PATHS).info)
     logger.debug(MODEL_INFO)
+
+    if kwargs.get("db"):
+        DATABASE_DIR = Path(kwargs.get("db"))
+        missing = [
+            str(p)
+            for p in (DATABASE_DIR / f for f in TAXDB_REQUIRED_FILES)
+            if not p.exists()
+        ]
+        if missing:
+            logger.error(
+                "taxonomy database is incomplete or missing. "
+                f"could not find: {', '.join(missing)}. "
+                "build a database with 'jaeger taxonomy build'."
+            )
+            sys.exit(1)
+    else:
+        # Auto-detect the taxonomy database bundled with the model.
+        DATABASE_DIR = find_taxdb(MODEL_INFO)
+        if DATABASE_DIR is None:
+            logger.error(
+                "no taxonomy database found in the model directory. "
+                "pass -d/--db or build a database with 'jaeger taxonomy build'."
+            )
+            sys.exit(1)
+        logger.info(f"using model-bundled taxonomy database: {DATABASE_DIR}")
 
     # load taxdb
     logger.info("loading taxonomy database")
@@ -661,27 +855,22 @@ def predict_taxonomy(**kwargs):
     logger.info("running taxonomy assignment")
     embeddings, headers = unravel_inference(y_pred)
 
-    predictions = tax_model.predict(embeddings, headers)
+    predictions = tax_model.predict(embeddings, headers, k=kwargs.get("k", 5))
 
-    # Write predictions to TSV using pandas for consistency with the rest of the package.
-    logger.info("writing taxonomy predictions")
-    import pandas as pd
-
-    rows = []
-    for pred in predictions:
-        header = pred["header"]
-        if isinstance(header, bytes):
-            header = header.decode("utf-8")
-        lca = pred["lca"]
-        rows.append(
-            {
-                "header": header,
-                "taxid": getattr(lca, "taxid", ""),
-                "name": getattr(lca, "name", ""),
-                "rank": getattr(lca, "rank", ""),
-                "lineage": _format_ranked_lineage(lca),
-            }
+    # Per-contig classifier summary (prediction, class scores, reliability,
+    # entropy) annotating the taxonomy table.
+    try:
+        annotations = contig_annotations(
+            y_pred,
+            class_map=model.class_map,
+            fsize=kwargs.get("fsize"),
         )
+    except Exception as e:
+        logger.warning(f"could not compute contig annotations: {e}")
+        logger.debug(traceback.format_exc())
+        annotations = None
 
-    pd.DataFrame(rows).to_csv(output_taxonomy, sep="\t", index=False)
+    # Write predictions to TSV.
+    logger.info("writing taxonomy predictions")
+    write_taxonomy_tsv(predictions, output_taxonomy, annotations=annotations)
     logger.info(f"taxonomy predictions written to {output_taxonomy}")

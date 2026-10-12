@@ -1,6 +1,7 @@
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+import json
 import yaml
 import math
 import tensorflow as tf
@@ -338,13 +339,23 @@ class InferModel:
         else:
             return tf.function(jit_compile=False, reduce_retracing=True)(step)
 
-    def predict(self, dataset, no_progress: bool = False) -> dict[str, np.ndarray]:
+    def predict(
+        self,
+        dataset,
+        no_progress: bool = False,
+        embedding_sink: str | Path | None = None,
+    ) -> dict[str, np.ndarray]:
         """
         dataset: yields tuples (inputs_dict, meta0, meta1, …)
         Returns a dict of numpy arrays, each of shape (N, …)
 
         To avoid GPU OOM on large datasets, each batch is moved to host
         (CPU) memory immediately after inference.
+
+        When ``embedding_sink`` is set, per-batch ``embedding`` outputs are
+        streamed to that file as raw float32 instead of being accumulated in
+        memory, and a ``<sink>.json`` sidecar with {"rows", "dim"} is written.
+        The sink file can be memory-mapped back with ``numpy.memmap``.
         """
         # accumulate NumPy arrays on CPU — prevents GPU memory growth
         acc: dict[str, list[np.ndarray]] = defaultdict(list)
@@ -352,19 +363,39 @@ class InferModel:
         # inline for speed
         inf_fn = self._predict_step
 
-        for inputs, *meta in track(
-            dataset, description="[cyan]Crunching data…", disable=no_progress
-        ):
-            # call the tf.function
-            logits = inf_fn(inputs)
+        sink_fh = None
+        sink_rows = 0
+        sink_dim = None
+        if embedding_sink is not None:
+            sink_fh = open(embedding_sink, "wb")
 
-            # move logits to CPU immediately to bound GPU memory usage
-            for k, t in logits.items():
-                acc[k].append(t.numpy())
+        try:
+            for inputs, *meta in track(
+                dataset, description="[cyan]Crunching data…", disable=no_progress
+            ):
+                # call the tf.function
+                logits = inf_fn(inputs)
 
-            # meta data is already on CPU (strings / python objects)
-            for idx, m in enumerate(meta):
-                acc[f"meta_{idx}"].append(m)
+                # move logits to CPU immediately to bound GPU memory usage
+                for k, t in logits.items():
+                    if k == "embedding" and sink_fh is not None:
+                        arr = t.numpy().astype(np.float32, copy=False)
+                        arr.tofile(sink_fh)
+                        sink_rows += arr.shape[0]
+                        sink_dim = arr.shape[1] if arr.ndim > 1 else 1
+                        continue
+                    acc[k].append(t.numpy())
+
+                # meta data is already on CPU (strings / python objects)
+                for idx, m in enumerate(meta):
+                    acc[f"meta_{idx}"].append(m)
+        finally:
+            if sink_fh is not None:
+                sink_fh.close()
+                with open(f"{embedding_sink}.json", "w") as fh:
+                    json.dump(
+                        {"rows": sink_rows, "dim": sink_dim, "dtype": "float32"}, fh
+                    )
 
         # concatenate NumPy arrays on CPU
         result: dict[str, np.ndarray] = {}

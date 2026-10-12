@@ -151,6 +151,28 @@ def _print_diagnostics(logger) -> None:
     else:
         logger.info("  (no models found)")
 
+    # Warn when no modern SavedModel (graph + classes) is registered; the
+    # bundled legacy models are deprecated. The tiny bundled test model is
+    # excluded from this check.
+    modern = [
+        name
+        for name, meta in avail.info.items()
+        if name != "test"
+        and meta.get("graph") is not None
+        and meta.get("classes") is not None
+    ]
+    if not modern:
+        logger.warning(
+            "No modern Jaeger model is registered. The bundled legacy model "
+            "is deprecated and will be removed in a future release."
+        )
+        logger.warning(
+            "Run 'jaeger download --list' to see the available models and "
+            "their upload dates, then download the latest one with "
+            "'jaeger download -p /path/to/models' and pass it to "
+            "'jaeger predict' via '--model'."
+        )
+
     # Bundled config entries
     logger.info("-" * 40)
     logger.info("Bundled Model Configs:")

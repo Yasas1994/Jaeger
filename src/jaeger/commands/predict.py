@@ -176,6 +176,7 @@ def _run_chunked_prediction(
     save_embedding = kwargs.get("save_embedding", False)
     save_nmd = kwargs.get("save_nmd", False)
     save_prophage = kwargs.get("prophage", False)
+    save_taxonomy = kwargs.get("taxonomy", False)
 
     with tempfile.TemporaryDirectory(prefix="jaeger_chunk_") as tmp:
         tmp_dir = Path(tmp)
@@ -186,6 +187,7 @@ def _run_chunked_prediction(
         chunk_embedding_npzs: list[Path] = []
         chunk_nmd_npzs: list[Path] = []
         chunk_prophage_dirs: list[Path] = []
+        chunk_taxonomy_tsvs: list[Path] = []
 
         for idx, chunk_file in enumerate(chunk_files):
             chunk_out = tmp_dir / f"out_{idx:04d}"
@@ -222,6 +224,11 @@ def _run_chunked_prediction(
                 if prophage_dir.exists():
                     chunk_prophage_dirs.append(prophage_dir)
 
+            if save_taxonomy:
+                taxonomy_tsv = model_dir / f"{chunk_file.stem}_taxonomy.tsv"
+                if taxonomy_tsv.exists():
+                    chunk_taxonomy_tsvs.append(taxonomy_tsv)
+
             logger.info(f"chunk {idx + 1}/{len(chunk_files)} complete")
 
         final_tsv = output_dir / f"{file_base}.tsv"
@@ -241,6 +248,11 @@ def _run_chunked_prediction(
             final_nmd = output_dir / f"{file_base}_nmd.npz"
             _merge_npz_files(chunk_nmd_npzs, final_nmd)
             logger.info(f"wrote {final_nmd}")
+
+        if chunk_taxonomy_tsvs:
+            final_taxonomy = output_dir / f"{file_base}_taxonomy.tsv"
+            _concatenate_tsvs(chunk_taxonomy_tsvs, final_taxonomy)
+            logger.info(f"wrote {final_taxonomy}")
 
         if save_prophage and chunk_prophage_dirs:
             _merge_prophage_dirs(chunk_prophage_dirs, output_dir, file_base, logger)
@@ -444,6 +456,106 @@ def _build_prediction_dataset(
     )
 
     return mapped.batch(batch, num_parallel_calls=tf.data.AUTOTUNE).prefetch(25)
+
+
+def _run_taxonomy_assignment(
+    y_pred: dict[str, np.ndarray],
+    *,
+    embedding_sink: Path,
+    taxdb_dir: Path,
+    output_dir: Path,
+    file_base: str,
+    logger: Any,
+    save_embedding: bool,
+    class_map: dict,
+    fsize: int,
+    reliability_gate: float = 0.5,
+    k: int = 5,
+    window_budget: int = 200_000,
+) -> None:
+    """Assign a taxonomy to each contig from its streamed embeddings.
+
+    Embeddings were streamed to ``embedding_sink`` (raw float32 + JSON
+    sidecar) during inference. They are memory-mapped, grouped per contig
+    and searched against the model-bundled FAISS database in window-budgeted
+    chunks to bound memory usage; the per-contig majority-vote LCA over the
+    ``k`` nearest neighbors of every window is written to
+    ``<file_base>_taxonomy.tsv``, annotated with the contig's classifier
+    summary (final prediction, per-class scores, reliability, entropy).
+    """
+    from jaeger.commands.taxonomy import (
+        TaxonomyModel,
+        contig_annotations,
+        split_windows_by_contig,
+        write_taxonomy_tsv,
+    )
+
+    sink_path = Path(embedding_sink)
+    with open(f"{sink_path}.json") as fh:
+        sink_meta = json.load(fh)
+
+    if not sink_meta["rows"]:
+        logger.warning("no embeddings were produced; skipping taxonomy assignment")
+        sink_path.unlink(missing_ok=True)
+        Path(f"{sink_path}.json").unlink(missing_ok=True)
+        return
+
+    embeddings = np.memmap(
+        sink_path,
+        dtype=np.float32,
+        mode="r",
+        shape=(sink_meta["rows"], sink_meta["dim"]),
+    )
+
+    logger.info("grouping embeddings by contig")
+    emb_split, headers = split_windows_by_contig(y_pred, embeddings)
+
+    logger.info("loading taxonomy database")
+    tax_model = TaxonomyModel(
+        faiss_path=taxdb_dir / "genomes.faiss",
+        taxdump_path=taxdb_dir / "tax",
+        index2taxid_path=taxdb_dir / "index2tax.npz",
+    )
+
+    logger.info(f"running taxonomy assignment (k={k})")
+    predictions = []
+    batch_emb: list[np.ndarray] = []
+    batch_headers: list[Any] = []
+    batch_windows = 0
+    for emb, header in zip(emb_split, headers):
+        batch_emb.append(emb)
+        batch_headers.append(header)
+        batch_windows += emb.shape[0]
+        if batch_windows >= window_budget:
+            predictions.extend(tax_model.predict(batch_emb, batch_headers, k=k))
+            batch_emb, batch_headers, batch_windows = [], [], 0
+    if batch_emb:
+        predictions.extend(tax_model.predict(batch_emb, batch_headers, k=k))
+
+    output_taxonomy = output_dir / f"{file_base}_taxonomy.tsv"
+    try:
+        annotations = contig_annotations(
+            y_pred,
+            class_map=class_map,
+            fsize=fsize,
+            reliability_gate=reliability_gate,
+        )
+    except Exception as e:
+        logger.warning(f"could not compute contig annotations: {e}")
+        logger.debug(traceback.format_exc())
+        annotations = None
+    write_taxonomy_tsv(predictions, output_taxonomy, annotations=annotations)
+    logger.info(f"taxonomy predictions written to {output_taxonomy}")
+
+    if save_embedding:
+        embedding_npz = output_dir / f"{file_base}_embedding.npz"
+        np.savez(embedding_npz, embedding=np.asarray(embeddings))
+        logger.info(f"{embedding_npz.name} created")
+
+    # release memmaps and remove the streamed files
+    del emb_split, embeddings
+    sink_path.unlink(missing_ok=True)
+    Path(f"{sink_path}.json").unlink(missing_ok=True)
 
 
 def _write_prediction_outputs(
@@ -739,6 +851,22 @@ def _write_prediction_outputs(
         save_nmd=kwargs.get("save_nmd", False),
         logger=logger,
     )
+
+    # --- Taxonomy assignment from streamed embeddings (--taxonomy) ---
+    if kwargs.get("taxdb_dir") is not None:
+        _run_taxonomy_assignment(
+            y_pred,
+            embedding_sink=kwargs.get("embedding_sink"),
+            taxdb_dir=kwargs.get("taxdb_dir"),
+            output_dir=OUTPUT_DIR,
+            file_base=file_base,
+            logger=logger,
+            save_embedding=kwargs.get("save_embedding", False),
+            class_map=model.class_map,
+            fsize=kwargs.get("fsize"),
+            reliability_gate=kwargs.get("uc", 0.5),
+            k=kwargs.get("taxonomy_k", 5),
+        )
 
 
 def run_core(chunk_size: int = 0, argv: list[str] | None = None, **kwargs):
@@ -1044,6 +1172,35 @@ def run_core(chunk_size: int = 0, argv: list[str] | None = None, **kwargs):
             )
         model = InferModel(model_info, use_xla=use_xla)
 
+    # --- Taxonomy database resolution (--taxonomy) ---
+    taxdb_dir = None
+    if kwargs.get("taxonomy"):
+        from jaeger.commands.taxonomy import find_taxdb
+
+        if quantized_mode or use_onnx:
+            logger.warning(
+                "--taxonomy is not supported with quantized/ONNX inference "
+                "engines; taxonomy information can not be predicted"
+            )
+        else:
+            taxdb_dir = find_taxdb(model_info)
+            if taxdb_dir is None:
+                logger.warning(
+                    f"no taxonomy database found for model '{model_name}' "
+                    "(expected a 'taxonomy_db' directory inside the model "
+                    "directory); taxonomy information can not be predicted"
+                )
+            else:
+                logger.info(f"taxonomy database: {taxdb_dir}")
+
+    # Stream embeddings to disk during inference when taxonomy is requested;
+    # they are searched against the database once inference is over.
+    embedding_sink = (
+        OUTPUT_DIR / f"{file_base}_embedding.bin" if taxdb_dir is not None else None
+    )
+    kwargs["taxdb_dir"] = taxdb_dir
+    kwargs["embedding_sink"] = embedding_sink
+
     string_processor_config = model.string_processor_config
     batch_size = kwargs.get("batch")
     fsize = kwargs.get("fsize")
@@ -1090,7 +1247,13 @@ def run_core(chunk_size: int = 0, argv: list[str] | None = None, **kwargs):
     with strategy.scope():
         try:
             logger.info("starting model inference")
-            y_pred = model.predict(idataset, no_progress=True)
+            if embedding_sink is not None:
+                # Only the SavedModel engine supports embedding streaming.
+                y_pred = model.predict(
+                    idataset, no_progress=True, embedding_sink=embedding_sink
+                )
+            else:
+                y_pred = model.predict(idataset, no_progress=True)
         except Exception as e:
             logger.debug(traceback.format_exc())
             logger.error(

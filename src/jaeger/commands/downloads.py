@@ -19,7 +19,8 @@ def list_ckan_model_download_links(api_url: str = API_URL, query: str = QUERY):
         query (str): The dataset search query.
 
     Returns:
-        dict: A dictionary where keys are model names and values are their corresponding download URLs.
+        dict: A dictionary where keys are model names and values are dicts with
+        the download ``url`` and the upload date (``created``, ISO timestamp).
     """
     try:
         response = requests.get(api_url, params={"q": query})
@@ -39,13 +40,35 @@ def list_ckan_model_download_links(api_url: str = API_URL, query: str = QUERY):
                 name = resource.get("name", resource.get("id"))
                 url = resource.get("url")
                 if url:
-                    download_links[name] = url
+                    download_links[name] = {
+                        "url": url,
+                        "created": resource.get("created"),
+                    }
 
         return download_links
 
     except Exception as e:
         print(f"Error retrieving model links: {e}")
         return {}
+
+
+def get_latest_model_name(model_links: dict) -> str | None:
+    """
+    Return the name of the most recently uploaded model.
+
+    Parameters:
+        model_links (dict): Output of ``list_ckan_model_download_links``.
+
+    Returns:
+        str or None: Name of the newest model (by CKAN ``created`` timestamp),
+        or None when the dict is empty.
+    """
+    if not model_links:
+        return None
+    return max(
+        model_links,
+        key=lambda name: model_links[name].get("created") or "",
+    )
 
 
 def download_file(download_link: tuple, output_dir: str):
@@ -117,6 +140,6 @@ if __name__ == "__main__":
     model_links = list_ckan_model_download_links(API_URL, QUERY)
     print(model_links)
     download_file(
-        ("jaeger_57341_1.5M", model_links["jaeger_57341_1.5M"]),
+        ("jaeger_57341_1.5M", model_links["jaeger_57341_1.5M"]["url"]),
         output_dir="/home/yasas-wijesekara/Downloads/models",
     )
