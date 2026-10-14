@@ -8,7 +8,7 @@ Jaeger can be installed via **one-liner script**, **Bioconda**, **PyPI**, **git*
 
 | Method | Best for | GPU support | Command |
 |--------|----------|-------------|---------|
-| [One-liner](#one-liner) | Quick setup / auto-detection | Yes | `curl \| bash` |
+| [One-liner](#one-liner-recommended) | Quick setup / auto-detection | Yes | `curl \| bash` |
 | [Bioconda](#bioconda) | HPC / reproducible environments | Yes | `mamba install jaeger-bio` |
 | [PyPI](#pypi) | Development / latest features | Yes | `pip install jaeger-bio[gpu]` |
 | [Git](#git) | Contributors / bleeding edge | Yes | `pip install ".[gpu]"` |
@@ -26,9 +26,36 @@ curl -sSL https://raw.githubusercontent.com/MGXlab/Jaeger/main/install.sh | bash
 
 The script will:
 1. Detect whether you have an NVIDIA GPU, CPU-only, or Apple Silicon
-2. Create a `jaeger` conda environment with Python 3.11–3.13
+2. Create a `jaeger` conda environment with Python 3.11–3.13 (or a `jaeger/` venv if conda is unavailable)
 3. Install the correct package variant (`[gpu]`, `[cpu]`, or `[darwin-arm]`)
 4. Run `jaeger health` to verify the installation
+
+### Next steps
+
+The script installs Jaeger into its own environment, which you must activate before use:
+
+```bash
+# conda installation
+conda activate jaeger
+
+# or, if the script fell back to a venv
+source jaeger/bin/activate
+```
+
+Jaeger ships without modern model weights — download the latest model before your first run:
+
+```bash
+# List available models (newest first, with upload dates)
+jaeger download --list
+
+# Download the latest model (this is a large download, ~1 GB)
+jaeger download --path ~/jaeger_models
+
+# Run your first prediction with it
+jaeger predict -i contigs.fasta -o results
+```
+
+See [Downloading a model](#downloading-a-model) for details.
 
 ---
 
@@ -51,6 +78,9 @@ conda activate jaeger
 
 # Verify installation
 jaeger health
+
+# Download the latest model
+jaeger download --path ~/jaeger_models
 ```
 
 ---
@@ -79,6 +109,9 @@ pip install jaeger-bio[darwin-arm]
 
 # Verify installation
 jaeger health
+
+# Download the latest model
+jaeger download --path ~/jaeger_models
 ```
 
 ---
@@ -104,6 +137,9 @@ source jaeger/bin/activate
 pip install -e ".[gpu]"   # GPU
 pip install -e ".[cpu]"   # CPU
 pip install -e ".[darwin-arm]"  # Mac ARM
+
+# Download the latest model
+jaeger download --path ~/jaeger_models
 ```
 
 ---
@@ -127,18 +163,40 @@ apptainer run --nv jaeger.sif jaeger health
 # List available models
 apptainer run --nv jaeger.sif jaeger download --list
 
-# Download a model
+# Download the latest model
 apptainer run --nv jaeger.sif jaeger download \
-  --model_name jaeger_57341_1.5M_fragment \
   --path /path/to/save/model \
   --config /path/to/config.json
 
 # Run prediction
 apptainer run --nv jaeger.sif jaeger predict \
-  --model jaeger_57341_1.5M_fragment \
+  --model jaeger_91c5575c_1.3M_fragment \
   --config /path/to/config.json \
   -i /path/to/input.fasta \
   -o /path/to/save/results
+```
+
+---
+
+## Downloading a model
+
+Jaeger bundles only a small legacy model, which is **deprecated**. For real work, download a modern model from the catalog:
+
+```bash
+# List available models (newest first, with upload dates)
+jaeger download --list
+
+# Download the latest model into a directory of your choice
+jaeger download --path ~/jaeger_models
+
+# Or pick a specific model from the list
+jaeger download --model_name jaeger_91c5575c_1.3M_fragment --path ~/jaeger_models
+```
+
+The model is registered automatically. Select it at prediction time:
+
+```bash
+jaeger predict -i contigs.fasta -o results -m jaeger_91c5575c_1.3M_fragment
 ```
 
 ---

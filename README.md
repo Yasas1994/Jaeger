@@ -14,13 +14,16 @@
 
 
 
-Jaeger: an accurate and fast deep-learning tool to detect bacteriophage sequences
+Jaeger: an accurate and fast deep-learning tool to detect bacteriophage and eukaryotic virus sequences
 ===============
 ![GitHub](https://img.shields.io/github/license/Yasas1994/jaeger) ![GitHub last commit (branch)](https://img.shields.io/github/last-commit/Yasas1994/jaeger/main?color=8a35da) ![Conda](https://img.shields.io/conda/v/bioconda/jaeger-bio) ![Conda](https://img.shields.io/conda/dn/bioconda/jaeger-bio) [![PyPI version](https://img.shields.io/pypi/v/jaeger-bio.svg)](https://pypi.org/project/jaeger-bio/) [![Downloads](https://static.pepy.tech/badge/jaeger-bio)](https://pepy.tech/project/jaeger-bio)
 
+## ⭐ What's new
+
+> **Jaeger now detects eukaryotic viruses alongside bacteriophages!** The latest models classify contigs into six groups — **phages**, **eukaryotic viruses**, **bacteria**, **archaea**, **plasmids**, and **eukaryotic hosts** — and report a per-contig reliability score that flags out-of-distribution sequences as `uncertain`. Get the latest model with `jaeger download -p /path/to/models`.
 
 
-Jaeger is a tool that utilizes homology-free machine learning to identify phage genome sequences that are hidden within metagenomes. It is capable of detecting both phages and prophages within metagenomic assemblies.
+Jaeger is a homology-free deep-learning tool that identifies viral genome sequences hidden within metagenomes. It detects bacteriophages, prophages, and eukaryotic viruses in metagenomic assemblies, and classifies the remaining contigs as bacteria, archaea, plasmids, or eukaryotic hosts.
 
 > 📚 **For detailed installation instructions, usage guides, and troubleshooting, please visit the [documentation](https://jaeger.readthedocs.io/en/latest/installation.html).**
 

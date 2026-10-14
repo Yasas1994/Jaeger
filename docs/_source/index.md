@@ -1,6 +1,6 @@
 
 
-Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequences
+Jaeger : an accurate and fast deep-learning tool to detect bacteriophage and eukaryotic virus sequences
 ===============
 <p align="center">
   <a href="https://github.com/Yasas1994/jaeger/blob/main/LICENSE">
@@ -28,15 +28,14 @@ Jaeger : an accurate and fast deep-learning tool to detect bacteriophage sequenc
 
 
 ```{toctree}
-:maxdepth 1
-:caption contents
+:maxdepth: 2
+:caption: contents
 
-start
 installation
 usage
 optimizations
 train
 utils
-releasing
+maintenance
 
 ```

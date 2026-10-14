@@ -1,4 +1,4 @@
-# Releasing Jaeger
+# Maintenance
 
 This guide is for maintainers who need to bump the version, build a new release, and publish it to PyPI and Bioconda.
 

@@ -13,6 +13,8 @@ For inference speedups and model quantization, see the [Performance optimization
 - [Batch size and memory](#batch-size-and-memory)
 - [Output files](#output-files)
 - [Understanding the output table](#understanding-the-output-table)
+- [Taxonomic assignment](#taxonomic-assignment)
+- [Interpreting predictions](#interpreting-predictions-jaeger-interpret)
 - [Prophage extraction](#prophage-extraction)
 - [Command-line reference](#command-line-reference)
 - [Python integration](#python-integration)
@@ -47,25 +49,47 @@ apptainer run --nv jaeger.sif jaeger predict -i contigs.fasta -o output_dir
 | `--cpu` | Force CPU execution | False |
 | `--workers` | Number of CPU threads | 4 |
 | `--fsize` | Sliding window length | 2000 |
-| `--stride` | Step size between windows | 2000 |
+| `--stride` | Step size between windows | 1500 |
+| `--min-len` | Minimum contig length to classify | `fsize` |
+| `--dynamic-stride` | Evenly distribute windows on short contigs | False |
+| `--no-dustmask` | Skip low-complexity masking | False |
+| `--chunk-size` | Process input in chunks of N contigs | 0 (off) |
+| `--taxonomy` | Assign taxonomy to viral contigs | False |
 | `-f, --overwrite` | Overwrite existing output | False |
+
+### Short contigs
+
+Contigs shorter than `--fsize` are skipped by default. Pass `--min-len` to also classify contigs down to that length — they are padded (with `M` bases) up to the window size and classified as a single window:
+
+```bash
+jaeger predict -i contigs.fasta -o output_dir --min-len 1500
+```
+
+With `--dynamic-stride`, windows on short contigs are distributed evenly so the final window reaches the contig end.
 
 ---
 
 ## Choosing a model
 
-The bundled `default` model, together with `experimental_1` and `experimental_2`, use the legacy prediction workflow and are deprecated. They will be removed in a future release. New users should download and use a modern SavedModel, for example `jaeger_38341_1.4M_fragment`.
+The bundled `default` model, together with `experimental_1` and `experimental_2`, use the legacy prediction workflow and are **deprecated** — Jaeger prints a warning when you use them. They will be removed in a future release. New users should download a modern SavedModel from the model catalog.
 
 ```bash
-# List all available models
+# List all available models (newest first, with upload dates)
 jaeger download --list
 
-# Download a specific model
-jaeger download --model_name jaeger_38341_1.4M_fragment --path ~/jaeger_models
+# Download the latest model
+jaeger download --path ~/jaeger_models
+
+# ...or download a specific model
+jaeger download --model_name jaeger_91c5575c_1.3M_fragment --path ~/jaeger_models
 
 # Use the downloaded model
-jaeger predict -i contigs.fasta -o output_dir -m jaeger_38341_1.4M_fragment
+jaeger predict -i contigs.fasta -o output_dir -m jaeger_91c5575c_1.3M_fragment
 ```
+
+When `--model_name` is omitted, `jaeger download` automatically picks the newest model in the catalog.
+
+`jaeger health` also warns you when no modern model is registered.
 
 To register a custom model path:
 ```bash
@@ -128,6 +152,12 @@ output_dir/
         └── *.pdf                # Genome visualizations (circular and/or linear)
 ```
 
+When taxonomy assignment is enabled (`--taxonomy`), an additional table is written:
+
+```
+├── <input>_taxonomy.tsv         # Per-contig taxonomy predictions + confidence
+```
+
 ---
 
 ## Understanding the output table
@@ -137,37 +167,78 @@ The main TSV file (`<input>_jaeger.tsv`) contains one row per contig:
 | Column | Description | Interpretation |
 |--------|-------------|----------------|
 | `contig_id` | FASTA header | — |
-| `length` | Sequence length | ≥ `fsize` |
-| `prediction` | Final call | `phage` or `bacteria` |
-| `entropy` | Softmax entropy | 0 (confident) → 2 (uncertain) |
-| `reliability_score` | Model confidence | 0 (uncertain) → 1 (confident); `unavailable` if the model has no reliability head |
+| `length` | Sequence length | ≥ `min-len` |
+| `prediction` | Final call | one of the model's classes (e.g. `phage`, `virus`, `bacteria`, `archaea`, `eukarya`, `plasmid`), or `uncertain` when the reliability score is below `--uc` (default 0.5) |
+| `entropy` | Softmax entropy | 0 (confident) → high (uncertain) |
+| `reliability_score` | Reliability of the input | 0 (out-of-distribution) → 1 (in-distribution); `unavailable` if the model has no reliability head |
 | `host_contam` | Potential host contamination | `True` / `False` |
 | `prophage_contam` | Potential prophage contamination | `True` / `False` |
 | `G+C` | GC content | 0–1 |
 | `N%` | Fraction of N bases | 0–1 |
-| `prediction_2` | Secondary prediction | e.g., `bacteria` |
-| `#_bacteria_windows` | Windows classified as bacteria | — |
-| `bacteria_score` | Mean logit for bacteria windows | — |
-| `bacteria_var` | Variance of bacteria logits | — |
-| `#_phage_windows` | Windows classified as phage | — |
-| `phage_score` | Mean logit for phage windows | — |
-| `phage_var` | Variance of phage logits | — |
-| `#_eukarya_windows` | Windows classified as eukarya | — |
-| `eukarya_score` | Mean logit for eukarya windows | — |
-| `eukarya_var` | Variance of eukarya logits | — |
-| `#_archaea_windows` | Windows classified as archaea | — |
-| `archaea_score` | Mean logit for archaea windows | — |
-| `archaea_var` | Variance of archaea logits | — |
-| `window_summary` | Pattern of V (phage) / n (non-phage) windows | e.g., `5V1n2V` |
+| `#_<class>_windows` | Windows classified as `<class>` | one set per model class |
+| `<class>_score` | Mean logit for `<class>` windows | — |
+| `<class>_var` | Variance of `<class>` logits | — |
+| `window_summary` | Pattern of per-window calls | e.g., `5V1n2V` |
 | `terminal_repeats` | Detected terminal repeat type | `DTR`, `ITR`, or `null` |
 | `repeat_length` | Length of terminal repeat | bp |
+
+The exact per-class columns depend on the model's classes — modern six-class models report `phage`, `virus` (eukaryotic virus), `bacteria`, `archaea`, `eukarya`, and `plasmid`.
 
 ### Filtering tips
 
 - High-confidence phages: `prediction == "phage"` and `reliability_score > 0.5`
-- Uncertain calls: `entropy > 1.0` or `reliability_score < 0.3`
+- Eukaryotic viruses: `prediction == "virus"` and `reliability_score > 0.5`
+- Out-of-distribution inputs: `prediction == "uncertain"` (reliability score below `--uc`, default 0.5); lower `--uc` to accept more marginal inputs
 - Potential prophages: `prophage_contam == True`
-- Models without a reliability head report `reliability_score` as `unavailable`; in this case phage calls are filtered using the class score and `--pc` only
+- Models without a reliability head report `reliability_score` as `unavailable`; in this case calls are filtered using the class score and `--pc` only
+
+---
+
+## Taxonomic assignment
+
+Modern models can additionally assign a taxonomy to each contig by searching the per-window embeddings against a reference database with FAISS. Pass `--taxonomy`:
+
+```bash
+jaeger predict -i contigs.fasta -o output_dir --taxonomy
+```
+
+The taxonomy database (`taxonomy_db/`) is detected automatically inside the model directory; if it is missing, Jaeger prints a warning and skips taxonomy prediction. Not supported with quantized or ONNX inference engines.
+
+Results are written to `<input>_taxonomy.tsv` with one row per contig:
+
+| Column | Description |
+|--------|-------------|
+| `header` | Contig id |
+| `length` | Contig length |
+| `taxid` / `name` / `rank` | Predicted taxon (majority-vote LCA of window-level neighbors) |
+| `support_frac` | Fraction of votes supporting the call — a per-contig confidence signal (low values flag discordant, unreliable calls) |
+| `lineage` | Full ranked lineage string |
+| `prediction`, `entropy`, `reliability_score`, `<class>_score` | Classifier summary from the main prediction table |
+
+Use `--taxonomy-k` to change the number of nearest neighbors voting on each window (default 5). For GPU-accelerated search, install `jaeger-bio[taxonomy-gpu]` (mutually exclusive with the `taxonomy` extra, which installs CPU FAISS).
+
+---
+
+## Interpreting predictions (`jaeger interpret`)
+
+`jaeger interpret` computes gradient-based saliency maps showing which regions of a contig drive its classification. Unlike `predict` (which runs the frozen SavedModel graph), it rebuilds the Keras model from the recipe and weights bundled with the model:
+
+```bash
+jaeger interpret -i contigs.fasta -o saliency_out -m jaeger_91c5575c_1.3M_fragment
+```
+
+Key options:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--flavour` | Attribution method: `raw`, `gradxinput`, or `integrated` | `raw` |
+| `--class-index` | Class to compute saliency for (default: predicted class per window) | — |
+| `--all-classes` | Compute saliency for every class | False |
+| `--whole-sequence` | Treat each contig as a single window instead of sliding windows | False |
+| `--ig-steps` | Interpolation steps for `integrated` | 50 |
+| `--store-gradients` | Also store raw per-dimension gradients | False |
+
+Results are written as an `.npz` file with per-position saliency for the forward and reverse strands, which can be visualized together with gene annotations (e.g. GFF3) in downstream notebooks.
 
 ---
 
@@ -223,12 +294,13 @@ jaeger [COMMAND] [OPTIONS]
 
 | Command | Purpose |
 |---------|---------|
-| `jaeger predict` | Run phage detection on a FASTA file |
+| `jaeger predict` | Run phage/virus detection on a FASTA file |
+| `jaeger interpret` | Compute gradient-based saliency maps |
 | `jaeger health` | Check installation and hardware |
-| `jaeger download` | Download pre-trained models |
+| `jaeger download` | Download pre-trained models (latest by default) |
 | `jaeger register-models` | Register custom model directories |
 | `jaeger train` | Train new models from scratch |
-| `jaeger utils` | Auxiliary tools (see below) |
+| `jaeger utils` | Auxiliary tools (see [Utility commands](utils.md)) |
 | `jaeger taxonomy` | Experimental taxonomy prediction |
 
 ### `jaeger predict` full help
@@ -239,55 +311,71 @@ Usage: jaeger predict [OPTIONS]
   Runs Jaeger on a dataset
 
 Options:
-  -i, --input PATH         Path to input file  [required]
-  -o, --output TEXT        Path to output directory  [required]
-  --fsize INTEGER          Length of the sliding window  [default: 2000]
-  --stride INTEGER         The gap between two the sliding windows
-                           (stride==fsize)  [default: 2000]
-  -m, --model TEXT         Select a deep-learning model to use.  [default:
-                           default]
-  --model_path TEXT        Give the path to a model. overrides --model
-  --config PATH            Path to Jaeger config file (e.g., when using
-                           Apptainer or Docker)
-  -p, --prophage           Extract and report prophage-like regions
-  -s, --sensitivity FLOAT  Sensitivity of the prophage extraction algorithm
-                           (0-4)  [default: 1.5]
-  --lc INTEGER             Minimum contig length for prophage extraction
-                           [default: 500000]
+  -i, --input PATH                Path to input file  [required]
+  -o, --output TEXT               Path to output directory  [required]
+  --fsize INTEGER                 Length of the sliding window  [default: 2000]
+  --stride INTEGER                The gap between two the sliding windows
+                                  [default: 1500]
+  --dynamic-stride                For short contigs, distribute windows evenly
+                                  so the final window reaches the contig end.
+  --min-len INTEGER               Minimum contig length to classify (default:
+                                  --fsize). Contigs between --min-len and
+                                  --fsize are classified as a single whole-
+                                  contig window.
+  --dustmask / --no-dustmask      Mask low-complexity regions with
+                                  pydustmasker before fragmenting.
+                                  [default: dustmask]
+  -m, --model TEXT                Select a deep-learning model to use.
+                                  [default: default]
+  --model_path TEXT               Give the path to a model. overrides --model
+  --config PATH                   Path to Jaeger config file (e.g., when using
+                                  Apptainer or Docker)
+  -p, --prophage                  Extract and report prophage-like regions
+  -s, --sensitivity FLOAT         Sensitivity of the prophage extraction
+                                  algorithm (0-4)  [default: 1.5]
+  --lc INTEGER                    Minimum contig length for prophage
+                                  extraction  [default: 500000]
   --plot-type [circular|linear|both|none]
-                           Prophage plot type  [default: circular]
-  --rc FLOAT               Minimum reliability score required to accept
-                           predictions  [default: 0.1]
-  --pc INTEGER             Minimum phage score required to accept predictions
-                           [default: 3]
-  --batch INTEGER          Parallel batch size, lower if GPU runs out of
-                           memory  [default: 96]
-  --workers INTEGER        Number of threads to use  [default: 4]
-  --window-scores          Writes window-wise prediction scores and per-window
-                           metadata to a .npz file
-  --getsequences           Writes the putative phage sequences to a .fasta
-                           file
-  --cpu                    Ignore available GPUs and explicitly run on CPU
-  --physicalid INTEGER     Set default GPU device ID for multi-GPU systems
-                           [default: 0]
-  --mem INTEGER            GPU memory limit  [default: 4]
-  --getalllabels           Get predicted labels for Non-Viral contigs
-  -v, --verbose            Verbosity level: -vv debug, -v info  [default: 1]
-  -f, --overwrite          Overwrite existing files
-  --help                   Show this message and exit.
+                                  Prophage plot type  [default: none]
+  --rc FLOAT                      Minimum reliability score required to accept
+                                  predictions  [default: 0.1]
+  --uc FLOAT                      Reliability score below which contigs are
+                                  labeled 'uncertain' instead of the argmax
+                                  class  [default: 0.5]
+  --taxonomy                      Predict contig taxonomy using the taxonomy
+                                  database bundled with the model
+  --taxonomy-k INTEGER RANGE      Number of nearest database neighbors voting
+                                  on each window's taxonomy  [default: 5]
+  --pc FLOAT                      Minimum phage probability required to accept
+                                  predictions (0-1)  [default: 0.5]
+  --batch INTEGER                 Parallel batch size, lower if GPU runs out
+                                  of memory  [default: 96]
+  --workers INTEGER               Number of threads to use  [default: 4]
+  --chunk-size INTEGER            Process the input in chunks of N contigs to
+                                  limit memory (0 = disabled)  [default: 0]
+  --window-scores                 Writes window-wise prediction scores and
+                                  per-window metadata to a .npz file
+  --getsequences                  Writes the putative phage sequences to a
+                                  .fasta file
+  --cpu                           Ignore available GPUs and explicitly run on
+                                  CPU
+  --physicalid INTEGER            Set default GPU device ID for multi-GPU
+                                  systems  [default: 0]
+  --mem INTEGER                   GPU memory limit  [default: 4]
+  --getalllabels                  Get predicted labels for Non-Viral contigs
+  --save-embedding                Save per-window embedding vectors to
+                                  <sample>_embedding.npz
+  --save-nmd                      Save per-window NMD (novelty) vectors to
+                                  <sample>_nmd.npz
+  -v, --verbose                   Verbosity level: -vv debug, -v info
+                                  [default: 1]
+  -f, --overwrite                 Overwrite existing files
+  --help                          Show this message and exit.
 ````
 
 ### Utility commands (`jaeger utils`)
 
-| Subcommand | Purpose |
-|------------|---------|
-| `jaeger utils build-dataset` | Generate non-redundant fragment databases for training |
-| `jaeger utils sample-fragments` | Simulate metagenome assemblies from genomes |
-| `jaeger utils convert-sequences` | Convert between CSV and FASTA formats |
-| `jaeger utils mask-sequences` | Mask or mutate positions in FASTA files |
-| `jaeger utils generate-ood` | Generate out-of-distribution (shuffled) sequences |
-| `jaeger utils combine-models` | Combine multiple models into an ensemble |
-| `jaeger utils summarize-predictions` | Calculate statistics from Jaeger output |
+See the [Utility commands](utils.md) page.
 
 ---
 

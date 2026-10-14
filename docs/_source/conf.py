@@ -42,6 +42,7 @@ extensions = [
 source_suffix = [".rst", ".md"]
 
 myst_enable_extensions = ["colon_fence", "dollarmath", "amsmath"]
+myst_heading_anchors = 4
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -58,7 +59,7 @@ exclude_patterns = []
 # a list of builtin themes.
 #
 html_theme = "furo"
-html_favicon = "figures/favicon.png"
+html_favicon = "_static/figures/favicon.png"
 pygments_style = "catppuccin-latte"
 pygments_dark_style = "catppuccin-mocha"
 html_theme_options = {
