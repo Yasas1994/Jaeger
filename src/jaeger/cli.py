@@ -270,7 +270,8 @@ def health(**kwargs):
     help="Predict contig taxonomy using the taxonomy database bundled with "
     "the model ('taxonomy_db' directory inside the model directory). "
     "Window embeddings are streamed to disk and searched against the "
-    "database after inference; results are written to <input>_taxonomy.tsv.",
+    "database after inference; results for contigs predicted as phage or "
+    "virus are written to <input>_taxonomy.tsv.",
 )
 @click.option(
     "--taxonomy-k",

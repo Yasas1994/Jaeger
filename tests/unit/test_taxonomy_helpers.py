@@ -216,6 +216,47 @@ def test_write_taxonomy_tsv_with_annotations(tmp_path):
     assert list(df.columns)[:3] == ["header", "length", "taxid"]
 
 
+def test_write_taxonomy_tsv_filters_nonviral(tmp_path):
+    preds = [
+        {"header": "phage_c", "lca": _fake_taxon(10, [1, 10]), "support_frac": 1.0},
+        {"header": "virus_c", "lca": _fake_taxon(11, [1, 11]), "support_frac": 0.8},
+        {"header": "bact_c", "lca": _fake_taxon(12, [1, 12]), "support_frac": 0.9},
+        {"header": "unc_c", "lca": _fake_taxon(13, [1, 13]), "support_frac": 0.7},
+    ]
+    annotations = {
+        h: {"length": 2000, "prediction": p, "entropy": 0.1, "reliability_score": 0.9}
+        for h, p in [
+            ("phage_c", "phage"),
+            ("virus_c", "virus"),
+            ("bact_c", "bacteria"),
+            ("unc_c", "uncertain"),
+        ]
+    }
+    out = tmp_path / "taxonomy.tsv"
+    write_taxonomy_tsv(preds, out, annotations=annotations)
+
+    df = pd.read_csv(out, sep="\t")
+    assert sorted(df["header"]) == ["phage_c", "virus_c"]
+
+
+def test_write_taxonomy_tsv_empty_after_filter(tmp_path):
+    preds = [{"header": "bact_c", "lca": _fake_taxon(12, [1, 12]), "support_frac": 0.9}]
+    annotations = {
+        "bact_c": {
+            "length": 2000,
+            "prediction": "bacteria",
+            "entropy": 0.1,
+            "reliability_score": 0.9,
+        }
+    }
+    out = tmp_path / "taxonomy.tsv"
+    write_taxonomy_tsv(preds, out, annotations=annotations)
+
+    df = pd.read_csv(out, sep="\t")
+    assert len(df) == 0
+    assert "header" in df.columns and "lineage" in df.columns
+
+
 def test_load_faiss_index_searchable(tmp_path):
     """Loaded index is searchable on whatever device faiss picks.
 

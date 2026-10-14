@@ -398,7 +398,8 @@ def write_taxonomy_tsv(predictions, output_path, annotations=None) -> None:
     When ``annotations`` (from ``contig_annotations``) is given, each row is
     extended with the contig's classifier summary: length (placed after
     ``header``), final prediction, entropy, reliability score and per-class
-    scores.
+    scores. Only contigs whose final prediction is a viral class (``phage``
+    or ``virus``) are written; all others are dropped.
     """
     import pandas as pd
 
@@ -407,8 +408,13 @@ def write_taxonomy_tsv(predictions, output_path, annotations=None) -> None:
         header = pred["header"]
         if isinstance(header, bytes):
             header = header.decode("utf-8")
-        lca = pred["lca"]
         ann = annotations.get(header, {}) if annotations is not None else {}
+        if annotations is not None and ann.get("prediction") not in (
+            "phage",
+            "virus",
+        ):
+            continue
+        lca = pred["lca"]
         row = {
             "header": header,
             **({"length": ann["length"]} if "length" in ann else {}),
@@ -421,7 +427,21 @@ def write_taxonomy_tsv(predictions, output_path, annotations=None) -> None:
         row["lineage"] = _format_ranked_lineage(lca)
         rows.append(row)
 
-    pd.DataFrame(rows).to_csv(output_path, sep="\t", index=False)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        # keep a header-only table so downstream parsers don't break
+        df = pd.DataFrame(
+            columns=[
+                "header",
+                "length",
+                "taxid",
+                "name",
+                "rank",
+                "support_frac",
+                "lineage",
+            ]
+        )
+    df.to_csv(output_path, sep="\t", index=False)
 
 
 def build_taxdb(**kwargs):

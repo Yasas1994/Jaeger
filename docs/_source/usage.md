@@ -204,7 +204,7 @@ jaeger predict -i contigs.fasta -o output_dir --taxonomy
 
 The taxonomy database (`taxonomy_db/`) is detected automatically inside the model directory; if it is missing, Jaeger prints a warning and skips taxonomy prediction. Not supported with quantized or ONNX inference engines.
 
-Results are written to `<input>_taxonomy.tsv` with one row per contig:
+Results are written to `<input>_taxonomy.tsv` with one row per contig predicted as **phage** or **virus** (all other contigs are dropped):
 
 | Column | Description |
 |--------|-------------|
